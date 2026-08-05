@@ -10,9 +10,12 @@ import os
 import chardet
 import pysrt
 
+from . import ssa
 from .cue import Cue
+from .errors import UnsupportedSubtitleError
 
 DEFAULT_ENCODING = "utf-8"
+SSA_EXTENSIONS = {".ssa", ".ass"}
 # Abaixo desta confiança o palpite do chardet não vale mais que o padrão.
 MIN_DETECTION_CONFIDENCE = 0.60
 
@@ -50,19 +53,53 @@ def read_text(path: str) -> str:
 
 
 def load_cues(path: str) -> list:
-    """Carrega um arquivo .srt como lista de :class:`Cue`."""
+    """Carrega um arquivo de legenda como lista de :class:`Cue`.
+
+    Aceita ``.srt`` e também ``.ssa``/``.ass``, que são convertidos para o
+    modelo interno. O formato é decidido pela extensão e, quando ela não
+    corresponde ao conteúdo, pelo próprio conteúdo.
+
+    Raises:
+        UnsupportedSubtitleError: se nenhuma legenda puder ser extraída.
+    """
+    extension = os.path.splitext(path)[1].lower()
+    encoding = detect_encoding(path) or DEFAULT_ENCODING
+
+    if extension in SSA_EXTENSIONS:
+        cues = ssa.load_cues(path, encoding=encoding)
+        if cues:
+            return cues
+        raise UnsupportedSubtitleError(
+            f"Nenhuma legenda encontrada em {os.path.basename(path)}.")
+
     # Decodifica primeiro e só então entrega o texto ao pysrt: abrir o
     # arquivo pelo pysrt e deixar a decodificação falhar vaza o descritor.
-    subs = pysrt.from_string(read_text(path))
+    text = read_text(path)
+    cues = _cues_from_srt_text(text)
+    if cues:
+        return cues
 
-    cues = []
-    for position, sub in enumerate(subs, start=1):
-        cues.append(Cue.from_source(
+    # Arquivo SSA com extensão .srt é comum o bastante para valer a tentativa.
+    if ssa.looks_like_ssa(text):
+        cues = ssa.load_cues(path, encoding=encoding)
+        if cues:
+            return cues
+
+    raise UnsupportedSubtitleError(
+        f"Nenhuma legenda encontrada em {os.path.basename(path)}. "
+        "O arquivo está vazio ou não é uma legenda SRT/SSA válida.")
+
+
+def _cues_from_srt_text(text: str) -> list:
+    subs = pysrt.from_string(text)
+    return [
+        Cue.from_source(
             index=position,
             start=sub.start.ordinal,
             end=sub.end.ordinal,
-            source_text=sub.text))
-    return cues
+            source_text=sub.text)
+        for position, sub in enumerate(subs, start=1)
+    ]
 
 
 def save_cues(cues, path: str) -> None:
@@ -75,6 +112,35 @@ def save_cues(cues, path: str) -> None:
             end=pysrt.SubRipTime.from_ordinal(cue.end),
             text=cue.text))
     subs.save(path, encoding=DEFAULT_ENCODING)
+
+
+def srt_output_path(path: str) -> str:
+    """Caminho .srt correspondente a um arquivo de legenda.
+
+    Arquivos .srt devolvem o próprio caminho; SSA/ASS devolvem o irmão com
+    extensão .srt, para que a conversão não sobrescreva o original.
+    """
+    stem, extension = os.path.splitext(path)
+    if extension.lower() == ".srt":
+        return path
+    return stem + ".srt"
+
+
+def convert_to_srt(input_path: str, output_path: str = None) -> str:
+    """Converte uma legenda SSA/ASS para SRT, sem traduzir.
+
+    Returns:
+        O caminho do arquivo gravado.
+    """
+    if output_path is None:
+        output_path = srt_output_path(input_path)
+    if os.path.abspath(output_path) == os.path.abspath(input_path):
+        raise UnsupportedSubtitleError(
+            "A conversão precisa de um arquivo de saída diferente da entrada.")
+
+    cues = load_cues(input_path)
+    save_cues(cues, output_path)
+    return output_path
 
 
 def backup_path(path: str) -> str:

@@ -57,8 +57,10 @@ def translate_file(input_path, output_path=None, *, target=DEFAULT_TARGET,
         TranslationCancelled: cancelado pelo usuário. **O arquivo não é
             gravado** — as legendas em memória estão parcialmente traduzidas.
     """
+    # Entrada SSA/ASS grava num .srt irmão, para não sobrescrever o original
+    # com um formato diferente do que ele tem.
     if output_path is None:
-        output_path = input_path
+        output_path = srt_io.srt_output_path(input_path)
 
     def announce(message):
         if status:
@@ -66,8 +68,6 @@ def translate_file(input_path, output_path=None, *, target=DEFAULT_TARGET,
 
     announce("Lendo arquivo...")
     cues = srt_io.load_cues(input_path)
-    if not cues:
-        raise ValueError("O arquivo de legendas está vazio.")
 
     announce("Detectando idioma...")
     detected_lang = detect_language(cues)

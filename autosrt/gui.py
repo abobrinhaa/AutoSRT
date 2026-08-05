@@ -7,6 +7,7 @@ Tk, via ``root.after``.
 """
 
 import os
+import shutil
 import threading
 import tkinter as tk
 from tkinter import filedialog, messagebox, simpledialog
@@ -48,6 +49,8 @@ class AutoSRTApp:
 
         file_menu = tk.Menu(menu_bar, tearoff=0)
         file_menu.add_command(label="Abrir", command=self.select_file)
+        file_menu.add_command(label="Converter SSA/ASS para SRT...",
+                              command=self.convert_ssa)
         file_menu.add_separator()
         file_menu.add_command(label="Sair", command=self.root.quit)
         menu_bar.add_cascade(label="Arquivo", menu=file_menu)
@@ -147,11 +150,41 @@ class AutoSRTApp:
     def set_progress(self, text):
         self.progress_label.config(text=text)
 
+    def set_file(self, path):
+        self.entry_file_path.delete(0, tk.END)
+        self.entry_file_path.insert(0, path)
+
     def select_file(self):
-        path = filedialog.askopenfilename(filetypes=[("Legendas SRT", "*.srt")])
+        path = filedialog.askopenfilename(filetypes=[
+            ("Legendas", "*.srt *.ssa *.ass"),
+            ("SubRip", "*.srt"),
+            ("SubStation Alpha", "*.ssa *.ass"),
+            ("Todos os arquivos", "*.*"),
+        ])
         if path:
-            self.entry_file_path.delete(0, tk.END)
-            self.entry_file_path.insert(0, path)
+            self.set_file(path)
+
+    def convert_ssa(self):
+        path = filedialog.askopenfilename(
+            title="Escolha a legenda SSA/ASS",
+            filetypes=[("SubStation Alpha", "*.ssa *.ass"),
+                       ("Todos os arquivos", "*.*")])
+        if not path:
+            return
+        try:
+            destino = srt_io.convert_to_srt(path)
+        except (srt_io.UnsupportedSubtitleError, OSError) as exc:
+            messagebox.showerror("Erro", str(exc))
+            return
+
+        self.set_file(destino)
+        self.set_status("Conversão concluída.", "#80FF80")
+        messagebox.showinfo(
+            "Conversão",
+            f"Arquivo convertido para:\n{os.path.basename(destino)}\n\n"
+            "Estilo, posicionamento e karaokê do SSA não têm equivalente em "
+            "SRT e foram removidos. Itálico, negrito, sublinhado e as quebras "
+            "de linha foram preservados.")
 
     # ----------------------------------------------------------- tradução
 
@@ -231,24 +264,37 @@ class AutoSRTApp:
     # ---------------------------------------------------------- sincronia
 
     def _apply_and_save(self, path, mutate, description):
-        """Carrega, aplica uma mudança de tempos e grava, com backup."""
+        """Carrega, aplica uma mudança de tempos e grava, com backup.
+
+        Entrada SSA/ASS é gravada num .srt irmão, porque ``save_cues`` só
+        escreve SubRip — sobrescrever o .ssa deixaria o arquivo com extensão
+        de um formato e conteúdo de outro.
+        """
+        destination = srt_io.srt_output_path(path)
         try:
             cues = srt_io.load_cues(path)
-            if not cues:
-                messagebox.showerror("Erro", "O arquivo está vazio.")
-                return
             mutate(cues)
-            backup = srt_io.backup_path(path)
-            if not os.path.exists(backup):
-                import shutil as _shutil
-                _shutil.copy(path, backup)
-            srt_io.save_cues(cues, path)
+            if destination == path:
+                self._ensure_backup(path)
+            srt_io.save_cues(cues, destination)
         except (sync.SyncError, OSError, ValueError) as exc:
             messagebox.showerror("Erro", str(exc))
             return
 
         self.set_status(f"Sincronia aplicada: {description}", "#80FF80")
-        messagebox.showinfo("Sincronia", f"{description}\nArquivo atualizado.")
+        if destination != path:
+            self.set_file(destination)
+            messagebox.showinfo(
+                "Sincronia",
+                f"{description}\nGravado em {os.path.basename(destination)}.")
+        else:
+            messagebox.showinfo("Sincronia", f"{description}\nArquivo atualizado.")
+
+    @staticmethod
+    def _ensure_backup(path):
+        backup = srt_io.backup_path(path)
+        if not os.path.exists(backup):
+            shutil.copy(path, backup)
 
     def sync_shift(self):
         path = self.current_file()
@@ -338,10 +384,7 @@ class AutoSRTApp:
 
     def _run_autosync(self, path, reference):
         try:
-            backup = srt_io.backup_path(path)
-            if not os.path.exists(backup):
-                import shutil as _shutil
-                _shutil.copy(path, backup)
+            self._ensure_backup(path)
             sync.autosync(path, reference, path)
         except (sync.SyncError, OSError) as exc:
             message = str(exc)
