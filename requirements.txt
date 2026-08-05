@@ -2,3 +2,8 @@ pysrt
 deep-translator==1.9.1
 langdetect
 chardet
+
+# Opcional: sincronia automática (menu Sincronia > Automático).
+# Sem ele o AutoSRT segue funcionando; só os ajustes manuais ficam disponíveis.
+# Sincronizar contra vídeo exige também o ffmpeg instalado e no PATH.
+# ffsubsync
