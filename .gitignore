@@ -1,0 +1,15 @@
+# Chaves e configuração local (NUNCA versionar)
+config.json
+.env
+
+# Backups gerados pelo próprio AutoSRT
+*_backup.srt
+
+# Build do PyInstaller
+build/
+dist/
+*.spec
+
+# Python
+__pycache__/
+*.py[cod]

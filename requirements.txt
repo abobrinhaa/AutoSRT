@@ -1,0 +1,4 @@
+pysrt
+deep-translator==1.9.1
+langdetect
+chardet
