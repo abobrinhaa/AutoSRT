@@ -45,6 +45,10 @@ class AutoSRTApp:
     # ------------------------------------------------------------------ UI
 
     def _build_menu(self):
+        # Os menus ficam guardados em self porque o Tk não expõe um jeito de
+        # recuperá-los depois, e sem referência não há como abri-los por
+        # código para inspecionar ou capturar a interface.
+        self.menus = {}
         menu_bar = tk.Menu(self.root)
 
         file_menu = tk.Menu(menu_bar, tearoff=0)
@@ -75,6 +79,13 @@ class AutoSRTApp:
         help_menu.add_command(label="Instruções", command=self.show_instructions)
         menu_bar.add_cascade(label="Ajuda", menu=help_menu)
 
+        self.menus = {
+            "Arquivo": file_menu,
+            "Sincronia": sync_menu,
+            "Tema": theme_menu,
+            "Ajuda": help_menu,
+        }
+        self.menu_bar = menu_bar
         self.root.config(menu=menu_bar)
 
     def _build_widgets(self):
