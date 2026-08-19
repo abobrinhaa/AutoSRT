@@ -20,6 +20,9 @@ class Cue:
             da leitura do arquivo.
         text: texto de trabalho. Começa igual a ``source_text`` e passa a
             conter a tradução depois do passe de tradução.
+        speaker: identificador de quem fala (``SPEAKER_00``...), quando
+            conhecido. Vem da diarização feita na transcrição, e é o elo que
+            liga cada legenda a um gênero.
     """
 
     index: int
@@ -27,11 +30,13 @@ class Cue:
     end: int
     source_text: str
     text: str
+    speaker: str = None
 
     @classmethod
-    def from_source(cls, index: int, start: int, end: int, source_text: str) -> "Cue":
+    def from_source(cls, index: int, start: int, end: int, source_text: str,
+                    speaker: str = None) -> "Cue":
         return cls(index=index, start=start, end=end,
-                   source_text=source_text, text=source_text)
+                   source_text=source_text, text=source_text, speaker=speaker)
 
     @property
     def duration(self) -> int:
