@@ -8,6 +8,7 @@ correção de gênero (etapa 4) entra entre a tradução e a gravação, lendo o
 dois textos.
 """
 
+import os
 import shutil
 from dataclasses import dataclass
 
@@ -132,4 +133,118 @@ def _translate_with_llm(cues, detected_lang, *, llm_client, speaker_genders,
     return len(cues) - len(falhas), falhas
 
 
-__all__ = ["PipelineResult", "translate_file", "TranslationCancelled"]
+#: Extensões tratadas como mídia (transcrever antes de traduzir). Legendas
+#: são reconhecidas por :data:`SUBTITLE_EXTENSIONS`; o que não for nem uma
+#: coisa nem outra é recusado com mensagem clara.
+MEDIA_EXTENSIONS = {
+    ".mkv", ".mp4", ".avi", ".mov", ".m4v", ".webm", ".mpg", ".mpeg", ".ts",
+    ".wav", ".mp3", ".m4a", ".flac", ".aac", ".ogg", ".opus", ".wma",
+}
+SUBTITLE_EXTENSIONS = {".srt", ".ssa", ".ass"}
+
+
+def is_media(path: str) -> bool:
+    return os.path.splitext(path)[1].lower() in MEDIA_EXTENSIONS
+
+
+def is_subtitle(path: str) -> bool:
+    return os.path.splitext(path)[1].lower() in SUBTITLE_EXTENSIONS
+
+
+def process_media(media_path, output_path=None, *, engine=DEFAULT_ENGINE,
+                  language=None, whisper_model=None, diarize=True,
+                  whisper_path=None, llm_client=None, translate=True,
+                  progress=None, status=None, cancel_event=None,
+                  transcribe_runner=None, translator_factory=None,
+                  keep_original=True) -> PipelineResult:
+    """Transcreve um arquivo de mídia e traduz o resultado.
+
+    É o caminho completo: o áudio vira legenda já sincronizada e com o
+    locutor de cada fala marcado, e essa legenda é traduzida em seguida.
+
+    Args:
+        media_path: vídeo ou áudio.
+        output_path: destino do .srt traduzido. Sendo ``None``, grava ao lado
+            da mídia com o mesmo nome.
+        language: idioma falado, se você souber. ``None`` deixa o Whisper
+            detectar.
+        diarize: liga a marcação de locutor, que é o que permite ao tradutor
+            acertar a concordância de gênero.
+        translate: sendo ``False``, para depois de transcrever.
+        keep_original: grava também o ``<nome>.original.srt`` no idioma
+            falado, útil para conferir a transcrição.
+
+    Returns:
+        :class:`PipelineResult`.
+    """
+    from . import transcribe as transcribe_module
+
+    def announce(message):
+        if status:
+            status(message)
+
+    if output_path is None:
+        output_path = os.path.splitext(media_path)[0] + ".srt"
+
+    announce("Transcrevendo o áudio... esta é a parte demorada.")
+    kwargs = {
+        "language": language,
+        "diarize": transcribe_module.DEFAULT_DIARIZE_MODEL if diarize else None,
+        "executable": whisper_path,
+        "cancel_event": cancel_event,
+        "runner": transcribe_runner,
+        "output_dir": os.path.dirname(os.path.abspath(output_path)) or ".",
+    }
+    if whisper_model:
+        kwargs["model"] = whisper_model
+    if progress:
+        kwargs["progress"] = lambda pct: progress(pct, 100)
+
+    cues = transcribe_module.transcribe(media_path, **kwargs)
+    if not cues:
+        raise ValueError("O Whisper não encontrou fala nenhuma no arquivo.")
+
+    detected_lang = language or _safe_detect(cues)
+
+    if keep_original:
+        srt_io.save_cues(cues, os.path.splitext(output_path)[0] + ".original.srt")
+
+    if not translate:
+        srt_io.save_cues(cues, output_path)
+        return PipelineResult(total=len(cues), translated=0, failed=[],
+                              detected_lang=detected_lang, engine="nenhum")
+
+    speakers = transcribe_module.speakers_in(cues)
+    if speakers:
+        announce(f"Traduzindo... {len(speakers)} locutor(es) identificado(s).")
+    else:
+        announce("Traduzindo...")
+
+    if engine == ENGINE_LLM:
+        translated, failed = _translate_with_llm(
+            cues, detected_lang, llm_client=llm_client, speaker_genders=None,
+            progress=progress, cancel_event=cancel_event)
+    else:
+        report = translate_cues(
+            cues, detected_lang, progress=progress, cancel_event=cancel_event,
+            translator_factory=translator_factory)
+        translated, failed = report.translated, report.failed
+
+    announce("Gravando...")
+    srt_io.save_cues(cues, output_path)
+
+    return PipelineResult(total=len(cues), translated=translated, failed=failed,
+                          detected_lang=detected_lang, engine=engine)
+
+
+def _safe_detect(cues) -> str:
+    """Detecta o idioma sem derrubar o processo se a amostra for pobre."""
+    try:
+        return detect_language(cues)
+    except Exception:
+        return ""
+
+
+__all__ = ["PipelineResult", "translate_file", "process_media",
+           "TranslationCancelled", "ENGINE_LLM", "ENGINE_GOOGLE",
+           "is_media", "is_subtitle"]

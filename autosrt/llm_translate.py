@@ -44,6 +44,8 @@ Regras:
 - Preste atenção em quem fala cada linha para acertar a concordância de
   gênero em português.
 - Preserve as quebras de linha internas de cada legenda.
+- Preserve as marcações de formatação exatamente como vieram, incluindo tags
+  como <i></i> e o travessão que abre cada fala em legendas de diálogo.
 - Não comente, não explique, não numere de novo. Devolva apenas os blocos.
 
 Formato da resposta, obrigatório: para cada legenda a traduzir, devolva

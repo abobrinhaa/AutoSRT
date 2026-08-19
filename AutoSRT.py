@@ -1,10 +1,13 @@
 """AutoSRT - ponto de entrada.
 
-A lógica vive no pacote ``autosrt``. Este arquivo apenas abre a interface,
-e é o alvo do PyInstaller ao gerar o executável.
+A lógica vive no pacote ``autosrt``. Este arquivo existe para permitir
+``python AutoSRT.py filme.mkv`` sem instalar nada; instalado, o comando
+``autosrt`` chama a mesma função.
 """
 
-from autosrt.gui import main
+import sys
+
+from autosrt.cli import main
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

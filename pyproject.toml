@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "autosrt"
+version = "2.0.0"
+description = "Transcreve, sincroniza e traduz legendas de filmes."
+requires-python = ">=3.9"
+dependencies = [
+    "pysrt",
+    "pysubs2",
+    "chardet",
+    "langdetect",
+    "requests",
+    "deep-translator==1.9.1",
+]
+
+[project.optional-dependencies]
+# Sincronia automática de legendas que já existem. Legenda transcrita pelo
+# Whisper já nasce sincronizada e dispensa isto.
+sync = ["ffsubsync"]
+
+[project.scripts]
+autosrt = "autosrt.cli:main"
+
+[tool.setuptools]
+packages = ["autosrt"]
