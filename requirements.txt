@@ -1,10 +1,19 @@
 pysrt
 pysubs2
-deep-translator==1.9.1
-langdetect
 chardet
+langdetect
+requests
 
-# Opcional: sincronia automática (menu Sincronia > Automático).
-# Sem ele o AutoSRT segue funcionando; só os ajustes manuais ficam disponíveis.
-# Sincronizar contra vídeo exige também o ffmpeg instalado e no PATH.
+# Motor de tradução alternativo (offline-friendly, sem chave).
+# O motor principal é um modelo de linguagem via API compatível com OpenAI,
+# configurada em OPENROUTER_API_KEY / LLM_BASE_URL / LLM_MODEL.
+deep-translator==1.9.1
+
+# Opcional: sincronia automática de legendas que já existem.
+# Legenda transcrita pelo Whisper já nasce sincronizada e dispensa isto.
+# Sincronizar contra vídeo exige também o ffmpeg no PATH.
 # ffsubsync
+
+# Não é dependência Python: o Faster-Whisper-XXL é um executável autocontido
+# (Windows e Linux) baixado de github.com/Purfview/whisper-standalone-win.
+# Aponte FASTER_WHISPER_PATH para ele, ou deixe-o no PATH.

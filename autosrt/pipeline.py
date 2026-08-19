@@ -11,9 +11,17 @@ dois textos.
 import shutil
 from dataclasses import dataclass
 
-from . import srt_io
+from . import llm_translate, srt_io
 from .language import detect_language, language_name
 from .translate import DEFAULT_TARGET, TranslationCancelled, translate_cues
+
+#: Motor padrão. O modelo de linguagem traduz em blocos com contexto, que é
+#: o que permite acertar gíria e concordância de gênero. O Google fica como
+#: alternativa: traduz cada legenda isolada, sem contexto nenhum, mas não
+#: depende de chave, de crédito nem de internet estável.
+ENGINE_LLM = "llm"
+ENGINE_GOOGLE = "google"
+DEFAULT_ENGINE = ENGINE_LLM
 
 
 @dataclass
@@ -25,6 +33,7 @@ class PipelineResult:
     failed: list
     detected_lang: str
     backup_path: str = None
+    engine: str = DEFAULT_ENGINE
 
     @property
     def language_label(self) -> str:
@@ -36,6 +45,7 @@ class PipelineResult:
 
 
 def translate_file(input_path, output_path=None, *, target=DEFAULT_TARGET,
+                   engine=DEFAULT_ENGINE, llm_client=None, speaker_genders=None,
                    make_backup=True, progress=None, status=None,
                    cancel_event=None, translator_factory=None) -> PipelineResult:
     """Traduz um arquivo de legenda do começo ao fim.
@@ -43,6 +53,12 @@ def translate_file(input_path, output_path=None, *, target=DEFAULT_TARGET,
     Args:
         input_path: arquivo .srt de entrada.
         output_path: destino. Sendo ``None``, sobrescreve a entrada.
+        engine: ``"llm"`` traduz em blocos com contexto (acerta gíria e
+            gênero); ``"google"`` traduz legenda por legenda, isolada.
+        llm_client: cliente já pronto. Sendo ``None``, é montado a partir da
+            configuração local.
+        speaker_genders: ``{"SPEAKER_00": "homem", ...}`` vindo da diarização,
+            usado apenas pelo motor ``llm``.
         make_backup: cria ``<nome>_backup.srt`` antes de sobrescrever.
         progress: chamada como ``progress(feitas, total)``, a partir das
             threads de trabalho.
@@ -83,19 +99,37 @@ def translate_file(input_path, output_path=None, *, target=DEFAULT_TARGET,
             backup = None
 
     announce(f"Traduzindo de {language_name(detected_lang)}...")
-    report = translate_cues(
-        cues, detected_lang, target=target, progress=progress,
-        cancel_event=cancel_event, translator_factory=translator_factory)
+    if engine == ENGINE_LLM:
+        translated, failed = _translate_with_llm(
+            cues, detected_lang, llm_client=llm_client,
+            speaker_genders=speaker_genders, progress=progress,
+            cancel_event=cancel_event)
+    else:
+        report = translate_cues(
+            cues, detected_lang, target=target, progress=progress,
+            cancel_event=cancel_event, translator_factory=translator_factory)
+        translated, failed = report.translated, report.failed
 
     announce("Gravando...")
     srt_io.save_cues(cues, output_path)
 
     return PipelineResult(
-        total=report.total,
-        translated=report.translated,
-        failed=report.failed,
+        total=len(cues),
+        translated=translated,
+        failed=failed,
         detected_lang=detected_lang,
-        backup_path=backup)
+        backup_path=backup,
+        engine=engine)
+
+
+def _translate_with_llm(cues, detected_lang, *, llm_client, speaker_genders,
+                        progress, cancel_event):
+    client = llm_client or llm_translate.client_from_config()
+    falhas = llm_translate.translate_cues_llm(
+        cues, language_name(detected_lang), client=client,
+        speaker_genders=speaker_genders, progress=progress,
+        cancel_event=cancel_event)
+    return len(cues) - len(falhas), falhas
 
 
 __all__ = ["PipelineResult", "translate_file", "TranslationCancelled"]

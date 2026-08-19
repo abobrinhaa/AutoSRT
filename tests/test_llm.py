@@ -1,0 +1,147 @@
+import unittest
+
+import requests
+
+from autosrt.llm import DEFAULT_BASE_URL, LLMClient, LLMError
+
+
+class FakeResponse:
+    def __init__(self, status_code=200, payload=None, text=""):
+        self.status_code = status_code
+        self._payload = payload
+        self.text = text or str(payload)
+
+    def json(self):
+        if self._payload is None:
+            raise ValueError("sem json")
+        return self._payload
+
+
+def ok_payload(content="Olá"):
+    return {"choices": [{"message": {"content": content}}]}
+
+
+class FakeSession:
+    def __init__(self, *responses):
+        self.responses = list(responses)
+        self.calls = []
+
+    def post(self, url, headers=None, json=None, timeout=None):
+        self.calls.append({"url": url, "headers": headers, "json": json})
+        resultado = self.responses.pop(0) if self.responses else FakeResponse(
+            200, ok_payload())
+        if isinstance(resultado, Exception):
+            raise resultado
+        return resultado
+
+
+class TestConstrucao(unittest.TestCase):
+    def test_sem_chave_e_erro_com_instrucao(self):
+        with self.assertRaises(LLMError) as contexto:
+            LLMClient(api_key=None)
+        self.assertIn("OPENROUTER_API_KEY", str(contexto.exception))
+
+    def test_base_url_padrao_e_openrouter(self):
+        cliente = LLMClient(api_key="k", session=FakeSession())
+        self.assertEqual(cliente.base_url, DEFAULT_BASE_URL)
+
+    def test_barra_final_e_removida(self):
+        cliente = LLMClient(api_key="k", base_url="https://x.com/v1/",
+                            session=FakeSession())
+        self.assertEqual(cliente.base_url, "https://x.com/v1")
+
+
+class TestRequisicao(unittest.TestCase):
+    def build(self, *responses, **kwargs):
+        session = FakeSession(*responses)
+        cliente = LLMClient(api_key="chave", session=session, **kwargs)
+        return cliente, session
+
+    def test_envia_para_chat_completions(self):
+        cliente, session = self.build()
+        cliente.complete("sistema", "usuario")
+        self.assertTrue(session.calls[0]["url"].endswith("/chat/completions"))
+
+    def test_manda_a_chave_no_cabecalho(self):
+        cliente, session = self.build()
+        cliente.complete("sistema", "usuario")
+        self.assertEqual(session.calls[0]["headers"]["Authorization"],
+                         "Bearer chave")
+
+    def test_manda_as_duas_mensagens(self):
+        cliente, session = self.build()
+        cliente.complete("sistema", "usuario")
+        mensagens = session.calls[0]["json"]["messages"]
+        self.assertEqual([m["role"] for m in mensagens], ["system", "user"])
+        self.assertEqual(mensagens[1]["content"], "usuario")
+
+    def test_temperatura_baixa_por_padrao(self):
+        cliente, session = self.build()
+        cliente.complete("s", "u")
+        self.assertLessEqual(session.calls[0]["json"]["temperature"], 0.3)
+
+    def test_devolve_o_conteudo(self):
+        cliente, _ = self.build(FakeResponse(200, ok_payload("traduzido")))
+        self.assertEqual(cliente.complete("s", "u"), "traduzido")
+
+
+class TestErros(unittest.TestCase):
+    def build(self, *responses, **kwargs):
+        session = FakeSession(*responses)
+        return LLMClient(api_key="k", session=session, **kwargs), session
+
+    def test_401_nao_repete(self):
+        cliente, session = self.build(
+            FakeResponse(401, text="chave invalida"),
+            FakeResponse(200, ok_payload()))
+        with self.assertRaises(LLMError):
+            cliente.complete("s", "u")
+        self.assertEqual(len(session.calls), 1)
+
+    def test_429_repete_e_sucede(self):
+        cliente, session = self.build(
+            FakeResponse(429, text="devagar"),
+            FakeResponse(200, ok_payload("pronto")),
+            max_retries=3)
+        self.assertEqual(cliente.complete("s", "u"), "pronto")
+        self.assertEqual(len(session.calls), 2)
+
+    def test_falha_de_rede_repete(self):
+        cliente, session = self.build(
+            requests.RequestException("caiu"),
+            FakeResponse(200, ok_payload("pronto")),
+            max_retries=3)
+        self.assertEqual(cliente.complete("s", "u"), "pronto")
+
+    def test_desiste_apos_o_limite(self):
+        cliente, session = self.build(
+            FakeResponse(503), FakeResponse(503), max_retries=2)
+        with self.assertRaises(LLMError):
+            cliente.complete("s", "u")
+        self.assertEqual(len(session.calls), 2)
+
+    def test_erro_no_corpo_com_status_200(self):
+        cliente, _ = self.build(
+            FakeResponse(200, {"error": {"message": "modelo inexistente"}}))
+        with self.assertRaises(LLMError) as contexto:
+            cliente.complete("s", "u")
+        self.assertIn("modelo inexistente", str(contexto.exception))
+
+    def test_resposta_sem_json(self):
+        cliente, _ = self.build(FakeResponse(200, None, text="<html>"))
+        with self.assertRaises(LLMError):
+            cliente.complete("s", "u")
+
+    def test_formato_inesperado(self):
+        cliente, _ = self.build(FakeResponse(200, {"resultado": "?"}))
+        with self.assertRaises(LLMError):
+            cliente.complete("s", "u")
+
+    def test_conteudo_vazio(self):
+        cliente, _ = self.build(FakeResponse(200, ok_payload("   ")))
+        with self.assertRaises(LLMError):
+            cliente.complete("s", "u")
+
+
+if __name__ == "__main__":
+    unittest.main()
