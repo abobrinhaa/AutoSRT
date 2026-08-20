@@ -3,6 +3,7 @@ pysubs2
 chardet
 langdetect
 requests
+flask
 
 # Motor de tradução alternativo (offline-friendly, sem chave).
 # O motor principal é um modelo de linguagem via API compatível com OpenAI,

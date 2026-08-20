@@ -13,6 +13,7 @@ dependencies = [
     "chardet",
     "langdetect",
     "requests",
+    "flask",
     "deep-translator==1.9.1",
 ]
 
@@ -23,6 +24,7 @@ sync = ["ffsubsync"]
 
 [project.scripts]
 autosrt = "autosrt.cli:main"
+autosrt-web = "autosrt.web:main"
 
 [tool.setuptools]
 packages = ["autosrt"]
