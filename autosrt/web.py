@@ -547,6 +547,7 @@ PAGINA = """<!doctype html>
   /* Marca o que acabou de subir, para o usuário achar onde clicar. */
   .item.novo { background: #1e2536; box-shadow: inset 3px 0 0 #3b82f6; }
   .item .acao { flex-shrink: 1; max-width: 220px; }
+  #arquivo { display: none; }
   .pasta { padding: 8px 14px; background: #23232b; font-size: 13px;
            color: #9a9aa2; border-bottom: 1px solid #2e2e36; }
   .barra-acoes { display: flex; align-items: center; gap: 12px;
@@ -606,7 +607,7 @@ PAGINA = """<!doctype html>
     <div id="dica">pode mandar os dois juntos &mdash; v&iacute;deo, &aacute;udio ou legenda</div>
     <button id="escolher" type="button">Escolher arquivos...</button>
     <div class="barra" id="barra-envio" hidden><div></div></div>
-    <input type="file" id="arquivo" accept="{{ACCEPT}}" multiple hidden>
+    <input type="file" id="arquivo" accept="{{ACCEPT}}" multiple>
   </div>
 
   <h2>Arquivos no servidor</h2>
@@ -789,7 +790,10 @@ $('lote').onclick = async () => {
   atualizar();
 };
 
-const abrirSeletor = () => $('arquivo').click();
+const abrirSeletor = () => {
+  const input = $('arquivo');
+  if (input) input.click();
+};
 $('escolher').onclick = (e) => { e.stopPropagation(); abrirSeletor(); };
 $('drop').onclick = abrirSeletor;
 $('arquivo').onchange = (e) => { if (e.target.files.length) enviar(e.target.files); };
