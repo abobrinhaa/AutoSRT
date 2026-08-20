@@ -2,6 +2,7 @@ import io
 import logging
 import os
 import re
+import shutil
 import tempfile
 import time
 import unittest
@@ -293,8 +294,17 @@ class TestAcoesDisponiveis(unittest.TestCase):
     def test_legenda_nao_oferece_transcrever(self):
         self.assertNotIn("transcrever", self.ids("filme.srt"))
 
-    def test_legenda_pode_traduzir_e_ajustar_tempo(self):
-        ids = self.ids("filme.srt")
+    def test_legenda_sozinha_so_traduz(self):
+        # Sem o filme irmão na pasta, ajustar o tempo não é oferecido.
+        self.assertEqual(self.ids("filme.srt"), ["traduzir"])
+
+    def test_legenda_com_filme_tambem_ajusta_o_tempo(self):
+        pasta = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, pasta, ignore_errors=True)
+        for nome in ("filme.mkv", "filme.srt"):
+            open(os.path.join(pasta, nome), "wb").close()
+
+        ids = self.ids(os.path.join(pasta, "filme.srt"))
         self.assertIn("traduzir", ids)
         self.assertIn("deslocar", ids)
 
@@ -371,6 +381,7 @@ class TestAcoesIndividuais(BaseWeb):
 
     def test_deslocar_move_os_tempos_sem_traduzir(self):
         self.escrever("filme.srt")
+        self.tocar("filme.mkv")  # o filme irmão é o que libera o deslocar
         job = self.client.post("/api/processar", json={
             "arquivo": "filme.srt", "acao": "deslocar", "segundos": 2.5,
         }).get_json()
@@ -380,6 +391,20 @@ class TestAcoesIndividuais(BaseWeb):
         self.assertEqual(cues[0].start, 3500)
         # O texto continua em inglês: deslocar não traduz.
         self.assertIn("English", cues[0].source_text)
+
+    def test_deslocar_legenda_sem_filme_e_recusado(self):
+        # A regra não é só esconder a opção do menu: o pedido feito na mão,
+        # ou vindo de uma página velha aberta antes, também é barrado.
+        self.escrever("sozinha.srt")
+        resposta = self.client.post("/api/processar", json={
+            "arquivo": "sozinha.srt", "acao": "deslocar", "segundos": 2.5,
+        })
+        self.assertEqual(resposta.status_code, 400)
+        self.assertIn("deslocar", resposta.get_json()["erro"])
+
+        # E a legenda fica como estava.
+        cues = pipeline.srt_io.load_cues(os.path.join(self.tmp, "sozinha.srt"))
+        self.assertEqual(cues[0].start, 1000)
 
     def test_converter_gera_srt_sem_traduzir(self):
         ssa = ("[Script Info]\nScriptType: v4.00+\n\n[Events]\n"
@@ -455,6 +480,7 @@ class TestLote(BaseWeb):
     def test_pasta_inteira_com_acoes_diferentes(self):
         self.escrever("legenda.srt")
         self.escrever("outra.srt")
+        self.tocar("outra.mkv")  # o filme irmão é o que libera o deslocar
         resposta = self.client.post("/api/processar-lote", json={"itens": [
             {"arquivo": "legenda.srt", "acao": "traduzir"},
             {"arquivo": "outra.srt", "acao": "deslocar", "segundos": 1},

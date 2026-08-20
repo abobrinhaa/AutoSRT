@@ -108,24 +108,15 @@ def acoes_para(caminho) -> list:
             acoes.insert(0, ACAO_LEGENDA_EXISTENTE)
         return [{"id": i, "rotulo": r} for i, r in acoes]
 
-    # Para legendas, só oferece "deslocar" se houver filme irmão
-    acoes_disponiveis = []
-
-    # Traduzir sempre está disponível
-    acoes_disponiveis.append(("traduzir", "Traduzir"))
-
-    # Converter para .srt se for .ssa/.ass
+    acoes = [("traduzir", "Traduzir")]
     if os.path.splitext(caminho)[1].lower() in {".ssa", ".ass"}:
-        acoes_disponiveis.append(("converter", "Só converter para .srt"))
-
-    # Deslocar só se houver filme irmão para sincronizar
+        acoes.append(("converter", "Só converter para .srt"))
+    # Ajustar o tempo é só somar segundos, e nisso o vídeo não entra. Mas
+    # descobrir quantos segundos são se faz assistindo: sem o filme na pasta
+    # a opção só rende legenda torta de outro jeito.
     if filme_irma(caminho):
-        acoes_disponiveis.append(("deslocar", "Ajustar o tempo..."))
-    else:
-        # Legenda isolada (sem filme) - não oferece deslocar
-        pass
-
-    return [{"id": i, "rotulo": r} for i, r in acoes_disponiveis]
+        acoes.append(("deslocar", "Ajustar o tempo..."))
+    return [{"id": i, "rotulo": r} for i, r in acoes]
 
 
 def _executar(job, engine):

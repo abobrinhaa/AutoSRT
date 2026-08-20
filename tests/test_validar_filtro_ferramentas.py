@@ -11,7 +11,7 @@ import os
 import tempfile
 import unittest
 
-from autosrt import web
+from autosrt import pipeline, web
 
 
 class TestValidacaoFiltroFerramenta(unittest.TestCase):
@@ -27,6 +27,11 @@ class TestValidacaoFiltroFerramenta(unittest.TestCase):
         with open(caminho, "wb") as f:
             f.write(b"\0")
         return caminho
+
+    def criar_legenda_com_filme(self, nome):
+        """Legenda com o filme irmão do lado, que é o que libera o deslocar."""
+        self.criar_arquivo(os.path.splitext(nome)[0] + ".mp4")
+        return self.criar_arquivo(nome)
 
     def acoes_ids(self, caminho):
         """Extrai IDs das ações disponíveis para um arquivo."""
@@ -140,15 +145,21 @@ class TestValidacaoFiltroFerramenta(unittest.TestCase):
     # TESTES: LEGENDA SRT
     # ============================================================
 
-    def test_legenda_srt_tem_duas_acoes(self):
-        """Legenda .srt oferece 2 opções."""
+    def test_legenda_srt_sozinha_so_traduz(self):
+        """Legenda .srt sem o filme: sobra traduzir."""
         caminho = self.criar_arquivo("legenda.srt")
+        ids = self.acoes_ids(caminho)
+        self.assertEqual(ids, ["traduzir"])
+
+    def test_legenda_srt_com_filme_tem_duas_acoes(self):
+        """Legenda .srt com o filme irmão oferece 2 opções."""
+        caminho = self.criar_legenda_com_filme("legenda.srt")
         ids = self.acoes_ids(caminho)
         self.assertEqual(len(ids), 2)
 
-    def test_legenda_srt_oferece_traduzir_e_deslocar(self):
-        """Legenda .srt: traduzir e ajustar tempo."""
-        caminho = self.criar_arquivo("legenda.srt")
+    def test_legenda_srt_com_filme_oferece_traduzir_e_deslocar(self):
+        """Legenda .srt com o filme: traduzir e ajustar tempo."""
+        caminho = self.criar_legenda_com_filme("legenda.srt")
         ids = self.acoes_ids(caminho)
         self.assertIn("traduzir", ids)
         self.assertIn("deslocar", ids)
@@ -169,15 +180,21 @@ class TestValidacaoFiltroFerramenta(unittest.TestCase):
     # TESTES: LEGENDA SSA/ASS
     # ============================================================
 
-    def test_legenda_ssa_tem_tres_acoes(self):
-        """Legenda .ssa oferece 3 opções."""
+    def test_legenda_ssa_sozinha_traduz_e_converte(self):
+        """Legenda .ssa sem o filme: converter continua, deslocar não."""
         caminho = self.criar_arquivo("legenda.ssa")
+        ids = self.acoes_ids(caminho)
+        self.assertEqual(ids, ["traduzir", "converter"])
+
+    def test_legenda_ssa_com_filme_tem_tres_acoes(self):
+        """Legenda .ssa com o filme irmão oferece 3 opções."""
+        caminho = self.criar_legenda_com_filme("legenda.ssa")
         ids = self.acoes_ids(caminho)
         self.assertEqual(len(ids), 3)
 
-    def test_legenda_ssa_oferece_traduzir_converter_deslocar(self):
-        """Legenda .ssa: traduzir, converter, deslocar."""
-        caminho = self.criar_arquivo("legenda.ssa")
+    def test_legenda_ssa_com_filme_oferece_traduzir_converter_deslocar(self):
+        """Legenda .ssa com o filme: traduzir, converter, deslocar."""
+        caminho = self.criar_legenda_com_filme("legenda.ssa")
         ids = self.acoes_ids(caminho)
         self.assertIn("traduzir", ids)
         self.assertIn("converter", ids)
@@ -185,21 +202,27 @@ class TestValidacaoFiltroFerramenta(unittest.TestCase):
 
     def test_legenda_ssa_converter_e_segunda_opcao(self):
         """Em .ssa, converter aparece como segunda opção."""
-        caminho = self.criar_arquivo("legenda.ssa")
+        caminho = self.criar_legenda_com_filme("legenda.ssa")
         ids = self.acoes_ids(caminho)
         self.assertEqual(ids[0], "traduzir")
         self.assertEqual(ids[1], "converter")
         self.assertEqual(ids[2], "deslocar")
 
-    def test_legenda_ass_tem_tres_acoes(self):
-        """Legenda .ass oferece 3 opções."""
+    def test_legenda_ass_sozinha_traduz_e_converte(self):
+        """Legenda .ass sem o filme: converter continua, deslocar não."""
         caminho = self.criar_arquivo("legenda.ass")
+        ids = self.acoes_ids(caminho)
+        self.assertEqual(ids, ["traduzir", "converter"])
+
+    def test_legenda_ass_com_filme_tem_tres_acoes(self):
+        """Legenda .ass com o filme irmão oferece 3 opções."""
+        caminho = self.criar_legenda_com_filme("legenda.ass")
         ids = self.acoes_ids(caminho)
         self.assertEqual(len(ids), 3)
 
-    def test_legenda_ass_oferece_traduzir_converter_deslocar(self):
-        """Legenda .ass: traduzir, converter, deslocar."""
-        caminho = self.criar_arquivo("legenda.ass")
+    def test_legenda_ass_com_filme_oferece_traduzir_converter_deslocar(self):
+        """Legenda .ass com o filme: traduzir, converter, deslocar."""
+        caminho = self.criar_legenda_com_filme("legenda.ass")
         ids = self.acoes_ids(caminho)
         self.assertIn("traduzir", ids)
         self.assertIn("converter", ids)
@@ -225,14 +248,14 @@ class TestValidacaoFiltroFerramenta(unittest.TestCase):
         self.assertEqual(set(ids[1:]), {"completo", "transcrever"})
 
     def test_ordem_acoes_legenda_srt(self):
-        """Ordem .srt: traduzir, deslocar."""
-        caminho = self.criar_arquivo("legenda.srt")
+        """Ordem .srt com o filme: traduzir, deslocar."""
+        caminho = self.criar_legenda_com_filme("legenda.srt")
         ids = self.acoes_ids(caminho)
         self.assertEqual(ids, ["traduzir", "deslocar"])
 
     def test_ordem_acoes_legenda_ssa(self):
-        """Ordem .ssa: traduzir, converter, deslocar."""
-        caminho = self.criar_arquivo("legenda.ssa")
+        """Ordem .ssa com o filme: traduzir, converter, deslocar."""
+        caminho = self.criar_legenda_com_filme("legenda.ssa")
         ids = self.acoes_ids(caminho)
         self.assertEqual(ids, ["traduzir", "converter", "deslocar"])
 
@@ -254,7 +277,7 @@ class TestValidacaoFiltroFerramenta(unittest.TestCase):
 
     def test_rotulos_sao_amigaveis(self):
         """Rótulos são em português claro."""
-        caminho = self.criar_arquivo("legenda.srt")
+        caminho = self.criar_legenda_com_filme("legenda.srt")
         rotulos = self.acoes_rotulos(caminho)
         self.assertTrue(any("Traduz" in r for r in rotulos))
         self.assertTrue(any("Ajust" in r or "tempo" in r for r in rotulos))
@@ -378,22 +401,20 @@ class TestConstantesAcoes(unittest.TestCase):
         self.assertEqual(web.EXTENSOES_IRMAS[2], ".ass")
 
 
-class TestValidacaoCriticaDeslocar(unittest.TestCase):
-    """ACHADO CRÍTICO: Validação de "deslocar" legenda sem filme.
+class TestDeslocarPedeFilme(unittest.TestCase):
+    """A regra: deslocar só aparece quando o filme irmão está do lado.
 
-    Questão levantada: "Para deslocar/ajustar tempo de legenda, não precisa do filme?"
-
-    Resposta: Atualmente, a regra oferece "deslocar" para TODA legenda, mesmo isolada.
-    Mas praticamente, deslocar sem o filme é improdutivo (não consegue conferir).
-
-    Este teste valida se é intencional ou se deveria ser restritivo.
+    Deslocar é só somar segundos nos tempos, e para isso o vídeo não é lido.
+    O que precisa do filme é *descobrir* quantos segundos são, e isso se
+    descobre assistindo. Sem o filme na pasta a opção só rende legenda torta
+    de outro jeito. Quem quiser deslocar no escuro tem o --deslocar da linha
+    de comando, que continua aceitando qualquer legenda.
     """
 
     def setUp(self):
         self.tmp = tempfile.mkdtemp()
 
     def criar_arquivo(self, nome):
-        """Cria um arquivo vazio para teste."""
         caminho = os.path.join(self.tmp, nome)
         os.makedirs(os.path.dirname(caminho), exist_ok=True)
         with open(caminho, "wb") as f:
@@ -401,75 +422,44 @@ class TestValidacaoCriticaDeslocar(unittest.TestCase):
         return caminho
 
     def acoes_ids(self, caminho):
-        """Extrai IDs das ações disponíveis para um arquivo."""
         return [a["id"] for a in web.acoes_para(caminho)]
 
-    def test_comportamento_atual_legenda_isolada_pode_deslocar(self):
-        """ESTADO ATUAL: Legenda isolada oferece 'deslocar'."""
+    def test_legenda_sozinha_nao_oferece_deslocar(self):
+        for extensao in (".srt", ".ssa", ".ass"):
+            with self.subTest(extensao=extensao):
+                caminho = self.criar_arquivo("sozinha" + extensao)
+                self.assertNotIn("deslocar", self.acoes_ids(caminho))
+
+    def test_legenda_com_filme_oferece_deslocar(self):
+        for extensao in (".srt", ".ssa", ".ass"):
+            with self.subTest(extensao=extensao):
+                self.criar_arquivo("com_filme.mp4")
+                caminho = self.criar_arquivo("com_filme" + extensao)
+                self.assertIn("deslocar", self.acoes_ids(caminho))
+
+    def test_qualquer_formato_de_video_conta_como_irmao(self):
+        # A regra não pode valer só para .mp4: quem guarda .mkv perderia a
+        # opção sem entender por quê.
+        for i, extensao in enumerate(sorted(pipeline.MEDIA_EXTENSIONS)):
+            with self.subTest(extensao=extensao):
+                base = f"filme{i}"
+                self.criar_arquivo(base + extensao)
+                caminho = self.criar_arquivo(base + ".srt")
+                self.assertIn("deslocar", self.acoes_ids(caminho))
+
+    def test_filme_de_outro_nome_nao_libera_deslocar(self):
+        # Mesma pasta, nome diferente: não dá para afirmar que um é do outro.
+        self.criar_arquivo("outro_filme.mp4")
         caminho = self.criar_arquivo("legenda.srt")
-        ids = self.acoes_ids(caminho)
+        self.assertNotIn("deslocar", self.acoes_ids(caminho))
 
-        # Atualmente passa - a ação deslocar é oferecida
-        self.assertIn("deslocar", ids)
-        # Resultado: ✅ Comportamento atual confirmado
+    def test_a_falta_do_filme_nao_tira_as_outras_acoes(self):
+        # Só o deslocar depende do filme; traduzir e converter seguem valendo.
+        srt = self.criar_arquivo("a.srt")
+        self.assertEqual(self.acoes_ids(srt), ["traduzir"])
 
-    def test_comportamento_atual_legenda_ssa_pode_deslocar(self):
-        """ESTADO ATUAL: Legenda .ssa isolada oferece 'deslocar'."""
-        caminho = self.criar_arquivo("legenda.ssa")
-        ids = self.acoes_ids(caminho)
-
-        # Atualmente passa - a ação deslocar é oferecida
-        self.assertIn("deslocar", ids)
-        # Resultado: ✅ Comportamento atual confirmado
-
-    def test_problematica_deslocar_isolado_sem_filme(self):
-        """ACHADO CRÍTICO: Legenda isolada oferece deslocar, mas é improdutivo.
-
-        Cenário:
-        pasta/
-          └─ legenda.srt  (sem filme ao lado)
-
-        Usuário clica "Ajustar o tempo" e desloca de +2s
-        MAS: não consegue conferir porque não tem o filme!
-
-        Pergunta de design: Deveria oferecer essa ação?
-        Opções:
-        1. Sim (atual) - Flexível mas permite uso improdutivo
-        2. Não - Restritivo, só oferece com filme ao lado
-        """
-        caminho = self.criar_arquivo("legenda.srt")
-        ids = self.acoes_ids(caminho)
-
-        # Teste documenta o comportamento atual
-        tem_deslocar = "deslocar" in ids
-
-        # Asserção comentada - para decisão do time:
-        # self.assertFalse(tem_deslocar,
-        #   "Legenda isolada deveria NÃO oferecer 'deslocar' sem filme")
-
-        # Por enquanto, apenas documenta o estado:
-        print(f"⚠️  Legenda isolada pode deslocar? {tem_deslocar} (sem validar filme)")
-        self.assertTrue(True)  # Apenas documenta
-
-    def test_nota_sobre_implementacao_deslocar(self):
-        """Nota: _deslocar() não valida se existe filme ao lado.
-
-        Arquivo: autosrt/web.py:164-175
-        Função: _deslocar(job, status)
-
-        Código:
-            cues = srt_io.load_cues(job.entrada)  # ← Só precisa da legenda
-            sync.shift_cues(cues, ...)
-            srt_io.save_cues(cues, saida)
-
-        Conclusão: Funcionalmente, deslocar legenda NÃO precisa do filme.
-        Mas praticamente, é improdutivo sem ele (não consegue sincronizar).
-
-        PERGUNTA PARA O TEAM:
-        - É intencional? (permite uso flexible)
-        - Ou deveria ser restritivo? (só com filme)
-        """
-        self.assertTrue(True)  # Apenas documenta
+        ssa = self.criar_arquivo("b.ssa")
+        self.assertEqual(self.acoes_ids(ssa), ["traduzir", "converter"])
 
 
 if __name__ == "__main__":
