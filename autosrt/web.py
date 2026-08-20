@@ -786,7 +786,7 @@ $('lote').onclick = async () => {
   });
   const dados = await r.json();
   if (dados.recusados && dados.recusados.length) {
-    alert(dados.recusados.map((x) => `${x.arquivo}: ${x.erro}`).join('\\n'));
+    alert(dados.recusados.map((x) => `${x.arquivo}: ${x.erro}`).join('\n'));
   }
   document.querySelectorAll('.marca').forEach((c) => { c.checked = false; });
   contar();
@@ -879,8 +879,8 @@ function cartao(job) {
     const d = job.detalhes || {};
     etapa.className = 'etapa ok';
     etapa.textContent = `${d.total || 0} legendas` +
-      (d.idioma ? ` \\u00b7 ${d.idioma}` : '') +
-      (d.falhas ? ` \\u00b7 ${d.falhas} não traduzida(s)` : '');
+      (d.idioma ? ` · ${d.idioma}` : '') +
+      (d.falhas ? ` · ${d.falhas} não traduzida(s)` : '');
   } else {
     etapa.textContent = job.etapa;
   }
