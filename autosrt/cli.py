@@ -13,7 +13,7 @@ import argparse
 import os
 import sys
 
-from . import pipeline, srt_io, sync, transcribe
+from . import config, pipeline, srt_io, sync, transcribe, transcribe_api
 from .errors import UnsupportedSubtitleError
 from .language import language_name
 from .llm import LLMError
@@ -24,6 +24,52 @@ from .translate import TranslationCancelled
 EXIT_OK = 0
 EXIT_ERRO = 1
 EXIT_NADA_A_FAZER = 2
+
+
+def get_transcribe_runner(whisper_engine, reporter):
+    """Retorna a função de transcrição baseado no engine configurado.
+
+    Args:
+        whisper_engine: "openrouter", "openai", ou "local"
+        reporter: Reporter para status/erros
+
+    Returns:
+        Função que transcreve áudio e retorna cues SRT
+    """
+    if whisper_engine == "local":
+        return None  # Usa Whisper local padrão
+
+    # Obter API key
+    api_key = config.get_openrouter_api_key()
+    if not api_key:
+        reporter.error(
+            f"--whisper-api {whisper_engine} requer chave de API. "
+            "Configure com: autosrt-config set openrouter_api_key sk-or-..."
+        )
+        raise ValueError("Chave de API não configurada")
+
+    # Retornar wrapper que converte transcrição para cues SRT
+    def transcriber_via_api(media_file, **kwargs):
+        """Transcreve via API e retorna cues SRT."""
+        from . import srt_io
+
+        reporter.status(f"Transcrevendo via {whisper_engine} API...")
+        texto = transcribe_api.transcribe(
+            media_file,
+            engine=whisper_engine,
+            api_key=api_key
+        )
+
+        # Converter texto simples para cues SRT
+        # (simplificado - sem diarização)
+        # TODO: Implementar diarização via API se disponível
+        if texto:
+            from .srt_io import Cue
+            cue = Cue(index=1, start=0, end=len(texto) * 100, text=texto)
+            return [cue]
+        return []
+
+    return transcriber_via_api
 
 
 def build_parser():
@@ -64,6 +110,11 @@ def build_parser():
     grupo.add_argument("--modelo", metavar="NOME",
                        default=transcribe.DEFAULT_MODEL,
                        help=f"modelo do Whisper (padrão: {transcribe.DEFAULT_MODEL})")
+    grupo.add_argument("--whisper-api", metavar="ENGINE",
+                       choices=["openrouter", "openai", "local"],
+                       default="local",
+                       help="usar Whisper via API em vez de GPU local. "
+                            "Requer chave configurada (padrão: local)")
     grupo.add_argument("--sem-diarizacao", action="store_true",
                        help="não identifica quem fala. Mais rápido, mas o "
                             "tradutor perde a informação que corrige o gênero")
@@ -160,10 +211,15 @@ def process_one(entrada, args, reporter) -> bool:
 
     try:
         if pipeline.is_media(entrada) and not args.so_traduzir:
+            transcribe_runner = None
+            if args.whisper_api != "local":
+                transcribe_runner = get_transcribe_runner(args.whisper_api, reporter)
+
             resultado = pipeline.process_media(
                 entrada, saida, engine=args.motor, language=args.idioma,
                 whisper_model=args.modelo, diarize=not args.sem_diarizacao,
                 translate=not args.so_transcrever,
+                transcribe_runner=transcribe_runner,
                 progress=reporter.progress, status=reporter.status)
         elif pipeline.is_media(entrada):
             reporter.error("--so-traduzir precisa de uma legenda, não de um vídeo")
