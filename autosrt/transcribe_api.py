@@ -68,6 +68,22 @@ def transcribe_openrouter(audio_file, api_key, model="openai/whisper-1"):
     return result["text"]
 
 
+def OpenAI(**kwargs):
+    """Cliente da OpenAI, carregado só na hora de usar.
+
+    O import fica aqui, e não no topo, porque a biblioteca é opcional; ter um
+    nome no módulo também dá aos testes onde encaixar o dublê.
+    """
+    try:
+        from openai import OpenAI as _OpenAI
+    except ImportError:
+        raise ImportError(
+            "OpenAI library não instalada. "
+            "Instale com: pip install openai"
+        )
+    return _OpenAI(**kwargs)
+
+
 def transcribe_openai(audio_file, api_key):
     """Transcrever áudio via OpenAI API.
 
@@ -80,14 +96,9 @@ def transcribe_openai(audio_file, api_key):
     Returns:
         str: Texto transcrito
     """
-    try:
-        from openai import OpenAI
-    except ImportError:
-        raise ImportError(
-            "OpenAI library não instalada. "
-            "Instale com: pip install openai"
-        )
-
+    # Validar antes de importar: pedido furado é pedido furado com ou sem a
+    # biblioteca instalada, e trocar isso por um ImportError esconde o erro
+    # de verdade de quem chamou.
     if not os.path.isfile(audio_file):
         raise FileNotFoundError(f"Arquivo de áudio não encontrado: {audio_file}")
 

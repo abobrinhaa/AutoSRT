@@ -252,6 +252,26 @@ def _tamanho_legivel(bytes_) -> str:
     return f"{bytes_:.1f} GB"
 
 
+MODELO_WHISPER_API = "large-v3-turbo"
+
+
+def _abrir_whisper(nome=MODELO_WHISPER_API):
+    """Carrega o Faster Whisper, caindo para a CPU quando não há GPU.
+
+    Fica em uma função à parte porque um import dentro do endpoint não deixa
+    onde encaixar o dublê dos testes.
+    """
+    from faster_whisper import WhisperModel
+
+    try:
+        return WhisperModel(nome, device="cuda", compute_type="float16")
+    except Exception:
+        # Sem GPU, ou com o passthrough do container desligado, float16 não
+        # existe. A CPU é bem mais lenta, mas devolve legenda; recusar o
+        # trabalho não devolve nada.
+        return WhisperModel(nome, device="cpu", compute_type="int8")
+
+
 def _register_routes(app, fila, media_dir, engine):
 
     @app.get("/")
@@ -263,6 +283,23 @@ def _register_routes(app, fila, media_dir, engine):
     @app.get("/api/arquivos")
     def arquivos():
         return jsonify(_listar_arquivos(media_dir))
+
+    @app.get("/api/legenda/<path:nome>")
+    def baixar_legenda(nome):
+        """Baixa uma legenda que já está na pasta, sem reprocessar nada.
+
+        Só legendas: o resto da pasta é filme, que ninguém quer puxar pela
+        página e cujo envio prenderia a fila por minutos.
+        """
+        caminho = os.path.join(media_dir, nome)
+        if not _dentro_da_pasta(caminho, media_dir):
+            return jsonify({"erro": "Arquivo inválido."}), 400
+        if not os.path.isfile(caminho):
+            return jsonify({"erro": "Esse arquivo não está mais na pasta."}), 404
+        if not pipeline.is_subtitle(caminho):
+            return jsonify({"erro": "Só dá para baixar legendas."}), 400
+        return send_file(caminho, as_attachment=True,
+                         download_name=os.path.basename(caminho))
 
     def _enfileirar(pedido):
         """Valida um pedido e o coloca na fila. Devolve ``(job, erro, status)``."""
@@ -436,20 +473,13 @@ def _register_routes(app, fila, media_dir, engine):
         try:
             arquivo.save(temp_path)
 
-            # Transcrever com Faster Whisper
             try:
-                from faster_whisper import WhisperModel
+                model = _abrir_whisper()
             except ImportError:
                 return jsonify({
                     "erro": "Faster Whisper não instalado. "
                            "Instale com: pip install faster-whisper"
                 }), 500
-
-            model = WhisperModel(
-                "large-v3-turbo",
-                device="cuda",
-                compute_type="float16"
-            )
 
             segments, info = model.transcribe(temp_path)
 
@@ -582,6 +612,7 @@ PAGINA = """<!doctype html>
   .ok { color: #4ade80; }
   .vazio { color: #9a9aa2; padding: 20px; text-align: center; }
   a.baixar { color: #3b82f6; text-decoration: none; font-weight: 500; }
+  .item a.baixar { flex-shrink: 0; }
   details#config { margin-top: 36px; border: 1px solid #2e2e36;
                    border-radius: 12px; }
   details#config summary { padding: 14px; cursor: pointer; color: #9a9aa2;
@@ -698,6 +729,16 @@ function linhaArquivo(item) {
     // Junto dos outros selos, não colado ao nome: assim o nome mantém a
     // largura que sobra em vez de disputar espaço no meio da linha.
     div.querySelectorAll('.tag')[1].after(selo);
+  }
+
+  // Legenda que já está no servidor se baixa direto, sem passar pela fila:
+  // quem só quer o arquivo de ontem não precisa reprocessar o filme.
+  if (item.tipo === 'legenda') {
+    const baixar = document.createElement('a');
+    baixar.className = 'baixar';
+    baixar.href = '/api/legenda/' + item.nome.split('/').map(encodeURIComponent).join('/');
+    baixar.textContent = 'Baixar';
+    div.querySelector('button').before(baixar);
   }
 
   const seletor = div.querySelector('.acao');

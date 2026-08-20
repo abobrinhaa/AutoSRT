@@ -46,12 +46,12 @@ class TestTranscribeAPI(unittest.TestCase):
         )
         self.assertEqual(resposta.status_code, 400)
 
-    @mock.patch("autosrt.web.WhisperModel")
-    def test_transcribe_sucesso_json(self, mock_whisper):
+    @mock.patch("autosrt.web._abrir_whisper")
+    def test_transcribe_sucesso_json(self, abrir_whisper):
         """Transcrição bem-sucedida retorna JSON."""
         # Mock do modelo Whisper
         mock_model = mock.Mock()
-        mock_whisper.return_value = mock_model
+        abrir_whisper.return_value = mock_model
 
         mock_segment = mock.Mock()
         mock_segment.start = 0.0
@@ -76,12 +76,12 @@ class TestTranscribeAPI(unittest.TestCase):
         self.assertIn("legendas", dados)
         self.assertIn("Olá, como vai?", dados["legendas"])
 
-    @mock.patch("autosrt.web.WhisperModel")
-    def test_transcribe_sucesso_srt(self, mock_whisper):
+    @mock.patch("autosrt.web._abrir_whisper")
+    def test_transcribe_sucesso_srt(self, abrir_whisper):
         """Transcrição retorna arquivo .srt quando solicitado."""
         # Mock do modelo
         mock_model = mock.Mock()
-        mock_whisper.return_value = mock_model
+        abrir_whisper.return_value = mock_model
 
         mock_segment = mock.Mock()
         mock_segment.start = 0.0
@@ -100,14 +100,15 @@ class TestTranscribeAPI(unittest.TestCase):
         )
 
         self.assertEqual(resposta.status_code, 200)
-        self.assertIn(b".srt", resposta.headers["Content-Disposition"])
+        self.assertIn(".srt", resposta.headers["Content-Disposition"])
+        self.assertIn("attachment", resposta.headers["Content-Disposition"])
         self.assertIn(b"Teste de transc", resposta.data)
 
-    @mock.patch("autosrt.web.WhisperModel")
-    def test_transcribe_multiplos_segmentos(self, mock_whisper):
+    @mock.patch("autosrt.web._abrir_whisper")
+    def test_transcribe_multiplos_segmentos(self, abrir_whisper):
         """Transcrição com múltiplos segmentos."""
         mock_model = mock.Mock()
-        mock_whisper.return_value = mock_model
+        abrir_whisper.return_value = mock_model
 
         seg1 = mock.Mock()
         seg1.start = 0.0
@@ -134,11 +135,11 @@ class TestTranscribeAPI(unittest.TestCase):
         self.assertIn("Primeira linha", dados["legendas"])
         self.assertIn("Segunda linha", dados["legendas"])
 
-    @mock.patch("autosrt.web.WhisperModel")
-    def test_transcribe_formato_srt(self, mock_whisper):
+    @mock.patch("autosrt.web._abrir_whisper")
+    def test_transcribe_formato_srt(self, abrir_whisper):
         """Verifica formato SRT correto."""
         mock_model = mock.Mock()
-        mock_whisper.return_value = mock_model
+        abrir_whisper.return_value = mock_model
 
         segment = mock.Mock()
         segment.start = 1.5  # 1,5 segundos

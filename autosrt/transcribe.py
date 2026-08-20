@@ -232,7 +232,22 @@ def _run_process(command, *, progress=None, cancel_event=None, timeout=None):
 
     if process.returncode != 0:
         detail = "".join(output_tail).strip()[-800:]
-        raise TranscriptionError(f"O Whisper falhou:\n{detail}")
+        raise TranscriptionError(_explicar_falha(detail))
+
+
+# O Whisper morre com um traceback de Python quando o arquivo não tem trilha
+# de áudio: ele pede a faixa 0 ao demuxer e não vem nada. Gravação de tela
+# feita sem microfone cai sempre aqui, e o traceback cru não diz o que fazer.
+SEM_AUDIO = ("IndexError: tuple index out of range", "StreamContainer.get")
+
+
+def _explicar_falha(detail: str) -> str:
+    """Troca o traceback do Whisper por uma explicação, quando dá para saber."""
+    if all(marca in detail for marca in SEM_AUDIO):
+        return ("Esse arquivo não tem faixa de áudio, então não há fala para "
+                "transcrever. Gravação de tela feita sem microfone fica assim. "
+                "Confira o arquivo original ou mande o áudio separado.")
+    return f"O Whisper falhou:\n{detail}"
 
 
 def speakers_in(cues) -> list:
