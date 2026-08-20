@@ -70,6 +70,23 @@ class TestPagina(BaseWeb):
                        'src="http', "src='http"):
             self.assertNotIn(padrao, html, f"a página carrega algo externo: {padrao}")
 
+    def test_filtro_do_seletor_reflete_o_que_o_servidor_aceita(self):
+        # Filtro desatualizado esconde arquivo válido no explorador sem dar
+        # nenhuma pista de que ele existe.
+        html = self.client.get("/").get_data(as_text=True)
+        aceitas = re.search(r'id="arquivo" accept="([^"]+)"', html).group(1)
+        do_seletor = set(aceitas.split(","))
+        do_servidor = pipeline.MEDIA_EXTENSIONS | pipeline.SUBTITLE_EXTENSIONS
+        self.assertEqual(do_seletor, do_servidor)
+
+    def test_seletor_aceita_mais_de_um_arquivo(self):
+        html = self.client.get("/").get_data(as_text=True)
+        self.assertIn("multiple", html)
+
+    def test_nenhum_marcador_de_template_sobra_na_pagina(self):
+        html = self.client.get("/").get_data(as_text=True)
+        self.assertNotIn("{{", html)
+
     def test_requisicoes_do_script_sao_todas_relativas(self):
         html = self.client.get("/").get_data(as_text=True)
         for chamada in re.findall(r"fetch\(\s*['\"]([^'\"]+)", html):
@@ -141,17 +158,52 @@ class TestEnvio(BaseWeb):
             data={"arquivo": (io.BytesIO(conteudo.encode("utf-8")), nome)},
             content_type="multipart/form-data")
 
+    def enviar_varios(self, *pares):
+        return self.client.post(
+            "/api/enviar",
+            data={"arquivo": [(io.BytesIO(c.encode("utf-8")), n)
+                              for n, c in pares]},
+            content_type="multipart/form-data")
+
     def test_aceita_legenda(self):
         resposta = self.enviar("filme.srt")
-        self.assertEqual(resposta.status_code, 202)
+        self.assertEqual(resposta.status_code, 201)
         self.assertTrue(os.path.exists(os.path.join(self.tmp, "filme.srt")))
 
     def test_aceita_video(self):
         # Em rede local, enviar filme pelo navegador leva um ou dois minutos,
         # irrelevante perto do tempo de transcrição.
         resposta = self.enviar("filme.mkv", "conteudo")
-        self.assertEqual(resposta.status_code, 202)
+        self.assertEqual(resposta.status_code, 201)
         self.assertTrue(os.path.exists(os.path.join(self.tmp, "filme.mkv")))
+
+    def test_aceita_filme_e_legenda_de_uma_vez(self):
+        resposta = self.enviar_varios(("filme.mkv", "video"), ("filme.srt", SRT))
+        self.assertEqual(resposta.status_code, 201)
+        self.assertEqual(sorted(resposta.get_json()["guardados"]),
+                         ["filme.mkv", "filme.srt"])
+        for nome in ("filme.mkv", "filme.srt"):
+            self.assertTrue(os.path.exists(os.path.join(self.tmp, nome)))
+
+    def test_o_par_enviado_junto_e_reconhecido(self):
+        self.enviar_varios(("filme.mkv", "video"), ("filme.srt", SRT))
+        itens = self.client.get("/api/arquivos").get_json()
+        video = next(i for i in itens if i["nome"] == "filme.mkv")
+        self.assertTrue(video["tem_legenda"])
+        self.assertEqual(video["acoes"][0]["id"], "traduzir_existente")
+
+    def test_enviar_nao_processa_nada(self):
+        # Enfileirar no envio traduziria a legenda sozinha antes de o vídeo
+        # chegar, desperdiçando justamente o pareamento.
+        self.enviar_varios(("filme.mkv", "video"), ("filme.srt", SRT))
+        self.assertEqual(self.client.get("/api/trabalhos").get_json(), [])
+
+    def test_arquivo_invalido_no_meio_nao_impede_os_validos(self):
+        resposta = self.enviar_varios(("filme.srt", SRT), ("nota.txt", "x"))
+        self.assertEqual(resposta.status_code, 201)
+        dados = resposta.get_json()
+        self.assertEqual(dados["guardados"], ["filme.srt"])
+        self.assertEqual(len(dados["recusados"]), 1)
 
     def test_recusa_tipo_desconhecido(self):
         resposta = self.enviar("planilha.xlsx", "conteudo")

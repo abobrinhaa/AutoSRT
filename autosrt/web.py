@@ -18,6 +18,11 @@ from .jobs import JobQueue
 
 DEFAULT_MEDIA_DIR = "midia"
 DEFAULT_PORT = 8000
+
+#: Filtro do seletor de arquivos do sistema. Precisa refletir exatamente o
+#: que o servidor aceita — um teste compara as duas listas, porque um filtro
+#: desatualizado esconde arquivo válido sem dar nenhuma pista ao usuário.
+EXTENSOES_ACEITAS = sorted(pipeline.MEDIA_EXTENSIONS | pipeline.SUBTITLE_EXTENSIONS)
 # Em rede local, enviar um filme pelo navegador é questão de um ou dois
 # minutos - irrelevante perto da meia hora que a transcrição leva depois.
 # O limite existe só para não encher o disco por acidente.
@@ -223,7 +228,9 @@ def _register_routes(app, fila, media_dir, engine):
 
     @app.get("/")
     def index():
-        return PAGINA
+        # O filtro do seletor é montado a partir do que o servidor aceita,
+        # em vez de escrito à mão na página, para não sair de sincronia.
+        return PAGINA.replace("{{ACCEPT}}", ",".join(EXTENSOES_ACEITAS))
 
     @app.get("/api/arquivos")
     def arquivos():
@@ -273,21 +280,37 @@ def _register_routes(app, fila, media_dir, engine):
 
     @app.post("/api/enviar")
     def enviar():
-        arquivo = request.files.get("arquivo")
-        if not arquivo or not arquivo.filename:
+        """Recebe um ou mais arquivos e os guarda, sem processar.
+
+        Guardar e processar são passos separados de propósito. Quem envia o
+        filme junto com a legenda espera que os dois sejam considerados em
+        conjunto; enfileirar cada arquivo assim que chega faria a legenda ser
+        traduzida sozinha antes de o vídeo terminar de subir, desperdiçando
+        justamente o pareamento.
+        """
+        arquivos = request.files.getlist("arquivo")
+        arquivos = [a for a in arquivos if a and a.filename]
+        if not arquivos:
             return jsonify({"erro": "Nenhum arquivo recebido."}), 400
 
-        nome = os.path.basename(arquivo.filename)
-        if not (pipeline.is_subtitle(nome) or pipeline.is_media(nome)):
-            return jsonify({
-                "erro": f"Não sei o que fazer com {nome}. Envie um vídeo, um "
-                        "áudio, ou uma legenda (.srt, .ssa, .ass)."
-            }), 400
+        guardados, recusados = [], []
+        for arquivo in arquivos:
+            nome = os.path.basename(arquivo.filename)
+            if not (pipeline.is_subtitle(nome) or pipeline.is_media(nome)):
+                recusados.append({
+                    "arquivo": nome,
+                    "erro": f"Não sei o que fazer com {nome}. Envie um vídeo, "
+                            "um áudio, ou uma legenda (.srt, .ssa, .ass).",
+                })
+                continue
+            arquivo.save(os.path.join(media_dir, nome))
+            guardados.append(nome)
 
-        destino = os.path.join(media_dir, nome)
-        arquivo.save(destino)
-        job = fila.enviar(nome, destino)
-        return jsonify(job.para_json()), 202
+        if not guardados:
+            return jsonify({"erro": recusados[0]["erro"],
+                            "recusados": recusados}), 400
+
+        return jsonify({"guardados": guardados, "recusados": recusados}), 201
 
     @app.get("/api/config")
     def ler_config():
@@ -394,6 +417,8 @@ PAGINA = """<!doctype html>
   .item .nome { flex: 1 1 auto; min-width: 9ch; overflow: hidden;
                 text-overflow: ellipsis; white-space: nowrap; }
   .item .tag { flex-shrink: 0; }
+  /* Marca o que acabou de subir, para o usuário achar onde clicar. */
+  .item.novo { background: #1e2536; box-shadow: inset 3px 0 0 #3b82f6; }
   .item .acao { flex-shrink: 1; max-width: 220px; }
   .pasta { padding: 8px 14px; background: #23232b; font-size: 13px;
            color: #9a9aa2; border-bottom: 1px solid #2e2e36; }
@@ -450,11 +475,11 @@ PAGINA = """<!doctype html>
   <p class="sub">Transcreve o áudio do filme e traduz a legenda para português.</p>
 
   <div class="drop" id="drop">
-    <strong>Arraste o filme ou a legenda aqui</strong>
-    <div id="dica">v&iacute;deo, &aacute;udio ou legenda</div>
-    <button id="escolher" type="button">Escolher arquivo...</button>
+    <strong>Arraste o filme e a legenda aqui</strong>
+    <div id="dica">pode mandar os dois juntos &mdash; v&iacute;deo, &aacute;udio ou legenda</div>
+    <button id="escolher" type="button">Escolher arquivos...</button>
     <div class="barra" id="barra-envio" hidden><div></div></div>
-    <input type="file" id="arquivo" hidden>
+    <input type="file" id="arquivo" accept="{{ACCEPT}}" multiple hidden>
   </div>
 
   <h2>Arquivos no servidor</h2>
@@ -552,6 +577,8 @@ function linhaArquivo(item) {
     seletor.appendChild(opcao);
   }
 
+  if (recemChegados.includes(item.nome)) div.classList.add('novo');
+
   div.querySelector('.marca').onchange = contar;
   div.querySelector('button').onclick = () => processarUm(div);
   return div;
@@ -638,21 +665,28 @@ $('lote').onclick = async () => {
 const abrirSeletor = () => $('arquivo').click();
 $('escolher').onclick = (e) => { e.stopPropagation(); abrirSeletor(); };
 $('drop').onclick = abrirSeletor;
-$('arquivo').onchange = (e) => { if (e.target.files[0]) enviar(e.target.files[0]); };
+$('arquivo').onchange = (e) => { if (e.target.files.length) enviar(e.target.files); };
 $('drop').ondragover = (e) => { e.preventDefault(); $('drop').classList.add('ativo'); };
 $('drop').ondragleave = () => $('drop').classList.remove('ativo');
 $('drop').ondrop = (e) => {
   e.preventDefault();
   $('drop').classList.remove('ativo');
-  if (e.dataTransfer.files[0]) enviar(e.dataTransfer.files[0]);
+  if (e.dataTransfer.files.length) enviar(e.dataTransfer.files);
 };
 
-function enviar(arquivo) {
+const DICA_PADRAO = 'pode mandar os dois juntos — vídeo, áudio ou legenda';
+let recemChegados = [];
+
+function enviar(listaDeArquivos) {
   // XHR e nao fetch porque so ele reporta o andamento do envio. Filme leva
   // um ou dois minutos na rede local, e pagina parada sem sinal nenhum
   // parece travada.
+  const arquivos = Array.from(listaDeArquivos);
   const dados = new FormData();
-  dados.append('arquivo', arquivo);
+  arquivos.forEach((a) => dados.append('arquivo', a));
+
+  const rotulo = arquivos.length === 1
+    ? arquivos[0].name : `${arquivos.length} arquivos`;
 
   const barra = $('barra-envio');
   const preenchimento = barra.querySelector('div');
@@ -667,22 +701,30 @@ function enviar(arquivo) {
     if (!e.lengthComputable) return;
     const pct = Math.round(e.loaded * 100 / e.total);
     preenchimento.style.width = pct + '%';
-    dica.textContent = `Enviando ${arquivo.name}... ${pct}%`;
+    dica.textContent = `Enviando ${rotulo}... ${pct}%`;
   };
 
   xhr.onload = () => {
     barra.hidden = true;
-    dica.textContent = 'vídeo, áudio ou legenda — ou clique para escolher';
+    dica.textContent = DICA_PADRAO;
     let resposta = {};
     try { resposta = JSON.parse(xhr.responseText); } catch (e) {}
-    if (xhr.status >= 400) alert(resposta.erro || 'Falha no envio.');
+
+    if (xhr.status >= 400) {
+      alert(resposta.erro || 'Falha no envio.');
+    } else if (resposta.recusados && resposta.recusados.length) {
+      alert(resposta.recusados.map((x) => x.erro).join('\n'));
+    }
+
+    // Os arquivos ficam guardados, não processados: quem manda o filme com a
+    // legenda precisa que os dois estejam no lugar antes de decidir a ação.
+    recemChegados = resposta.guardados || [];
     carregarArquivos();
-    atualizar();
   };
 
   xhr.onerror = () => {
     barra.hidden = true;
-    dica.textContent = 'vídeo, áudio ou legenda — ou clique para escolher';
+    dica.textContent = DICA_PADRAO;
     alert('Falha no envio. Verifique a conexão com o servidor.');
   };
 
