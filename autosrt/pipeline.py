@@ -24,6 +24,12 @@ ENGINE_LLM = "llm"
 ENGINE_GOOGLE = "google"
 DEFAULT_ENGINE = ENGINE_LLM
 
+# Fatia da barra que cabe à transcrição quando o trabalho também traduz. O
+# Whisper lendo o áudio é de longe a parte lenta; a tradução leva o resto.
+# Serve para a barra andar sempre para frente, e é o que faz a previsão de
+# tempo bater: errar o peso não trava nada, só torce a estimativa.
+PESO_TRANSCRICAO = 70
+
 
 @dataclass
 class PipelineResult:
@@ -212,8 +218,18 @@ def process_media(media_path, output_path=None, *, engine=DEFAULT_ENGINE,
     }
     if whisper_model:
         kwargs["model"] = whisper_model
+
+    # As duas fases dividem uma barra só. Antes cada uma contava de 0 a 100 na
+    # sua vez, então a barra enchia, voltava para trás e enchia de novo -- e
+    # ninguém conseguia ver quanto faltava para o fim de verdade.
+    peso_audio = PESO_TRANSCRICAO if translate else 100
     if progress:
-        kwargs["progress"] = lambda pct: progress(pct, 100)
+        kwargs["progress"] = lambda pct: progress(pct * peso_audio // 100, 100)
+
+    def progresso_da_traducao(feitas, total):
+        if progress and total:
+            andado = (100 - peso_audio) * feitas / total
+            progress(int(peso_audio + andado), 100)
 
     cues = transcribe_module.transcribe(media_path, **kwargs)
     if not cues:
@@ -238,10 +254,11 @@ def process_media(media_path, output_path=None, *, engine=DEFAULT_ENGINE,
     if engine == ENGINE_LLM:
         translated, failed = _translate_with_llm(
             cues, detected_lang, llm_client=llm_client, speaker_genders=None,
-            progress=progress, cancel_event=cancel_event)
+            progress=progresso_da_traducao, cancel_event=cancel_event)
     else:
         report = translate_cues(
-            cues, detected_lang, progress=progress, cancel_event=cancel_event,
+            cues, detected_lang, progress=progresso_da_traducao,
+            cancel_event=cancel_event,
             translator_factory=translator_factory)
         translated, failed = report.translated, report.failed
 

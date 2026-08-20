@@ -23,6 +23,10 @@ CANCELADO = "cancelado"
 
 FINAIS = {CONCLUIDO, ERRO, CANCELADO}
 
+# Piso para arriscar uma previsão de tempo: antes disso a extrapolação é ruído.
+MIN_PROGRESSO_PARA_ESTIMAR = 3
+MIN_SEGUNDOS_PARA_ESTIMAR = 20
+
 
 @dataclass
 class Job:
@@ -38,7 +42,28 @@ class Job:
     erro: str = None
     detalhes: dict = field(default_factory=dict)
     criado_em: float = field(default_factory=time.time)
+    iniciado_em: float = None
     cancelar: threading.Event = field(default_factory=threading.Event)
+
+    def segundos_restantes(self, agora=None):
+        """Quanto ainda falta, medindo o ritmo do que já andou.
+
+        Devolve ``None`` enquanto não há o que medir. Nos primeiros segundos a
+        conta pula de uma hora para dois minutos a cada atualização, e número
+        que dança desse jeito é pior que número nenhum -- por isso só responde
+        depois que o trabalho andou um pouco.
+        """
+        if self.estado != RODANDO or not self.iniciado_em:
+            return None
+        if self.progresso < MIN_PROGRESSO_PARA_ESTIMAR:
+            return None
+
+        decorrido = (agora or time.time()) - self.iniciado_em
+        if decorrido < MIN_SEGUNDOS_PARA_ESTIMAR:
+            return None
+
+        total = decorrido * 100 / self.progresso
+        return max(0, round(total - decorrido))
 
     def para_json(self) -> dict:
         return {
@@ -51,6 +76,7 @@ class Job:
             "detalhes": self.detalhes,
             "pronto": self.estado in FINAIS,
             "baixavel": self.estado == CONCLUIDO and bool(self.resultado),
+            "restante_seg": self.segundos_restantes(),
         }
 
 
@@ -102,6 +128,9 @@ class JobQueue:
 
             job.estado = RODANDO
             job.etapa = "Começando..."
+            # A previsão conta a partir daqui, não de quando entrou na fila:
+            # tempo parado atrás de outro trabalho não diz nada sobre este.
+            job.iniciado_em = time.time()
             try:
                 self._worker(job)
             except Exception as exc:

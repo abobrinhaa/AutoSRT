@@ -959,6 +959,18 @@ function enviar(listaDeArquivos) {
   xhr.send(dados);
 }
 
+// Previsão em texto curto. Vem vazia enquanto o servidor não tem base para
+// estimar, para a etapa nunca mostrar um tempo inventado.
+function faltam(segundos) {
+  if (segundos === null || segundos === undefined) return '';
+  if (segundos < 60) return ' · falta menos de 1 min';
+  const minutos = Math.round(segundos / 60);
+  if (minutos < 60) return ` · faltam ~${minutos} min`;
+  const horas = Math.floor(minutos / 60);
+  const resto = minutos % 60;
+  return ` · faltam ~${horas}h${resto ? String(resto).padStart(2, '0') : ''}`;
+}
+
 function cartao(job) {
   const div = document.createElement('div');
   div.className = 'trabalho';
@@ -981,7 +993,7 @@ function cartao(job) {
       (d.idioma ? ` · ${d.idioma}` : '') +
       (d.falhas ? ` · ${d.falhas} não traduzida(s)` : '');
   } else {
-    etapa.textContent = job.etapa;
+    etapa.textContent = job.etapa + faltam(job.restante_seg);
   }
 
   div.querySelector('.barra > div').style.width =
