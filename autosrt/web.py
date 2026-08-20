@@ -18,13 +18,20 @@ from .jobs import JobQueue
 
 DEFAULT_MEDIA_DIR = "midia"
 DEFAULT_PORT = 8000
-# Legendas são pequenas; o limite existe para barrar envio acidental de vídeo.
-MAX_UPLOAD_BYTES = 20 * 1024 * 1024
+# Em rede local, enviar um filme pelo navegador é questão de um ou dois
+# minutos - irrelevante perto da meia hora que a transcrição leva depois.
+# O limite existe só para não encher o disco por acidente.
+DEFAULT_MAX_UPLOAD_GB = 8
 
 
-def create_app(media_dir=None, engine=pipeline.ENGINE_LLM):
+def create_app(media_dir=None, engine=pipeline.ENGINE_LLM, max_upload_gb=None):
     app = Flask(__name__)
-    app.config["MAX_CONTENT_LENGTH"] = MAX_UPLOAD_BYTES
+
+    if max_upload_gb is None:
+        max_upload_gb = float(os.environ.get("AUTOSRT_MAX_UPLOAD_GB",
+                                             DEFAULT_MAX_UPLOAD_GB))
+    app.config["MAX_CONTENT_LENGTH"] = int(max_upload_gb * 1024 ** 3)
+    app.config["MAX_UPLOAD_GB"] = max_upload_gb
 
     media_dir = os.path.abspath(
         media_dir or os.environ.get("AUTOSRT_MEDIA_DIR", DEFAULT_MEDIA_DIR))
@@ -76,7 +83,9 @@ def _dentro_da_pasta(caminho, pasta) -> bool:
 
 def _listar_arquivos(media_dir) -> list:
     itens = []
-    for raiz, _, nomes in os.walk(media_dir):
+    for raiz, pastas, nomes in os.walk(media_dir):
+        # As transcrições no idioma falado não são material de entrada.
+        pastas[:] = [p for p in pastas if p != pipeline.ORIGINALS_DIRNAME]
         for nome in sorted(nomes):
             caminho = os.path.join(raiz, nome)
             if not (pipeline.is_media(caminho) or pipeline.is_subtitle(caminho)):
@@ -130,11 +139,10 @@ def _register_routes(app, fila, media_dir, engine):
             return jsonify({"erro": "Nenhum arquivo recebido."}), 400
 
         nome = os.path.basename(arquivo.filename)
-        if not pipeline.is_subtitle(nome):
+        if not (pipeline.is_subtitle(nome) or pipeline.is_media(nome)):
             return jsonify({
-                "erro": "Aqui só entram legendas (.srt, .ssa, .ass). "
-                        "Vídeo é grande demais para enviar pelo navegador: "
-                        "copie para a pasta do servidor e ele aparece na lista."
+                "erro": f"Não sei o que fazer com {nome}. Envie um vídeo, um "
+                        "áudio, ou uma legenda (.srt, .ssa, .ass)."
             }), 400
 
         destino = os.path.join(media_dir, nome)
@@ -167,9 +175,10 @@ def _register_routes(app, fila, media_dir, engine):
 
     @app.errorhandler(413)
     def grande_demais(_):
+        limite = app.config["MAX_UPLOAD_GB"]
         return jsonify({
-            "erro": "Arquivo grande demais. Pela página só dá para enviar "
-                    "legendas; copie o vídeo para a pasta do servidor."
+            "erro": f"Arquivo maior que o limite de {limite:g} GB. Copie-o "
+                    "direto para a pasta do servidor, que ele aparece na lista."
         }), 413
 
 
@@ -226,9 +235,10 @@ PAGINA = """<!doctype html>
   <p class="sub">Transcreve o áudio do filme e traduz a legenda para português.</p>
 
   <div class="drop" id="drop">
-    <strong>Arraste uma legenda aqui</strong><br>
-    .srt, .ssa ou .ass &mdash; ou clique para escolher
-    <input type="file" id="arquivo" accept=".srt,.ssa,.ass" hidden>
+    <strong>Arraste o filme ou a legenda aqui</strong><br>
+    <span id="dica">v&iacute;deo, &aacute;udio ou legenda &mdash; ou clique para escolher</span>
+    <div class="barra" id="barra-envio" hidden><div></div></div>
+    <input type="file" id="arquivo" hidden>
   </div>
 
   <h2>Arquivos no servidor</h2>
@@ -288,14 +298,46 @@ $('drop').ondrop = (e) => {
   if (e.dataTransfer.files[0]) enviar(e.dataTransfer.files[0]);
 };
 
-async function enviar(arquivo) {
+function enviar(arquivo) {
+  // XHR e nao fetch porque so ele reporta o andamento do envio. Filme leva
+  // um ou dois minutos na rede local, e pagina parada sem sinal nenhum
+  // parece travada.
   const dados = new FormData();
   dados.append('arquivo', arquivo);
-  const r = await fetch('/api/enviar', {method: 'POST', body: dados});
-  const resposta = await r.json().catch(() => ({erro: 'Falha no envio.'}));
-  if (!r.ok) alert(resposta.erro);
-  carregarArquivos();
-  atualizar();
+
+  const barra = $('barra-envio');
+  const preenchimento = barra.querySelector('div');
+  const dica = $('dica');
+  barra.hidden = false;
+  preenchimento.style.width = '0%';
+
+  const xhr = new XMLHttpRequest();
+  xhr.open('POST', '/api/enviar');
+
+  xhr.upload.onprogress = (e) => {
+    if (!e.lengthComputable) return;
+    const pct = Math.round(e.loaded * 100 / e.total);
+    preenchimento.style.width = pct + '%';
+    dica.textContent = `Enviando ${arquivo.name}... ${pct}%`;
+  };
+
+  xhr.onload = () => {
+    barra.hidden = true;
+    dica.textContent = 'vídeo, áudio ou legenda — ou clique para escolher';
+    let resposta = {};
+    try { resposta = JSON.parse(xhr.responseText); } catch (e) {}
+    if (xhr.status >= 400) alert(resposta.erro || 'Falha no envio.');
+    carregarArquivos();
+    atualizar();
+  };
+
+  xhr.onerror = () => {
+    barra.hidden = true;
+    dica.textContent = 'vídeo, áudio ou legenda — ou clique para escolher';
+    alert('Falha no envio. Verifique a conexão com o servidor.');
+  };
+
+  xhr.send(dados);
 }
 
 function cartao(job) {

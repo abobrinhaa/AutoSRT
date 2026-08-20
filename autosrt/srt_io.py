@@ -104,6 +104,10 @@ def _cues_from_srt_text(text: str) -> list:
 
 def save_cues(cues, path: str) -> None:
     """Grava as legendas em .srt UTF-8, usando o texto de trabalho."""
+    pasta = os.path.dirname(os.path.abspath(path))
+    if pasta:
+        os.makedirs(pasta, exist_ok=True)
+
     subs = pysrt.SubRipFile()
     for position, cue in enumerate(cues, start=1):
         subs.append(pysrt.SubRipItem(

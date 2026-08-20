@@ -96,6 +96,12 @@ class TestListagem(BaseWeb):
         itens = self.client.get("/api/arquivos").get_json()
         self.assertEqual(itens[0]["nome"], os.path.join("classicos", "a.srt"))
 
+    def test_esconde_a_pasta_de_originais(self):
+        self.escrever("filme.srt")
+        self.escrever(os.path.join(pipeline.ORIGINALS_DIRNAME, "filme.srt"))
+        itens = self.client.get("/api/arquivos").get_json()
+        self.assertEqual([i["nome"] for i in itens], ["filme.srt"])
+
 
 class TestSeguranca(BaseWeb):
     def test_recusa_caminho_para_fora_da_pasta(self):
@@ -130,9 +136,27 @@ class TestEnvio(BaseWeb):
         self.assertEqual(resposta.status_code, 202)
         self.assertTrue(os.path.exists(os.path.join(self.tmp, "filme.srt")))
 
-    def test_recusa_video_explicando(self):
+    def test_aceita_video(self):
+        # Em rede local, enviar filme pelo navegador leva um ou dois minutos,
+        # irrelevante perto do tempo de transcrição.
         resposta = self.enviar("filme.mkv", "conteudo")
+        self.assertEqual(resposta.status_code, 202)
+        self.assertTrue(os.path.exists(os.path.join(self.tmp, "filme.mkv")))
+
+    def test_recusa_tipo_desconhecido(self):
+        resposta = self.enviar("planilha.xlsx", "conteudo")
         self.assertEqual(resposta.status_code, 400)
+        self.assertIn("legenda", resposta.get_json()["erro"])
+
+    def test_limite_de_tamanho_explica_a_alternativa(self):
+        app = web.create_app(media_dir=self.tmp, max_upload_gb=0.000001)
+        app.config["TESTING"] = True
+        cliente = app.test_client()
+        resposta = cliente.post(
+            "/api/enviar",
+            data={"arquivo": (io.BytesIO(b"x" * 5000), "grande.srt")},
+            content_type="multipart/form-data")
+        self.assertEqual(resposta.status_code, 413)
         self.assertIn("pasta do servidor", resposta.get_json()["erro"])
 
     def test_recusa_sem_arquivo(self):

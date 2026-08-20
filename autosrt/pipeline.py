@@ -143,8 +143,23 @@ MEDIA_EXTENSIONS = {
 SUBTITLE_EXTENSIONS = {".srt", ".ssa", ".ass"}
 
 
+#: Onde ficam as transcrições no idioma falado. É subpasta, e não um irmão
+#: do vídeo, porque tocador de vídeo casa legenda pelo nome do arquivo: um
+#: "filme.original.srt" ao lado do "filme.mkv" faria o VLC oferecer duas
+#: faixas de legenda e obrigar a escolher entre elas.
+ORIGINALS_DIRNAME = "originais"
+
+
 def is_media(path: str) -> bool:
     return os.path.splitext(path)[1].lower() in MEDIA_EXTENSIONS
+
+
+def original_path_for(output_path: str) -> str:
+    """Caminho da transcrição no idioma falado, correspondente à saída."""
+    pasta = os.path.join(os.path.dirname(os.path.abspath(output_path)),
+                         ORIGINALS_DIRNAME)
+    nome = os.path.splitext(os.path.basename(output_path))[0] + ".srt"
+    return os.path.join(pasta, nome)
 
 
 def is_subtitle(path: str) -> bool:
@@ -207,7 +222,7 @@ def process_media(media_path, output_path=None, *, engine=DEFAULT_ENGINE,
     detected_lang = language or _safe_detect(cues)
 
     if keep_original:
-        srt_io.save_cues(cues, os.path.splitext(output_path)[0] + ".original.srt")
+        srt_io.save_cues(cues, original_path_for(output_path))
 
     if not translate:
         srt_io.save_cues(cues, output_path)

@@ -161,5 +161,24 @@ class TestPipelineComModelo(unittest.TestCase):
         self.assertEqual(len(srt_io.load_cues(destino)), 3)
 
 
+class TestPastaDeOriginais(unittest.TestCase):
+    """A transcrição no idioma falado não pode ficar ao lado do vídeo.
+
+    Tocador de vídeo casa legenda pelo nome do arquivo; um irmão
+    "filme.original.srt" faria o VLC oferecer duas faixas de legenda.
+    """
+
+    def test_vai_para_subpasta(self):
+        from autosrt.pipeline import ORIGINALS_DIRNAME, original_path_for
+        caminho = original_path_for(os.path.join("/filmes", "casablanca.srt"))
+        self.assertEqual(os.path.dirname(caminho),
+                         os.path.join("/filmes", ORIGINALS_DIRNAME))
+        self.assertEqual(os.path.basename(caminho), "casablanca.srt")
+
+    def test_nao_fica_ao_lado_do_video(self):
+        from autosrt.pipeline import original_path_for
+        caminho = original_path_for("/filmes/casablanca.srt")
+        self.assertNotEqual(os.path.dirname(caminho), "/filmes")
+
 if __name__ == "__main__":
     unittest.main()
