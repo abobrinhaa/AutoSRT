@@ -252,6 +252,62 @@ class TestAcoesDisponiveis(unittest.TestCase):
         self.assertNotIn("converter", self.ids("filme.srt"))
 
 
+class TestLegendaJaExistente(unittest.TestCase):
+    """Vídeo com legenda ao lado não deveria ser transcrito por engano.
+
+    Transcrever leva dezenas de minutos de GPU para produzir o que já está
+    no disco; traduzir a legenda existente leva pouco mais de um minuto.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.video = os.path.join(self.tmp, "filme.mkv")
+        with open(self.video, "wb") as handle:
+            handle.write(b"\0")
+
+    def criar_legenda(self, extensao=".srt"):
+        caminho = os.path.join(self.tmp, "filme" + extensao)
+        with open(caminho, "w", encoding="utf-8") as handle:
+            handle.write(SRT)
+        return caminho
+
+    def test_sem_legenda_ao_lado(self):
+        self.assertIsNone(web.legenda_irma(self.video))
+
+    def test_encontra_srt_de_mesmo_nome(self):
+        esperado = self.criar_legenda(".srt")
+        self.assertEqual(web.legenda_irma(self.video), esperado)
+
+    def test_encontra_ssa(self):
+        esperado = self.criar_legenda(".ssa")
+        self.assertEqual(web.legenda_irma(self.video), esperado)
+
+    def test_srt_tem_preferencia_sobre_ssa(self):
+        self.criar_legenda(".ssa")
+        srt = self.criar_legenda(".srt")
+        self.assertEqual(web.legenda_irma(self.video), srt)
+
+    def test_nome_diferente_nao_conta(self):
+        outro = os.path.join(self.tmp, "outro-filme.srt")
+        with open(outro, "w", encoding="utf-8") as handle:
+            handle.write(SRT)
+        self.assertIsNone(web.legenda_irma(self.video))
+
+    def test_acao_de_aproveitar_aparece_primeiro(self):
+        self.criar_legenda()
+        ids = [a["id"] for a in web.acoes_para(self.video)]
+        self.assertEqual(ids[0], "traduzir_existente")
+
+    def test_sem_legenda_a_acao_nao_aparece(self):
+        ids = [a["id"] for a in web.acoes_para(self.video)]
+        self.assertNotIn("traduzir_existente", ids)
+
+    def test_transcrever_continua_disponivel(self):
+        self.criar_legenda()
+        ids = [a["id"] for a in web.acoes_para(self.video)]
+        self.assertIn("completo", ids)
+
+
 class TestAcoesIndividuais(BaseWeb):
     def setUp(self):
         super().setUp()
@@ -300,6 +356,27 @@ class TestAcoesIndividuais(BaseWeb):
         self.escrever("filme.srt")
         resposta = self.client.post("/api/processar", json={
             "arquivo": "filme.srt", "acao": "explodir"})
+        self.assertEqual(resposta.status_code, 400)
+
+    def test_aproveita_a_legenda_em_vez_de_transcrever(self):
+        self.escrever("filme.srt")
+        self.tocar("filme.mkv")
+
+        itens = self.client.get("/api/arquivos").get_json()
+        video = next(i for i in itens if i["nome"] == "filme.mkv")
+        self.assertTrue(video["tem_legenda"])
+        self.assertEqual(video["acoes"][0]["id"], "traduzir_existente")
+
+        job = self.client.post("/api/processar", json={
+            "arquivo": "filme.mkv", "acao": "traduzir_existente"}).get_json()
+        final = self.esperar(job["id"])
+        self.assertEqual(final["estado"], jobs.CONCLUIDO)
+        self.assertEqual(final["detalhes"]["total"], 1)
+
+    def test_aproveitar_e_recusado_sem_legenda_ao_lado(self):
+        self.tocar("filme.mkv")
+        resposta = self.client.post("/api/processar", json={
+            "arquivo": "filme.mkv", "acao": "traduzir_existente"})
         self.assertEqual(resposta.status_code, 400)
 
 

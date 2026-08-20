@@ -57,12 +57,37 @@ ACOES_LEGENDA = [
     ("deslocar", "Ajustar o tempo..."),
 ]
 ACAO_CONVERTER = ("converter", "Só converter para .srt")
+ACAO_LEGENDA_EXISTENTE = ("traduzir_existente", "Usar a legenda existente")
+
+#: Extensões de legenda procuradas ao lado de um vídeo, em ordem de
+#: preferência: SRT primeiro, porque dispensa conversão.
+EXTENSOES_IRMAS = (".srt", ".ssa", ".ass")
+
+
+def legenda_irma(caminho_video):
+    """Legenda de mesmo nome, na mesma pasta do vídeo, se houver.
+
+    Existindo, traduzi-la custa um minuto contra a meia hora de GPU que a
+    transcrição levaria para produzir o que já está ali.
+    """
+    raiz = os.path.splitext(caminho_video)[0]
+    for extensao in EXTENSOES_IRMAS:
+        candidato = raiz + extensao
+        if os.path.isfile(candidato):
+            return candidato
+    return None
 
 
 def acoes_para(caminho) -> list:
     """Operações aplicáveis a um arquivo, na ordem em que fazem sentido."""
     if pipeline.is_media(caminho):
-        return [{"id": i, "rotulo": r} for i, r in ACOES_MIDIA]
+        acoes = list(ACOES_MIDIA)
+        # Legenda pronta ao lado vira a primeira opção, e portanto o padrão:
+        # transcrever de novo o que já existe é o desperdício mais caro que
+        # este programa consegue cometer.
+        if legenda_irma(caminho):
+            acoes.insert(0, ACAO_LEGENDA_EXISTENTE)
+        return [{"id": i, "rotulo": r} for i, r in acoes]
 
     acoes = list(ACOES_LEGENDA)
     if os.path.splitext(caminho)[1].lower() in {".ssa", ".ass"}:
@@ -85,6 +110,8 @@ def _executar(job, engine):
         return _deslocar(job, status)
     if acao == "converter":
         return _converter(job, status)
+    if acao == "traduzir_existente":
+        return _traduzir_existente(job, engine, status, progresso)
 
     if pipeline.is_media(job.entrada):
         resultado = pipeline.process_media(
@@ -98,6 +125,29 @@ def _executar(job, engine):
             progress=progresso, cancel_event=job.cancelar)
         job.resultado = saida
 
+    job.detalhes.update({
+        "total": resultado.total,
+        "traduzidas": resultado.translated,
+        "falhas": resultado.failure_count,
+        "idioma": resultado.language_label,
+    })
+
+
+def _traduzir_existente(job, engine, status, progresso):
+    """Traduz a legenda que já acompanha o vídeo, sem transcrever nada."""
+    legenda = legenda_irma(job.entrada)
+    if not legenda:
+        raise ValueError(
+            "A legenda que estava ao lado do vídeo não está mais lá. "
+            "Escolha 'Transcrever e traduzir'.")
+
+    status(f"Usando {os.path.basename(legenda)}, sem transcrever.")
+    saida = srt_io.srt_output_path(legenda)
+    resultado = pipeline.translate_file(
+        legenda, saida, engine=engine, status=status, progress=progresso,
+        cancel_event=job.cancelar)
+
+    job.resultado = saida
     job.detalhes.update({
         "total": resultado.total,
         "traduzidas": resultado.translated,
@@ -148,11 +198,13 @@ def _listar_arquivos(media_dir) -> list:
             if minusculo.endswith("_backup.srt") or minusculo.endswith(".original.srt"):
                 continue
             relativo = os.path.relpath(caminho, media_dir)
+            irma = legenda_irma(caminho) if pipeline.is_media(caminho) else None
             itens.append({
                 "nome": relativo,
                 "pasta": os.path.dirname(relativo) or ".",
                 "tamanho": _tamanho_legivel(os.path.getsize(caminho)),
                 "tipo": "video" if pipeline.is_media(caminho) else "legenda",
+                "tem_legenda": bool(irma),
                 "acoes": acoes_para(caminho),
             })
     return sorted(itens, key=lambda i: i["nome"])
@@ -331,12 +383,18 @@ PAGINA = """<!doctype html>
           text-align: center; color: #9a9aa2; cursor: pointer;
           transition: border-color .15s, background .15s; }
   .drop:hover, .drop.ativo { border-color: #3b82f6; background: #21212a; }
+  .drop #dica { margin: 4px 0 14px; font-size: 14px; }
+  .tag.legenda-pronta { color: #4ade80; }
   .lista { border: 1px solid #2e2e36; border-radius: 12px; overflow: hidden; }
   .item { display: flex; align-items: center; gap: 12px; padding: 12px 14px;
           border-bottom: 1px solid #2e2e36; }
   .item:last-child { border-bottom: 0; }
-  .item .nome { flex: 1; min-width: 0; overflow: hidden;
+  /* min-width impede que o nome seja espremido até sumir quando a linha
+     acumula selos e um seletor longo; os selos não encolhem, o nome sim. */
+  .item .nome { flex: 1 1 auto; min-width: 9ch; overflow: hidden;
                 text-overflow: ellipsis; white-space: nowrap; }
+  .item .tag { flex-shrink: 0; }
+  .item .acao { flex-shrink: 1; max-width: 220px; }
   .pasta { padding: 8px 14px; background: #23232b; font-size: 13px;
            color: #9a9aa2; border-bottom: 1px solid #2e2e36; }
   .barra-acoes { display: flex; align-items: center; gap: 12px;
@@ -392,8 +450,9 @@ PAGINA = """<!doctype html>
   <p class="sub">Transcreve o áudio do filme e traduz a legenda para português.</p>
 
   <div class="drop" id="drop">
-    <strong>Arraste o filme ou a legenda aqui</strong><br>
-    <span id="dica">v&iacute;deo, &aacute;udio ou legenda &mdash; ou clique para escolher</span>
+    <strong>Arraste o filme ou a legenda aqui</strong>
+    <div id="dica">v&iacute;deo, &aacute;udio ou legenda</div>
+    <button id="escolher" type="button">Escolher arquivo...</button>
     <div class="barra" id="barra-envio" hidden><div></div></div>
     <input type="file" id="arquivo" hidden>
   </div>
@@ -470,10 +529,20 @@ function linhaArquivo(item) {
     <select class="acao"></select>
     <button>Processar</button>`;
 
-  div.querySelector('.nome').textContent =
-    item.pasta === '.' ? item.nome : item.nome.split('/').pop();
+  const nome = div.querySelector('.nome');
+  nome.textContent = item.pasta === '.' ? item.nome : item.nome.split('/').pop();
+  nome.title = item.nome;  // nome longo é truncado na linha; aqui vem inteiro
   div.querySelectorAll('.tag')[0].textContent = item.tipo;
   div.querySelectorAll('.tag')[1].textContent = item.tamanho;
+
+  if (item.tem_legenda) {
+    const selo = document.createElement('span');
+    selo.className = 'tag legenda-pronta';
+    selo.textContent = 'tem legenda';
+    // Junto dos outros selos, não colado ao nome: assim o nome mantém a
+    // largura que sobra em vez de disputar espaço no meio da linha.
+    div.querySelectorAll('.tag')[1].after(selo);
+  }
 
   const seletor = div.querySelector('.acao');
   for (const acao of item.acoes) {
@@ -566,7 +635,9 @@ $('lote').onclick = async () => {
   atualizar();
 };
 
-$('drop').onclick = () => $('arquivo').click();
+const abrirSeletor = () => $('arquivo').click();
+$('escolher').onclick = (e) => { e.stopPropagation(); abrirSeletor(); };
+$('drop').onclick = abrirSeletor;
 $('arquivo').onchange = (e) => { if (e.target.files[0]) enviar(e.target.files[0]); };
 $('drop').ondragover = (e) => { e.preventDefault(); $('drop').classList.add('ativo'); };
 $('drop').ondragleave = () => $('drop').classList.remove('ativo');
