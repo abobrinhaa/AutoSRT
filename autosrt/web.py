@@ -83,6 +83,20 @@ def legenda_irma(caminho_video):
     return None
 
 
+def filme_irma(caminho_legenda):
+    """Vídeo de mesmo nome, na mesma pasta da legenda, se houver.
+
+    Se existir, faz sentido oferecer "deslocar" para sincronizar a legenda
+    com o filme. Sem o filme irmão, deslocar é improdutivo.
+    """
+    raiz = os.path.splitext(caminho_legenda)[0]
+    for extensao in pipeline.MEDIA_EXTENSIONS:
+        candidato = raiz + extensao
+        if os.path.isfile(candidato):
+            return candidato
+    return None
+
+
 def acoes_para(caminho) -> list:
     """Operações aplicáveis a um arquivo, na ordem em que fazem sentido."""
     if pipeline.is_media(caminho):
@@ -94,10 +108,24 @@ def acoes_para(caminho) -> list:
             acoes.insert(0, ACAO_LEGENDA_EXISTENTE)
         return [{"id": i, "rotulo": r} for i, r in acoes]
 
-    acoes = list(ACOES_LEGENDA)
+    # Para legendas, só oferece "deslocar" se houver filme irmão
+    acoes_disponiveis = []
+
+    # Traduzir sempre está disponível
+    acoes_disponiveis.append(("traduzir", "Traduzir"))
+
+    # Converter para .srt se for .ssa/.ass
     if os.path.splitext(caminho)[1].lower() in {".ssa", ".ass"}:
-        acoes.insert(1, ACAO_CONVERTER)
-    return [{"id": i, "rotulo": r} for i, r in acoes]
+        acoes_disponiveis.append(("converter", "Só converter para .srt"))
+
+    # Deslocar só se houver filme irmão para sincronizar
+    if filme_irma(caminho):
+        acoes_disponiveis.append(("deslocar", "Ajustar o tempo..."))
+    else:
+        # Legenda isolada (sem filme) - não oferece deslocar
+        pass
+
+    return [{"id": i, "rotulo": r} for i, r in acoes_disponiveis]
 
 
 def _executar(job, engine):
