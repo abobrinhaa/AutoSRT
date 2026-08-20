@@ -548,6 +548,9 @@ PAGINA = """<!doctype html>
   .item.novo { background: #1e2536; box-shadow: inset 3px 0 0 #3b82f6; }
   .item .acao { flex-shrink: 1; max-width: 220px; }
   #arquivo { display: none; }
+  #escolher { display: inline-block; padding: 8px 16px; background: #3b82f6;
+              color: white; border-radius: 6px; cursor: pointer; font-weight: 500;
+              border: none; }
   .pasta { padding: 8px 14px; background: #23232b; font-size: 13px;
            color: #9a9aa2; border-bottom: 1px solid #2e2e36; }
   .barra-acoes { display: flex; align-items: center; gap: 12px;
@@ -605,7 +608,7 @@ PAGINA = """<!doctype html>
   <div class="drop" id="drop">
     <strong>Arraste o filme e a legenda aqui</strong>
     <div id="dica">pode mandar os dois juntos &mdash; v&iacute;deo, &aacute;udio ou legenda</div>
-    <button id="escolher" type="button">Escolher arquivos...</button>
+    <label for="arquivo" id="escolher">Escolher arquivos...</label>
     <div class="barra" id="barra-envio" hidden><div></div></div>
     <input type="file" id="arquivo" accept="{{ACCEPT}}" multiple>
   </div>
@@ -790,12 +793,7 @@ $('lote').onclick = async () => {
   atualizar();
 };
 
-const abrirSeletor = () => {
-  const input = $('arquivo');
-  if (input) input.click();
-};
-$('escolher').onclick = (e) => { e.stopPropagation(); abrirSeletor(); };
-$('drop').onclick = abrirSeletor;
+$('drop').onclick = () => $('arquivo').click();
 $('arquivo').onchange = (e) => { if (e.target.files.length) enviar(e.target.files); };
 $('drop').ondragover = (e) => { e.preventDefault(); $('drop').classList.add('ativo'); };
 $('drop').ondragleave = () => $('drop').classList.remove('ativo');
