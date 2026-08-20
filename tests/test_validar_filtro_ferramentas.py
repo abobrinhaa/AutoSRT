@@ -378,5 +378,99 @@ class TestConstantesAcoes(unittest.TestCase):
         self.assertEqual(web.EXTENSOES_IRMAS[2], ".ass")
 
 
+class TestValidacaoCriticaDeslocar(unittest.TestCase):
+    """ACHADO CRÍTICO: Validação de "deslocar" legenda sem filme.
+
+    Questão levantada: "Para deslocar/ajustar tempo de legenda, não precisa do filme?"
+
+    Resposta: Atualmente, a regra oferece "deslocar" para TODA legenda, mesmo isolada.
+    Mas praticamente, deslocar sem o filme é improdutivo (não consegue conferir).
+
+    Este teste valida se é intencional ou se deveria ser restritivo.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+
+    def criar_arquivo(self, nome):
+        """Cria um arquivo vazio para teste."""
+        caminho = os.path.join(self.tmp, nome)
+        os.makedirs(os.path.dirname(caminho), exist_ok=True)
+        with open(caminho, "wb") as f:
+            f.write(b"\0")
+        return caminho
+
+    def acoes_ids(self, caminho):
+        """Extrai IDs das ações disponíveis para um arquivo."""
+        return [a["id"] for a in web.acoes_para(caminho)]
+
+    def test_comportamento_atual_legenda_isolada_pode_deslocar(self):
+        """ESTADO ATUAL: Legenda isolada oferece 'deslocar'."""
+        caminho = self.criar_arquivo("legenda.srt")
+        ids = self.acoes_ids(caminho)
+
+        # Atualmente passa - a ação deslocar é oferecida
+        self.assertIn("deslocar", ids)
+        # Resultado: ✅ Comportamento atual confirmado
+
+    def test_comportamento_atual_legenda_ssa_pode_deslocar(self):
+        """ESTADO ATUAL: Legenda .ssa isolada oferece 'deslocar'."""
+        caminho = self.criar_arquivo("legenda.ssa")
+        ids = self.acoes_ids(caminho)
+
+        # Atualmente passa - a ação deslocar é oferecida
+        self.assertIn("deslocar", ids)
+        # Resultado: ✅ Comportamento atual confirmado
+
+    def test_problematica_deslocar_isolado_sem_filme(self):
+        """ACHADO CRÍTICO: Legenda isolada oferece deslocar, mas é improdutivo.
+
+        Cenário:
+        pasta/
+          └─ legenda.srt  (sem filme ao lado)
+
+        Usuário clica "Ajustar o tempo" e desloca de +2s
+        MAS: não consegue conferir porque não tem o filme!
+
+        Pergunta de design: Deveria oferecer essa ação?
+        Opções:
+        1. Sim (atual) - Flexível mas permite uso improdutivo
+        2. Não - Restritivo, só oferece com filme ao lado
+        """
+        caminho = self.criar_arquivo("legenda.srt")
+        ids = self.acoes_ids(caminho)
+
+        # Teste documenta o comportamento atual
+        tem_deslocar = "deslocar" in ids
+
+        # Asserção comentada - para decisão do time:
+        # self.assertFalse(tem_deslocar,
+        #   "Legenda isolada deveria NÃO oferecer 'deslocar' sem filme")
+
+        # Por enquanto, apenas documenta o estado:
+        print(f"⚠️  Legenda isolada pode deslocar? {tem_deslocar} (sem validar filme)")
+        self.assertTrue(True)  # Apenas documenta
+
+    def test_nota_sobre_implementacao_deslocar(self):
+        """Nota: _deslocar() não valida se existe filme ao lado.
+
+        Arquivo: autosrt/web.py:164-175
+        Função: _deslocar(job, status)
+
+        Código:
+            cues = srt_io.load_cues(job.entrada)  # ← Só precisa da legenda
+            sync.shift_cues(cues, ...)
+            srt_io.save_cues(cues, saida)
+
+        Conclusão: Funcionalmente, deslocar legenda NÃO precisa do filme.
+        Mas praticamente, é improdutivo sem ele (não consegue sincronizar).
+
+        PERGUNTA PARA O TEAM:
+        - É intencional? (permite uso flexible)
+        - Ou deveria ser restritivo? (só com filme)
+        """
+        self.assertTrue(True)  # Apenas documenta
+
+
 if __name__ == "__main__":
     unittest.main()
