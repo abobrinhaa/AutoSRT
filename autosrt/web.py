@@ -13,7 +13,7 @@ import os
 
 from flask import (Flask, jsonify, request, send_file)
 
-from . import pipeline, srt_io
+from . import config, llm, pipeline, srt_io, sync
 from .jobs import JobQueue
 
 DEFAULT_MEDIA_DIR = "midia"
@@ -45,6 +45,31 @@ def create_app(media_dir=None, engine=pipeline.ENGINE_LLM, max_upload_gb=None):
     return app
 
 
+#: Cada operação existe sozinha. Nem sempre se quer a corrente inteira:
+#: às vezes é só traduzir uma legenda que já se tem, às vezes só transcrever
+#: para conferir o que o Whisper entendeu, às vezes só acertar o tempo.
+ACOES_MIDIA = [
+    ("completo", "Transcrever e traduzir"),
+    ("transcrever", "Só transcrever"),
+]
+ACOES_LEGENDA = [
+    ("traduzir", "Traduzir"),
+    ("deslocar", "Ajustar o tempo..."),
+]
+ACAO_CONVERTER = ("converter", "Só converter para .srt")
+
+
+def acoes_para(caminho) -> list:
+    """Operações aplicáveis a um arquivo, na ordem em que fazem sentido."""
+    if pipeline.is_media(caminho):
+        return [{"id": i, "rotulo": r} for i, r in ACOES_MIDIA]
+
+    acoes = list(ACOES_LEGENDA)
+    if os.path.splitext(caminho)[1].lower() in {".ssa", ".ass"}:
+        acoes.insert(1, ACAO_CONVERTER)
+    return [{"id": i, "rotulo": r} for i, r in acoes]
+
+
 def _executar(job, engine):
     """Roda um trabalho. Chamado pelo operário da fila."""
     def status(mensagem):
@@ -54,10 +79,17 @@ def _executar(job, engine):
         if total:
             job.progresso = min(100, int(feitas * 100 / total))
 
+    acao = job.detalhes.get("acao") or "completo"
+
+    if acao == "deslocar":
+        return _deslocar(job, status)
+    if acao == "converter":
+        return _converter(job, status)
+
     if pipeline.is_media(job.entrada):
         resultado = pipeline.process_media(
             job.entrada, engine=engine, status=status, progress=progresso,
-            cancel_event=job.cancelar)
+            cancel_event=job.cancelar, translate=(acao != "transcrever"))
         job.resultado = os.path.splitext(job.entrada)[0] + ".srt"
     else:
         saida = srt_io.srt_output_path(job.entrada)
@@ -72,6 +104,28 @@ def _executar(job, engine):
         "falhas": resultado.failure_count,
         "idioma": resultado.language_label,
     })
+
+
+def _deslocar(job, status):
+    """Move todos os tempos da legenda, sem traduzir nada."""
+    segundos = float(job.detalhes.get("segundos") or 0)
+    status(f"Deslocando em {segundos:+.3f}s...")
+
+    cues = srt_io.load_cues(job.entrada)
+    sync.shift_cues(cues, round(segundos * 1000))
+    saida = srt_io.srt_output_path(job.entrada)
+    srt_io.save_cues(cues, saida)
+
+    job.resultado = saida
+    job.detalhes.update({"total": len(cues)})
+
+
+def _converter(job, status):
+    """Converte SSA/ASS para SRT, sem traduzir nada."""
+    status("Convertendo para .srt...")
+    saida = srt_io.convert_to_srt(job.entrada)
+    job.resultado = saida
+    job.detalhes.update({"total": len(srt_io.load_cues(saida))})
 
 
 def _dentro_da_pasta(caminho, pasta) -> bool:
@@ -93,10 +147,13 @@ def _listar_arquivos(media_dir) -> list:
             minusculo = nome.lower()
             if minusculo.endswith("_backup.srt") or minusculo.endswith(".original.srt"):
                 continue
+            relativo = os.path.relpath(caminho, media_dir)
             itens.append({
-                "nome": os.path.relpath(caminho, media_dir),
+                "nome": relativo,
+                "pasta": os.path.dirname(relativo) or ".",
                 "tamanho": _tamanho_legivel(os.path.getsize(caminho)),
                 "tipo": "video" if pipeline.is_media(caminho) else "legenda",
+                "acoes": acoes_para(caminho),
             })
     return sorted(itens, key=lambda i: i["nome"])
 
@@ -120,17 +177,47 @@ def _register_routes(app, fila, media_dir, engine):
     def arquivos():
         return jsonify(_listar_arquivos(media_dir))
 
-    @app.post("/api/processar")
-    def processar():
-        nome = (request.json or {}).get("arquivo", "")
+    def _enfileirar(pedido):
+        """Valida um pedido e o coloca na fila. Devolve ``(job, erro, status)``."""
+        nome = (pedido or {}).get("arquivo", "")
         caminho = os.path.join(media_dir, nome)
         if not nome or not _dentro_da_pasta(caminho, media_dir):
-            return jsonify({"erro": "Arquivo inválido."}), 400
+            return None, "Arquivo inválido.", 400
         if not os.path.isfile(caminho):
-            return jsonify({"erro": "Esse arquivo não está mais na pasta."}), 404
+            return None, "Esse arquivo não está mais na pasta.", 404
 
-        job = fila.enviar(os.path.basename(nome), caminho)
+        acao = pedido.get("acao") or "completo"
+        validas = {a["id"] for a in acoes_para(caminho)} | {"completo"}
+        if acao not in validas:
+            return None, f"A ação '{acao}' não vale para este arquivo.", 400
+
+        job = fila.enviar(os.path.basename(nome), caminho, acao=acao,
+                          segundos=pedido.get("segundos"))
+        return job, None, 202
+
+    @app.post("/api/processar")
+    def processar():
+        job, erro, status = _enfileirar(request.json)
+        if erro:
+            return jsonify({"erro": erro}), status
         return jsonify(job.para_json()), 202
+
+    @app.post("/api/processar-lote")
+    def processar_lote():
+        pedidos = (request.json or {}).get("itens") or []
+        if not pedidos:
+            return jsonify({"erro": "Nenhum arquivo selecionado."}), 400
+
+        enfileirados, recusados = [], []
+        for pedido in pedidos:
+            job, erro, _ = _enfileirar(pedido)
+            if job:
+                enfileirados.append(job.para_json())
+            else:
+                recusados.append({"arquivo": pedido.get("arquivo"), "erro": erro})
+
+        return jsonify({"enfileirados": enfileirados,
+                        "recusados": recusados}), 202
 
     @app.post("/api/enviar")
     def enviar():
@@ -149,6 +236,48 @@ def _register_routes(app, fila, media_dir, engine):
         arquivo.save(destino)
         job = fila.enviar(nome, destino)
         return jsonify(job.para_json()), 202
+
+    @app.get("/api/config")
+    def ler_config():
+        """Estado da configuração. A chave nunca volta para o navegador."""
+        chave = config.get_openrouter_api_key()
+        return jsonify({
+            "tem_chave": bool(chave),
+            "chave_do_ambiente": bool(os.environ.get("OPENROUTER_API_KEY")),
+            "modelo": config.get_setting("llm_model", "LLM_MODEL") or llm.DEFAULT_MODEL,
+            "base_url": config.get_setting("llm_base_url", "LLM_BASE_URL")
+                        or llm.DEFAULT_BASE_URL,
+        })
+
+    @app.post("/api/config")
+    def gravar_config():
+        dados = request.json or {}
+        novos = {}
+
+        if "chave" in dados:
+            novos["openrouter_api_key"] = (dados.get("chave") or "").strip()
+        for campo, chave_config in (("modelo", "llm_model"),
+                                    ("base_url", "llm_base_url")):
+            if campo in dados:
+                novos[chave_config] = (dados.get(campo) or "").strip()
+
+        if not novos:
+            return jsonify({"erro": "Nada para gravar."}), 400
+
+        try:
+            config.save_config(novos)
+        except OSError as exc:
+            return jsonify({"erro": f"Não consegui gravar a configuração: {exc}"}), 500
+
+        return jsonify({"ok": True, "aviso": _aviso_de_ambiente(novos)})
+
+    def _aviso_de_ambiente(novos):
+        """Variável de ambiente vence o arquivo; avisar evita confusão."""
+        if novos.get("openrouter_api_key") and os.environ.get("OPENROUTER_API_KEY"):
+            return ("Salvo, mas a variável de ambiente OPENROUTER_API_KEY tem "
+                    "prioridade e continuará sendo usada. Remova-a para valer "
+                    "a chave gravada aqui.")
+        return None
 
     @app.get("/api/trabalhos")
     def trabalhos():
@@ -208,6 +337,18 @@ PAGINA = """<!doctype html>
   .item:last-child { border-bottom: 0; }
   .item .nome { flex: 1; min-width: 0; overflow: hidden;
                 text-overflow: ellipsis; white-space: nowrap; }
+  .pasta { padding: 8px 14px; background: #23232b; font-size: 13px;
+           color: #9a9aa2; border-bottom: 1px solid #2e2e36; }
+  .barra-acoes { display: flex; align-items: center; gap: 12px;
+                 margin-bottom: 10px; padding: 10px 14px; border-radius: 10px;
+                 background: #23232b; }
+  .barra-acoes .conta { flex: 1; color: #9a9aa2; font-size: 14px; }
+  select { font: inherit; background: #2a2a33; color: #e8e8ea;
+           border: 1px solid #3a3a42; border-radius: 8px; padding: 6px 8px; }
+  input[type=checkbox] { width: 17px; height: 17px; accent-color: #3b82f6;
+                         cursor: pointer; }
+  label.tudo { display: flex; align-items: center; gap: 8px; cursor: pointer;
+               color: #9a9aa2; font-size: 14px; }
   .tag { font-size: 12px; color: #9a9aa2; background: #2a2a33;
          padding: 2px 8px; border-radius: 999px; }
   button { font: inherit; border: 0; border-radius: 8px; padding: 8px 16px;
@@ -227,6 +368,22 @@ PAGINA = """<!doctype html>
   .ok { color: #4ade80; }
   .vazio { color: #9a9aa2; padding: 20px; text-align: center; }
   a.baixar { color: #3b82f6; text-decoration: none; font-weight: 500; }
+  details#config { margin-top: 36px; border: 1px solid #2e2e36;
+                   border-radius: 12px; }
+  details#config summary { padding: 14px; cursor: pointer; color: #9a9aa2;
+                           font-size: 14px; }
+  details#config .painel { padding: 0 14px 14px; display: grid; gap: 12px; }
+  details#config label { display: grid; gap: 6px; font-size: 14px;
+                         color: #9a9aa2; }
+  details#config input { font: inherit; background: #2a2a33; color: #e8e8ea;
+                         border: 1px solid #3a3a42; border-radius: 8px;
+                         padding: 8px 10px; }
+  .rodape { display: flex; align-items: center; gap: 12px; }
+  .dica-config { flex: 1; font-size: 13px; color: #6f6f78; }
+  .selo { font-size: 12px; padding: 2px 8px; border-radius: 999px;
+          background: #2a2a33; }
+  .selo.ok { color: #4ade80; }
+  .selo.falta { color: #fbbf24; }
 </style>
 </head>
 <body>
@@ -242,10 +399,34 @@ PAGINA = """<!doctype html>
   </div>
 
   <h2>Arquivos no servidor</h2>
+  <div class="barra-acoes" id="barra-acoes" hidden>
+    <label class="tudo"><input type="checkbox" id="tudo"> Selecionar todos</label>
+    <span class="conta" id="conta"></span>
+    <button id="lote" disabled>Processar selecionados</button>
+  </div>
   <div class="lista" id="lista"><div class="vazio">Carregando...</div></div>
 
   <h2>Trabalhos</h2>
   <div id="trabalhos"><div class="vazio">Nada ainda.</div></div>
+
+  <details id="config">
+    <summary>Configura&ccedil;&atilde;o da tradu&ccedil;&atilde;o <span id="estado-chave"></span></summary>
+    <div class="painel">
+      <label>Chave do OpenRouter
+        <input type="password" id="chave" placeholder="sk-or-v1-..." autocomplete="off">
+      </label>
+      <label>Modelo
+        <input type="text" id="modelo" placeholder="deepseek/deepseek-chat-v2.5">
+      </label>
+      <label>Endere&ccedil;o da API
+        <input type="text" id="base_url" placeholder="https://openrouter.ai/api/v1">
+      </label>
+      <div class="rodape">
+        <span class="dica-config">A chave fica no config.json do servidor e nunca volta para esta p&aacute;gina.</span>
+        <button id="salvar">Salvar</button>
+      </div>
+    </div>
+  </details>
 </main>
 
 <script>
@@ -255,38 +436,135 @@ async function carregarArquivos() {
   const r = await fetch('/api/arquivos');
   const itens = await r.json();
   const lista = $('lista');
+  $('barra-acoes').hidden = !itens.length;
+
   if (!itens.length) {
     lista.innerHTML = '<div class="vazio">Nenhum arquivo na pasta do servidor.</div>';
     return;
   }
+
   lista.innerHTML = '';
+  let pastaAtual = null;
   for (const item of itens) {
-    const div = document.createElement('div');
-    div.className = 'item';
-    div.innerHTML = `<span class="nome"></span>
-      <span class="tag"></span><span class="tag"></span>
-      <button>Processar</button>`;
-    div.querySelector('.nome').textContent = item.nome;
-    div.querySelectorAll('.tag')[0].textContent = item.tipo;
-    div.querySelectorAll('.tag')[1].textContent = item.tamanho;
-    div.querySelector('button').onclick = () => processar(item.nome, div);
-    lista.appendChild(div);
+    if (item.pasta !== pastaAtual) {
+      pastaAtual = item.pasta;
+      if (pastaAtual !== '.') {
+        const cabecalho = document.createElement('div');
+        cabecalho.className = 'pasta';
+        cabecalho.textContent = pastaAtual;
+        lista.appendChild(cabecalho);
+      }
+    }
+    lista.appendChild(linhaArquivo(item));
   }
+  contar();
 }
 
-async function processar(nome, div) {
+function linhaArquivo(item) {
+  const div = document.createElement('div');
+  div.className = 'item';
+  div.dataset.arquivo = item.nome;
+  div.innerHTML = `<input type="checkbox" class="marca">
+    <span class="nome"></span>
+    <span class="tag"></span><span class="tag"></span>
+    <select class="acao"></select>
+    <button>Processar</button>`;
+
+  div.querySelector('.nome').textContent =
+    item.pasta === '.' ? item.nome : item.nome.split('/').pop();
+  div.querySelectorAll('.tag')[0].textContent = item.tipo;
+  div.querySelectorAll('.tag')[1].textContent = item.tamanho;
+
+  const seletor = div.querySelector('.acao');
+  for (const acao of item.acoes) {
+    const opcao = document.createElement('option');
+    opcao.value = acao.id;
+    opcao.textContent = acao.rotulo;
+    seletor.appendChild(opcao);
+  }
+
+  div.querySelector('.marca').onchange = contar;
+  div.querySelector('button').onclick = () => processarUm(div);
+  return div;
+}
+
+function pedidoDe(div) {
+  const acao = div.querySelector('.acao').value;
+  const pedido = {arquivo: div.dataset.arquivo, acao: acao};
+  if (acao === 'deslocar') {
+    const resposta = prompt(
+      'Quantos segundos deslocar?\\n' +
+      'Positivo atrasa a legenda, negativo adianta. Exemplo: -2.5');
+    if (resposta === null) return null;
+    const segundos = parseFloat(resposta.replace(',', '.'));
+    if (isNaN(segundos)) { alert('Valor inválido: ' + resposta); return null; }
+    pedido.segundos = segundos;
+  }
+  return pedido;
+}
+
+async function processarUm(div) {
+  const pedido = pedidoDe(div);
+  if (!pedido) return;
+
   const botao = div.querySelector('button');
   botao.disabled = true;
   botao.textContent = 'Enviado';
   const r = await fetch('/api/processar', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({arquivo: nome})
+    body: JSON.stringify(pedido)
   });
   const dados = await r.json();
-  if (!r.ok) { alert(dados.erro); botao.disabled = false; botao.textContent = 'Processar'; }
+  if (!r.ok) {
+    alert(dados.erro);
+    botao.disabled = false;
+    botao.textContent = 'Processar';
+  }
   atualizar();
 }
+
+function selecionados() {
+  return Array.from(document.querySelectorAll('.item'))
+    .filter((div) => div.querySelector('.marca').checked);
+}
+
+function contar() {
+  const marcados = selecionados();
+  $('conta').textContent = marcados.length
+    ? `${marcados.length} selecionado(s)` : '';
+  $('lote').disabled = !marcados.length;
+  const todos = document.querySelectorAll('.item').length;
+  $('tudo').checked = todos > 0 && marcados.length === todos;
+}
+
+$('tudo').onchange = (e) => {
+  document.querySelectorAll('.marca').forEach((c) => { c.checked = e.target.checked; });
+  contar();
+};
+
+$('lote').onclick = async () => {
+  const pedidos = [];
+  for (const div of selecionados()) {
+    const pedido = pedidoDe(div);
+    if (pedido) pedidos.push(pedido);
+  }
+  if (!pedidos.length) return;
+
+  $('lote').disabled = true;
+  const r = await fetch('/api/processar-lote', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({itens: pedidos})
+  });
+  const dados = await r.json();
+  if (dados.recusados && dados.recusados.length) {
+    alert(dados.recusados.map((x) => `${x.arquivo}: ${x.erro}`).join('\\n'));
+  }
+  document.querySelectorAll('.marca').forEach((c) => { c.checked = false; });
+  contar();
+  atualizar();
+};
 
 $('drop').onclick = () => $('arquivo').click();
 $('arquivo').onchange = (e) => { if (e.target.files[0]) enviar(e.target.files[0]); };
@@ -400,6 +678,43 @@ async function atualizar() {
   jobs.forEach((job) => alvo.appendChild(cartao(job)));
 }
 
+async function carregarConfig() {
+  const r = await fetch('/api/config');
+  const c = await r.json();
+  $('modelo').value = c.modelo || '';
+  $('base_url').value = c.base_url || '';
+
+  const selo = $('estado-chave');
+  selo.className = 'selo ' + (c.tem_chave ? 'ok' : 'falta');
+  selo.textContent = c.tem_chave
+    ? (c.chave_do_ambiente ? 'chave do ambiente' : 'chave configurada')
+    : 'sem chave';
+
+  // Sem chave, a tradução não funciona: abre o painel para não deixar o
+  // usuário descobrir isso só quando o primeiro trabalho falhar.
+  if (!c.tem_chave) $('config').open = true;
+}
+
+$('salvar').onclick = async () => {
+  const corpo = {modelo: $('modelo').value, base_url: $('base_url').value};
+  if ($('chave').value) corpo.chave = $('chave').value;
+
+  $('salvar').disabled = true;
+  const r = await fetch('/api/config', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(corpo)
+  });
+  const dados = await r.json();
+  $('salvar').disabled = false;
+
+  if (!r.ok) { alert(dados.erro); return; }
+  if (dados.aviso) alert(dados.aviso);
+  $('chave').value = '';
+  carregarConfig();
+};
+
+carregarConfig();
 carregarArquivos();
 atualizar();
 setInterval(atualizar, 2000);

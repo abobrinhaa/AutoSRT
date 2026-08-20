@@ -13,3 +13,6 @@ dist/
 # Python
 __pycache__/
 *.py[cod]
+
+# Pasta de trabalho do servidor web (filmes e legendas do usuário)
+midia/

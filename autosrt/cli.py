@@ -55,6 +55,8 @@ def build_parser():
                             "(padrão: llm)")
     grupo.add_argument("--so-traduzir", action="store_true",
                        help="não transcreve, mesmo recebendo um vídeo")
+    grupo.add_argument("--so-converter", action="store_true",
+                       help="só converte SSA/ASS para .srt, sem traduzir")
 
     grupo = parser.add_argument_group("transcrição")
     grupo.add_argument("--idioma", metavar="COD",
@@ -151,6 +153,9 @@ def process_one(entrada, args, reporter) -> bool:
     if args.deslocar is not None or args.sincronizar:
         return _apply_sync(entrada, args, reporter)
 
+    if args.so_converter:
+        return _convert_only(entrada, args, reporter)
+
     saida = args.saida and output_for(entrada, args.saida) or None
 
     try:
@@ -186,6 +191,28 @@ def _report_result(resultado, reporter):
         reporter.info(
             f"  atenção: {resultado.failure_count} legenda(s) não traduzidas, "
             "mantidas no idioma original")
+
+
+def _convert_only(entrada, args, reporter) -> bool:
+    """Converte para .srt sem traduzir."""
+    if pipeline.is_media(entrada):
+        reporter.error("--so-converter vale para legendas, não para vídeo")
+        return False
+
+    destino = args.saida and output_for(entrada, args.saida) or \
+        srt_io.srt_output_path(entrada)
+    if os.path.abspath(destino) == os.path.abspath(entrada):
+        reporter.error(f"{os.path.basename(entrada)} já é .srt, nada a converter")
+        return False
+
+    try:
+        srt_io.convert_to_srt(entrada, destino)
+    except (UnsupportedSubtitleError, OSError) as exc:
+        reporter.error(str(exc))
+        return False
+
+    reporter.info(f"  convertido para {os.path.basename(destino)}")
+    return True
 
 
 def _apply_sync(entrada, args, reporter) -> bool:

@@ -134,6 +134,27 @@ class TestTraducao(BaseCLI):
         self.assertTrue(os.path.exists(os.path.join(destino, "filme.srt")))
 
 
+class TestSoConverter(BaseCLI):
+    def test_converte_sem_traduzir(self):
+        entrada = self.write("filme.ssa", SSA)
+        código = self.run_cli([entrada, "--so-converter"])
+        self.assertEqual(código, cli.EXIT_OK)
+        destino = os.path.join(self.tmp, "filme.srt")
+        self.assertTrue(os.path.exists(destino))
+        with open(destino, encoding="utf-8") as handle:
+            # Continua em inglês: converter não traduz.
+            self.assertIn("This is an English sentence", handle.read())
+
+    def test_srt_nao_tem_o_que_converter(self):
+        entrada = self.write("filme.srt")
+        self.assertEqual(self.run_cli([entrada, "--so-converter"]), cli.EXIT_ERRO)
+        self.assertIn("já é .srt", self.err.getvalue())
+
+    def test_video_e_recusado(self):
+        entrada = self.touch("filme.mkv")
+        self.assertEqual(self.run_cli([entrada, "--so-converter"]), cli.EXIT_ERRO)
+
+
 class TestSincronia(BaseCLI):
     def test_deslocamento(self):
         entrada = self.write("filme.srt")

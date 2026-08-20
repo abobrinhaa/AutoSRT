@@ -1,6 +1,7 @@
 import io
 import logging
 import os
+import re
 import tempfile
 import time
 import unittest
@@ -61,10 +62,19 @@ class TestPagina(BaseWeb):
         self.assertIn("AutoSRT", resposta.get_data(as_text=True))
 
     def test_pagina_nao_puxa_recurso_externo(self):
-        # Sem internet na rede local, um CDN deixaria a página quebrada.
+        # Sem internet na rede local, um CDN deixaria a página quebrada. O que
+        # importa é o que a página CARREGA - endereço em placeholder de campo
+        # é só texto e não busca nada.
         html = self.client.get("/").get_data(as_text=True)
-        self.assertNotIn("http://", html.replace("http://{args.host}", ""))
-        self.assertNotIn("https://", html)
+        for padrao in ("<script src=", "<link ", "@import", "url(http",
+                       'src="http', "src='http"):
+            self.assertNotIn(padrao, html, f"a página carrega algo externo: {padrao}")
+
+    def test_requisicoes_do_script_sao_todas_relativas(self):
+        html = self.client.get("/").get_data(as_text=True)
+        for chamada in re.findall(r"fetch\(\s*['\"]([^'\"]+)", html):
+            self.assertTrue(chamada.startswith("/"),
+                            f"fetch para endereço não relativo: {chamada}")
 
 
 class TestListagem(BaseWeb):
@@ -219,6 +229,193 @@ class TestProcessamento(BaseWeb):
 
     def test_download_de_trabalho_inexistente(self):
         self.assertEqual(self.client.get("/api/baixar/naoexiste").status_code, 404)
+
+
+class TestAcoesDisponiveis(unittest.TestCase):
+    def ids(self, caminho):
+        return [a["id"] for a in web.acoes_para(caminho)]
+
+    def test_video_pode_so_transcrever(self):
+        self.assertEqual(self.ids("filme.mkv"), ["completo", "transcrever"])
+
+    def test_legenda_nao_oferece_transcrever(self):
+        self.assertNotIn("transcrever", self.ids("filme.srt"))
+
+    def test_legenda_pode_traduzir_e_ajustar_tempo(self):
+        ids = self.ids("filme.srt")
+        self.assertIn("traduzir", ids)
+        self.assertIn("deslocar", ids)
+
+    def test_converter_so_aparece_para_ssa(self):
+        self.assertIn("converter", self.ids("filme.ssa"))
+        self.assertIn("converter", self.ids("filme.ass"))
+        self.assertNotIn("converter", self.ids("filme.srt"))
+
+
+class TestAcoesIndividuais(BaseWeb):
+    def setUp(self):
+        super().setUp()
+        self._original = pipeline._translate_with_llm
+        pipeline._translate_with_llm = lambda cues, lang, **kw: (len(cues), [])
+
+    def tearDown(self):
+        pipeline._translate_with_llm = self._original
+
+    def test_deslocar_move_os_tempos_sem_traduzir(self):
+        self.escrever("filme.srt")
+        job = self.client.post("/api/processar", json={
+            "arquivo": "filme.srt", "acao": "deslocar", "segundos": 2.5,
+        }).get_json()
+        self.esperar(job["id"])
+
+        cues = pipeline.srt_io.load_cues(os.path.join(self.tmp, "filme.srt"))
+        self.assertEqual(cues[0].start, 3500)
+        # O texto continua em inglês: deslocar não traduz.
+        self.assertIn("English", cues[0].source_text)
+
+    def test_converter_gera_srt_sem_traduzir(self):
+        ssa = ("[Script Info]\nScriptType: v4.00+\n\n[Events]\n"
+               "Format: Layer, Start, End, Style, Name, MarginL, MarginR, "
+               "MarginV, Effect, Text\n"
+               "Dialogue: 0,0:00:01.00,0:00:03.00,Default,,0,0,0,,Hello there\n")
+        self.escrever("filme.ssa", ssa)
+        job = self.client.post("/api/processar", json={
+            "arquivo": "filme.ssa", "acao": "converter"}).get_json()
+        final = self.esperar(job["id"])
+
+        self.assertEqual(final["estado"], jobs.CONCLUIDO)
+        destino = os.path.join(self.tmp, "filme.srt")
+        self.assertTrue(os.path.exists(destino))
+        with open(destino, encoding="utf-8") as handle:
+            self.assertIn("Hello there", handle.read())
+
+    def test_acao_invalida_para_o_tipo_e_recusada(self):
+        self.escrever("filme.srt")
+        resposta = self.client.post("/api/processar", json={
+            "arquivo": "filme.srt", "acao": "transcrever"})
+        self.assertEqual(resposta.status_code, 400)
+        self.assertIn("não vale", resposta.get_json()["erro"])
+
+    def test_acao_inexistente_e_recusada(self):
+        self.escrever("filme.srt")
+        resposta = self.client.post("/api/processar", json={
+            "arquivo": "filme.srt", "acao": "explodir"})
+        self.assertEqual(resposta.status_code, 400)
+
+
+class TestLote(BaseWeb):
+    def setUp(self):
+        super().setUp()
+        self._original = pipeline._translate_with_llm
+        pipeline._translate_with_llm = lambda cues, lang, **kw: (len(cues), [])
+
+    def tearDown(self):
+        pipeline._translate_with_llm = self._original
+
+    def test_enfileira_varios_de_uma_vez(self):
+        for nome in ("a.srt", "b.srt", "c.srt"):
+            self.escrever(nome)
+        resposta = self.client.post("/api/processar-lote", json={"itens": [
+            {"arquivo": "a.srt", "acao": "traduzir"},
+            {"arquivo": "b.srt", "acao": "traduzir"},
+            {"arquivo": "c.srt", "acao": "traduzir"},
+        ]})
+        self.assertEqual(resposta.status_code, 202)
+        self.assertEqual(len(resposta.get_json()["enfileirados"]), 3)
+
+    def test_pasta_inteira_com_acoes_diferentes(self):
+        self.escrever("legenda.srt")
+        self.escrever("outra.srt")
+        resposta = self.client.post("/api/processar-lote", json={"itens": [
+            {"arquivo": "legenda.srt", "acao": "traduzir"},
+            {"arquivo": "outra.srt", "acao": "deslocar", "segundos": 1},
+        ]})
+        jobs_criados = resposta.get_json()["enfileirados"]
+        self.assertEqual(len(jobs_criados), 2)
+        for job in jobs_criados:
+            self.esperar(job["id"])
+        # A deslocada não foi traduzida.
+        cues = pipeline.srt_io.load_cues(os.path.join(self.tmp, "outra.srt"))
+        self.assertEqual(cues[0].start, 2000)
+
+    def test_arquivo_ruim_no_meio_nao_impede_os_outros(self):
+        self.escrever("bom.srt")
+        resposta = self.client.post("/api/processar-lote", json={"itens": [
+            {"arquivo": "bom.srt", "acao": "traduzir"},
+            {"arquivo": "sumiu.srt", "acao": "traduzir"},
+        ]})
+        dados = resposta.get_json()
+        self.assertEqual(len(dados["enfileirados"]), 1)
+        self.assertEqual(len(dados["recusados"]), 1)
+
+    def test_lote_vazio_e_recusado(self):
+        self.assertEqual(
+            self.client.post("/api/processar-lote", json={"itens": []}).status_code,
+            400)
+
+    def test_lote_recusa_caminho_para_fora(self):
+        resposta = self.client.post("/api/processar-lote", json={"itens": [
+            {"arquivo": "../../etc/passwd", "acao": "traduzir"}]})
+        self.assertEqual(len(resposta.get_json()["recusados"]), 1)
+
+
+class TestConfiguracao(BaseWeb):
+    def setUp(self):
+        super().setUp()
+        from autosrt import config
+        self.config = config
+        self._app_dir = config.app_directory
+        config.app_directory = lambda: self.tmp
+        self._env = os.environ.pop("OPENROUTER_API_KEY", None)
+
+    def tearDown(self):
+        self.config.app_directory = self._app_dir
+        if self._env is not None:
+            os.environ["OPENROUTER_API_KEY"] = self._env
+
+    def test_sem_chave_configurada(self):
+        dados = self.client.get("/api/config").get_json()
+        self.assertFalse(dados["tem_chave"])
+
+    def test_grava_a_chave(self):
+        resposta = self.client.post("/api/config", json={"chave": "sk-or-v1-teste"})
+        self.assertEqual(resposta.status_code, 200)
+        self.assertTrue(self.client.get("/api/config").get_json()["tem_chave"])
+
+    def test_a_chave_nunca_volta_para_o_navegador(self):
+        self.client.post("/api/config", json={"chave": "sk-or-v1-segredo"})
+        corpo = self.client.get("/api/config").get_data(as_text=True)
+        self.assertNotIn("sk-or-v1-segredo", corpo)
+
+    def test_grava_modelo_e_endereco(self):
+        self.client.post("/api/config", json={
+            "modelo": "deepseek/deepseek-chat-v2.5",
+            "base_url": "http://localhost:11434/v1"})
+        dados = self.client.get("/api/config").get_json()
+        self.assertEqual(dados["modelo"], "deepseek/deepseek-chat-v2.5")
+        self.assertEqual(dados["base_url"], "http://localhost:11434/v1")
+
+    def test_arquivo_gravado_e_so_do_dono(self):
+        self.client.post("/api/config", json={"chave": "sk-or-v1-teste"})
+        caminho = os.path.join(self.tmp, "config.json")
+        self.assertEqual(os.stat(caminho).st_mode & 0o777, 0o600)
+
+    def test_valor_vazio_limpa_a_configuracao(self):
+        self.client.post("/api/config", json={"chave": "sk-or-v1-teste"})
+        self.client.post("/api/config", json={"chave": ""})
+        self.assertFalse(self.client.get("/api/config").get_json()["tem_chave"])
+
+    def test_pedido_sem_nada_e_recusado(self):
+        self.assertEqual(
+            self.client.post("/api/config", json={}).status_code, 400)
+
+    def test_avisa_quando_o_ambiente_tem_prioridade(self):
+        os.environ["OPENROUTER_API_KEY"] = "do-ambiente"
+        try:
+            resposta = self.client.post("/api/config", json={"chave": "do-arquivo"})
+            self.assertIn("prioridade", resposta.get_json()["aviso"])
+        finally:
+            os.environ.pop("OPENROUTER_API_KEY", None)
 
 
 class TestFila(unittest.TestCase):
