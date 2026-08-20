@@ -414,6 +414,41 @@ def _register_routes(app, fila, media_dir, engine):
     def trabalhos():
         return jsonify([j.para_json() for j in fila.listar()])
 
+    @app.delete("/api/trabalho/<job_id>")
+    def dispensar(job_id):
+        """Tira um trabalho terminado da lista, sem tocar nos arquivos."""
+        if not fila.remover(job_id):
+            return jsonify({"erro": "Esse trabalho não terminou, ou já saiu "
+                                    "da lista."}), 400
+        return jsonify({"ok": True})
+
+    @app.post("/api/trabalhos/limpar")
+    def limpar_trabalhos():
+        """Varre a lista dos que já terminaram. O que está rodando fica."""
+        return jsonify({"removidos": fila.limpar_terminados()})
+
+    @app.delete("/api/arquivo/<path:nome>")
+    def excluir(nome):
+        """Apaga um filme ou legenda da pasta de trabalho."""
+        caminho = os.path.join(media_dir, nome)
+        if not _dentro_da_pasta(caminho, media_dir):
+            return jsonify({"erro": "Arquivo inválido."}), 400
+        if not os.path.isfile(caminho):
+            return jsonify({"erro": "Esse arquivo não está mais na pasta."}), 404
+        if not (pipeline.is_media(caminho) or pipeline.is_subtitle(caminho)):
+            return jsonify({"erro": "Só dá para apagar filme ou legenda."}), 400
+        # Apagar debaixo de um trabalho em andamento deixaria o Whisper lendo
+        # um arquivo que sumiu, e o erro sairia lá na frente, sem explicação.
+        if fila.em_uso(caminho):
+            return jsonify({"erro": "Esse arquivo está sendo processado "
+                                    "agora. Espere terminar."}), 409
+
+        try:
+            os.remove(caminho)
+        except OSError as exc:
+            return jsonify({"erro": f"Não consegui apagar: {exc}"}), 500
+        return jsonify({"ok": True, "apagado": nome})
+
     @app.get("/api/trabalho/<job_id>")
     def trabalho(job_id):
         job = fila.buscar(job_id)
@@ -604,6 +639,12 @@ PAGINA = """<!doctype html>
   .vazio { color: #9a9aa2; padding: 20px; text-align: center; }
   a.baixar { color: #3b82f6; text-decoration: none; font-weight: 500; }
   .item a.baixar { flex-shrink: 0; }
+  .apagar { flex-shrink: 0; background: none; border: 1px solid #4a2b2b;
+            color: #f87171; }
+  .apagar:hover:enabled { background: #2a1c1c; border-color: #7f1d1d; }
+  .dispensar { font-size: 18px; line-height: 1; padding: 2px 8px; }
+  h2 #limpar { float: right; text-transform: none; letter-spacing: 0;
+               font-size: 13px; }
   details#config { margin-top: 36px; border: 1px solid #2e2e36;
                    border-radius: 12px; }
   details#config summary { padding: 14px; cursor: pointer; color: #9a9aa2;
@@ -643,7 +684,7 @@ PAGINA = """<!doctype html>
   </div>
   <div class="lista" id="lista"><div class="vazio">Carregando...</div></div>
 
-  <h2>Trabalhos</h2>
+  <h2>Trabalhos <button id="limpar" class="fantasma" hidden>Limpar terminados</button></h2>
   <div id="trabalhos"><div class="vazio">Nada ainda.</div></div>
 
   <details id="config">
@@ -697,6 +738,10 @@ async function carregarArquivos() {
   contar();
 }
 
+// Nome vira caminho de URL: escapa cada pedaço, mas mantém as barras, senão
+// legenda dentro de subpasta não é encontrada.
+const caminhoUrl = (nome) => nome.split('/').map(encodeURIComponent).join('/');
+
 function linhaArquivo(item) {
   const div = document.createElement('div');
   div.className = 'item';
@@ -727,10 +772,27 @@ function linhaArquivo(item) {
   if (item.tipo === 'legenda') {
     const baixar = document.createElement('a');
     baixar.className = 'baixar';
-    baixar.href = '/api/legenda/' + item.nome.split('/').map(encodeURIComponent).join('/');
+    baixar.href = '/api/legenda/' + caminhoUrl(item.nome);
     baixar.textContent = 'Baixar';
     div.querySelector('button').before(baixar);
   }
+
+  const apagar = document.createElement('button');
+  apagar.className = 'apagar';
+  apagar.textContent = 'Apagar';
+  apagar.title = 'Apaga este arquivo do servidor';
+  apagar.onclick = async () => {
+    if (!confirm(`Apagar ${item.nome} do servidor?\\n\\nNão dá para desfazer.`)) return;
+    apagar.disabled = true;
+    const r = await fetch('/api/arquivo/' + caminhoUrl(item.nome), {method: 'DELETE'});
+    if (!r.ok) {
+      apagar.disabled = false;
+      alert((await r.json()).erro || 'Não consegui apagar.');
+      return;
+    }
+    carregarArquivos();
+  };
+  div.appendChild(apagar);
 
   const seletor = div.querySelector('.acao');
   for (const acao of item.acoes) {
@@ -932,6 +994,21 @@ function cartao(job) {
     a.href = '/api/baixar/' + job.id;
     a.textContent = 'Baixar legenda';
     acao.appendChild(a);
+  }
+
+  // Trabalho terminado (deu certo, falhou ou foi cancelado) sai da lista no
+  // ×. Sem isso um erro fica na tela até o servidor reiniciar.
+  if (job.pronto) {
+    const dispensar = document.createElement('button');
+    dispensar.className = 'fantasma dispensar';
+    dispensar.textContent = '×';
+    dispensar.title = 'Tirar da lista';
+    dispensar.onclick = async () => {
+      dispensar.disabled = true;
+      await fetch('/api/trabalho/' + job.id, {method: 'DELETE'});
+      atualizar();
+    };
+    acao.appendChild(dispensar);
   } else if (!job.pronto) {
     const b = document.createElement('button');
     b.className = 'fantasma';
@@ -949,6 +1026,7 @@ async function atualizar() {
   const r = await fetch('/api/trabalhos');
   const jobs = await r.json();
   const alvo = $('trabalhos');
+  $('limpar').hidden = !jobs.some((j) => j.pronto);
   if (!jobs.length) {
     alvo.innerHTML = '<div class="vazio">Nada ainda.</div>';
     return;
@@ -956,6 +1034,11 @@ async function atualizar() {
   alvo.innerHTML = '';
   jobs.forEach((job) => alvo.appendChild(cartao(job)));
 }
+
+$('limpar').onclick = async () => {
+  await fetch('/api/trabalhos/limpar', {method: 'POST'});
+  atualizar();
+};
 
 async function carregarConfig() {
   const r = await fetch('/api/config');

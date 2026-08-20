@@ -65,9 +65,14 @@ class TestPaginaJS(unittest.TestCase):
         sobrou = re.findall(r"\{\{[^}]*\}\}", self.html)
         self.assertEqual(sobrou, [], f"placeholder não substituído: {sobrou}")
 
-    def test_alertas_usam_newline_escapado(self):
-        # As três mensagens multi-linha precisam do \n literal no JS.
-        self.assertEqual(self.js.count(r"\n"), 3)
+    def test_toda_quebra_de_linha_em_texto_esta_escapada(self):
+        # Contar ocorrências seria falso alarme a cada mensagem nova. O que
+        # importa é que as quebras existentes cheguem escapadas ao JS: é a
+        # forma que sobrevive ao template, e a barra simples é o bug.
+        self.assertNotIn("\\\n", self.js)
+        for trecho in re.findall(r"\\+n", self.js):
+            self.assertEqual(trecho, r"\n",
+                             "quebra de linha com escape errado no <script>")
 
 
 if __name__ == "__main__":

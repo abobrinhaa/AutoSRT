@@ -7,6 +7,7 @@ disputam a mesma memória e ficam mais lentas que se fossem em sequência.
 """
 
 import logging
+import os
 import threading
 import time
 import uuid
@@ -130,6 +131,30 @@ class JobQueue:
             ids = self._ordem[-limite:]
             return [self._jobs[i] for i in reversed(ids)]
 
+    def remover(self, job_id) -> bool:
+        """Tira um trabalho já terminado da lista. Devolve se removeu.
+
+        Trabalho que ainda roda não sai: o operário continuaria mexendo em
+        algo que a página não mostra mais.
+        """
+        with self._lock:
+            job = self._jobs.get(job_id)
+            if not job or job.estado not in FINAIS:
+                return False
+            del self._jobs[job_id]
+            self._ordem.remove(job_id)
+            return True
+
+    def limpar_terminados(self) -> int:
+        """Remove todos os trabalhos terminados. Devolve quantos saíram."""
+        with self._lock:
+            terminados = [i for i in self._ordem
+                          if self._jobs[i].estado in FINAIS]
+            for job_id in terminados:
+                del self._jobs[job_id]
+                self._ordem.remove(job_id)
+            return len(terminados)
+
     def cancelar(self, job_id) -> bool:
         job = self.buscar(job_id)
         if not job or job.estado in FINAIS:
@@ -142,3 +167,11 @@ class JobQueue:
         with self._lock:
             return bool(self._fila) or any(
                 j.estado == RODANDO for j in self._jobs.values())
+
+    def em_uso(self, caminho) -> bool:
+        """Diz se algum trabalho não terminado tem esse arquivo como entrada."""
+        alvo = os.path.abspath(caminho)
+        with self._lock:
+            return any(os.path.abspath(j.entrada) == alvo
+                       for j in self._jobs.values()
+                       if j.estado not in FINAIS)
