@@ -405,6 +405,105 @@ def _register_routes(app, fila, media_dir, engine):
         return send_file(job.resultado, as_attachment=True,
                          download_name=os.path.basename(job.resultado))
 
+    @app.post("/api/transcribe")
+    def transcribe():
+        """Transcreve áudio via Faster Whisper e retorna legendas.
+
+        Aceita POST multipart com arquivo de áudio.
+        Retorna JSON com legendas ou arquivo SRT.
+
+        Exemplos:
+            curl -X POST -F "file=@audio.mp3" http://localhost:8000/api/transcribe
+            curl -X POST -F "file=@video.mp4" http://localhost:8000/api/transcribe?format=srt
+        """
+        arquivo = request.files.get("file")
+        if not arquivo or not arquivo.filename:
+            return jsonify({"erro": "Nenhum arquivo enviado."}), 400
+
+        # Validar que é áudio/vídeo
+        nome = os.path.basename(arquivo.filename)
+        if not (pipeline.is_media(nome)):
+            return jsonify({
+                "erro": f"Tipo de arquivo não suportado: {nome}. "
+                       "Envie um vídeo ou áudio (mp3, wav, m4a, mkv, mp4, etc)."
+            }), 400
+
+        # Salvar temporariamente
+        import tempfile
+        temp_dir = tempfile.gettempdir()
+        temp_path = os.path.join(temp_dir, f"whisper_{os.urandom(8).hex()}_{nome}")
+
+        try:
+            arquivo.save(temp_path)
+
+            # Transcrever com Faster Whisper
+            try:
+                from faster_whisper import WhisperModel
+            except ImportError:
+                return jsonify({
+                    "erro": "Faster Whisper não instalado. "
+                           "Instale com: pip install faster-whisper"
+                }), 500
+
+            model = WhisperModel(
+                "large-v3-turbo",
+                device="cuda",
+                compute_type="float16"
+            )
+
+            segments, info = model.transcribe(temp_path)
+
+            # Converter para formato SRT
+            cues = []
+            for i, segment in enumerate(segments, 1):
+                start_ms = int(segment.start * 1000)
+                end_ms = int(segment.end * 1000)
+
+                # Converter ms para SRT timecode (HH:MM:SS,mmm)
+                def ms_to_srt_time(ms):
+                    h = ms // 3600000
+                    m = (ms % 3600000) // 60000
+                    s = (ms % 60000) // 1000
+                    ms_rest = ms % 1000
+                    return f"{h:02d}:{m:02d}:{s:02d},{ms_rest:03d}"
+
+                cue_text = f"{i}\n{ms_to_srt_time(start_ms)} --> {ms_to_srt_time(end_ms)}\n{segment.text}"
+                cues.append(cue_text)
+
+            srt_content = "\n\n".join(cues)
+
+            # Verificar se quer retornar como JSON ou arquivo
+            formato = request.args.get("format", "json")
+            if formato == "srt":
+                # Retornar como arquivo .srt para download
+                from io import BytesIO
+                return send_file(
+                    BytesIO(srt_content.encode("utf-8")),
+                    mimetype="text/plain",
+                    as_attachment=True,
+                    download_name=f"{os.path.splitext(nome)[0]}.srt"
+                )
+            else:
+                # Retornar como JSON
+                return jsonify({
+                    "sucesso": True,
+                    "arquivo": nome,
+                    "idioma": info.language,
+                    "legendas": srt_content,
+                    "linhas": len(cues)
+                }), 200
+
+        except Exception as e:
+            return jsonify({"erro": f"Erro ao transcrever: {str(e)}"}), 500
+
+        finally:
+            # Limpar arquivo temporário
+            if os.path.exists(temp_path):
+                try:
+                    os.remove(temp_path)
+                except:
+                    pass
+
     @app.errorhandler(413)
     def grande_demais(_):
         limite = app.config["MAX_UPLOAD_GB"]
