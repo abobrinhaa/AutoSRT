@@ -786,14 +786,19 @@ $('lote').onclick = async () => {
   });
   const dados = await r.json();
   if (dados.recusados && dados.recusados.length) {
-    alert(dados.recusados.map((x) => `${x.arquivo}: ${x.erro}`).join('\n'));
+    alert(dados.recusados.map((x) => `${x.arquivo}: ${x.erro}`).join('\\n'));
   }
   document.querySelectorAll('.marca').forEach((c) => { c.checked = false; });
   contar();
   atualizar();
 };
 
-$('drop').onclick = () => $('arquivo').click();
+$('drop').onclick = (e) => {
+  // O label abre o seletor sozinho, e o clique nele sobe até aqui: sem esta
+  // saída a caixa de arquivos seria pedida duas vezes no mesmo clique.
+  if (e.target.closest('#escolher, #arquivo')) return;
+  $('arquivo').click();
+};
 $('arquivo').onchange = (e) => { if (e.target.files.length) enviar(e.target.files); };
 $('drop').ondragover = (e) => { e.preventDefault(); $('drop').classList.add('ativo'); };
 $('drop').ondragleave = () => $('drop').classList.remove('ativo');
@@ -842,7 +847,7 @@ function enviar(listaDeArquivos) {
     if (xhr.status >= 400) {
       alert(resposta.erro || 'Falha no envio.');
     } else if (resposta.recusados && resposta.recusados.length) {
-      alert(resposta.recusados.map((x) => x.erro).join('\n'));
+      alert(resposta.recusados.map((x) => x.erro).join('\\n'));
     }
 
     // Os arquivos ficam guardados, não processados: quem manda o filme com a
