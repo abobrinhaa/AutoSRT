@@ -1,193 +1,276 @@
-"""Testes para endpoint /api/transcribe (Whisper API)."""
+"""Testes do endpoint /api/transcribe.
+
+O endpoint usa o mesmo Faster-Whisper-XXL do resto do programa, que é um
+executável chamado por subprocesso. Os testes trocam
+``autosrt.transcribe.transcribe`` por um dublê: rodar o executável de
+verdade exigiria GPU, o binário instalado e minutos por arquivo.
+"""
 
 import io
-import json
 import os
+import shutil
 import tempfile
 import unittest
 from unittest import mock
 
-from autosrt import web
+from autosrt import srt_io, web
+from autosrt.cue import Cue
+from autosrt.transcribe import TranscriptionError
 
 
-class TestTranscribeAPI(unittest.TestCase):
-    """Testa o endpoint /api/transcribe."""
+def cue(indice, inicio_ms, fim_ms, texto):
+    """Uma legenda igual à que o Whisper devolve, já sem rótulo de locutor."""
+    return Cue(index=indice, start=inicio_ms, end=fim_ms,
+               source_text=texto, text=texto)
 
+
+class BaseAPI(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp()
-        self.app = web.create_app(media_dir=self.tmp)
-        self.app.config["TESTING"] = True
-        self.client = self.app.test_client()
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        app = web.create_app(media_dir=self.tmp)
+        app.config["TESTING"] = True
+        self.client = app.test_client()
 
-    def test_transcribe_sem_arquivo(self):
-        """Rejeita requisição sem arquivo."""
+    def enviar(self, nome="audio.mp3", query="", dados=b"audio de mentira"):
+        return self.client.post(
+            f"/api/transcribe{query}",
+            data={"file": (io.BytesIO(dados), nome)})
+
+    def dublar(self, cues=None, erro=None):
+        """Troca o Whisper por um dublê e devolve o mock, para inspeção."""
+        def falso(media_path, **kwargs):
+            if erro:
+                raise erro
+            # O executável de verdade lê o arquivo enviado: se ele não
+            # estiver no disco neste ponto, o endpoint salvou errado.
+            if not os.path.isfile(media_path):
+                raise AssertionError(f"{media_path} não chegou ao disco")
+            return cues if cues is not None else []
+
+        patch = mock.patch("autosrt.transcribe.transcribe",
+                           side_effect=falso, autospec=True)
+        self.addCleanup(patch.stop)
+        return patch.start()
+
+
+class TestValidacao(BaseAPI):
+    def test_sem_arquivo(self):
         resposta = self.client.post("/api/transcribe", data={})
         self.assertEqual(resposta.status_code, 400)
-        dados = resposta.get_json()
-        self.assertIn("erro", dados)
-        self.assertIn("arquivo", dados["erro"].lower())
+        self.assertIn("erro", resposta.get_json())
 
-    def test_transcribe_arquivo_invalido(self):
-        """Rejeita arquivo que não é áudio/vídeo."""
-        resposta = self.client.post(
-            "/api/transcribe",
-            data={"file": (io.BytesIO(b"conteudo"), "arquivo.txt")}
-        )
+    def test_arquivo_sem_nome(self):
+        self.assertEqual(self.enviar(nome="").status_code, 400)
+
+    def test_recusa_o_que_nao_e_midia(self):
+        resposta = self.enviar(nome="anotacao.txt")
         self.assertEqual(resposta.status_code, 400)
-        dados = resposta.get_json()
-        self.assertIn("erro", dados)
-        self.assertIn("arquivo", dados["erro"].lower())
+        self.assertIn("anotacao.txt", resposta.get_json()["erro"])
 
-    def test_transcribe_arquivo_vazio(self):
-        """Rejeita arquivo vazio."""
-        resposta = self.client.post(
-            "/api/transcribe",
-            data={"file": (io.BytesIO(b""), "")}
-        )
-        self.assertEqual(resposta.status_code, 400)
+    def test_recusa_legenda(self):
+        # Legenda não se transcreve: já é texto.
+        self.assertEqual(self.enviar(nome="legenda.srt").status_code, 400)
 
-    @mock.patch("autosrt.web._abrir_whisper")
-    def test_transcribe_sucesso_json(self, abrir_whisper):
-        """Transcrição bem-sucedida retorna JSON."""
-        # Mock do modelo Whisper
-        mock_model = mock.Mock()
-        abrir_whisper.return_value = mock_model
+    def test_aceita_audio_e_video(self):
+        self.dublar([cue(1, 0, 1000, "oi")])
+        for nome in ("audio.mp3", "audio.wav", "audio.m4a",
+                     "video.mp4", "video.mkv"):
+            with self.subTest(nome=nome):
+                self.assertEqual(self.enviar(nome=nome).status_code, 200)
 
-        mock_segment = mock.Mock()
-        mock_segment.start = 0.0
-        mock_segment.end = 2.5
-        mock_segment.text = "Olá, como vai?"
 
-        mock_info = mock.Mock()
-        mock_info.language = "pt"
+class TestRespostaJSON(BaseAPI):
+    def test_transcricao_devolve_srt_no_json(self):
+        self.dublar([cue(1, 0, 2500, "Bom dia, senhor.")])
+        dados = self.enviar().get_json()
 
-        mock_model.transcribe.return_value = ([mock_segment], mock_info)
-
-        # Fazer requisição
-        resposta = self.client.post(
-            "/api/transcribe",
-            data={"file": (io.BytesIO(b"fake audio"), "audio.mp3")}
-        )
-
-        self.assertEqual(resposta.status_code, 200)
-        dados = resposta.get_json()
         self.assertTrue(dados["sucesso"])
-        self.assertEqual(dados["idioma"], "pt")
-        self.assertIn("legendas", dados)
-        self.assertIn("Olá, como vai?", dados["legendas"])
+        self.assertEqual(dados["arquivo"], "audio.mp3")
+        self.assertEqual(dados["linhas"], 1)
+        self.assertIn("Bom dia, senhor.", dados["legendas"])
+        self.assertIn("00:00:00,000 --> 00:00:02,500", dados["legendas"])
 
-    @mock.patch("autosrt.web._abrir_whisper")
-    def test_transcribe_sucesso_srt(self, abrir_whisper):
-        """Transcrição retorna arquivo .srt quando solicitado."""
-        # Mock do modelo
-        mock_model = mock.Mock()
-        abrir_whisper.return_value = mock_model
+    def test_varias_legendas_saem_numeradas_e_em_ordem(self):
+        self.dublar([cue(1, 0, 2000, "Primeira"),
+                     cue(2, 3000, 5500, "Segunda"),
+                     cue(3, 6000, 7000, "Terceira")])
+        dados = self.enviar().get_json()
 
-        mock_segment = mock.Mock()
-        mock_segment.start = 0.0
-        mock_segment.end = 2.5
-        mock_segment.text = "Teste de transcrição"
+        self.assertEqual(dados["linhas"], 3)
+        corpo = dados["legendas"]
+        self.assertLess(corpo.index("Primeira"), corpo.index("Segunda"))
+        self.assertLess(corpo.index("Segunda"), corpo.index("Terceira"))
+        self.assertIn("00:00:03,000 --> 00:00:05,500", corpo)
 
-        mock_info = mock.Mock()
-        mock_info.language = "pt"
+    def test_o_srt_devolvido_e_relido_sem_perda(self):
+        # A prova de que a saída é .srt de verdade, e não texto parecido:
+        # o próprio leitor do programa a aceita de volta.
+        original = [cue(1, 1500, 4250, "Uma linha"),
+                    cue(2, 9000, 12000, "Outra linha")]
+        self.dublar(original)
+        corpo = self.enviar().get_json()["legendas"]
 
-        mock_model.transcribe.return_value = ([mock_segment], mock_info)
+        caminho = os.path.join(self.tmp, "volta.srt")
+        with open(caminho, "w", encoding="utf-8") as arquivo:
+            arquivo.write(corpo)
 
-        # Solicitar como .srt
-        resposta = self.client.post(
-            "/api/transcribe?format=srt",
-            data={"file": (io.BytesIO(b"fake audio"), "audio.mp3")}
-        )
+        relidas = srt_io.load_cues(caminho)
+        self.assertEqual([c.start for c in relidas], [1500, 9000])
+        self.assertEqual([c.end for c in relidas], [4250, 12000])
+        self.assertEqual([c.text for c in relidas], ["Uma linha", "Outra linha"])
+
+    def test_idioma_detectado_vem_na_resposta(self):
+        self.dublar([cue(1, 0, 3000,
+                         "This is an English sentence, long enough to detect.")])
+        self.assertEqual(self.enviar().get_json()["idioma"], "en")
+
+    def test_amostra_curta_nao_derruba_a_resposta(self):
+        # Detectar idioma de "ah" é impossível; a transcrição continua valendo.
+        self.dublar([cue(1, 0, 500, "ah")])
+        resposta = self.enviar()
+        self.assertEqual(resposta.status_code, 200)
+        self.assertIn("idioma", resposta.get_json())
+
+
+class TestRespostaSRT(BaseAPI):
+    def test_format_srt_devolve_arquivo(self):
+        self.dublar([cue(1, 0, 2500, "Teste de transcrição")])
+        resposta = self.enviar(nome="filme.mp4", query="?format=srt")
 
         self.assertEqual(resposta.status_code, 200)
-        self.assertIn(".srt", resposta.headers["Content-Disposition"])
-        self.assertIn("attachment", resposta.headers["Content-Disposition"])
-        self.assertIn(b"Teste de transc", resposta.data)
+        disposicao = resposta.headers["Content-Disposition"]
+        self.assertIn("attachment", disposicao)
+        self.assertIn("filme.srt", disposicao)
+        self.assertIn("Teste de transcrição",
+                      resposta.get_data(as_text=True))
 
-    @mock.patch("autosrt.web._abrir_whisper")
-    def test_transcribe_multiplos_segmentos(self, abrir_whisper):
-        """Transcrição com múltiplos segmentos."""
-        mock_model = mock.Mock()
-        abrir_whisper.return_value = mock_model
+    def test_arquivo_sai_em_utf8(self):
+        # Subtitle Edit lê UTF-8; acento quebrado aqui vira legenda suja lá.
+        self.dublar([cue(1, 0, 2000, "Coração, ação e não")])
+        resposta = self.enviar(query="?format=srt")
+        self.assertIn("Coração, ação e não", resposta.data.decode("utf-8"))
 
-        seg1 = mock.Mock()
-        seg1.start = 0.0
-        seg1.end = 2.0
-        seg1.text = "Primeira linha"
 
-        seg2 = mock.Mock()
-        seg2.start = 3.0
-        seg2.end = 5.5
-        seg2.text = "Segunda linha"
+class TestOpcoes(BaseAPI):
+    def test_idioma_e_repassado_ao_whisper(self):
+        falso = self.dublar([cue(1, 0, 1000, "hello")])
+        self.enviar(query="?idioma=en")
+        self.assertEqual(falso.call_args.kwargs["language"], "en")
 
-        mock_info = mock.Mock()
-        mock_info.language = "pt"
+    def test_sem_idioma_deixa_o_whisper_detectar(self):
+        falso = self.dublar([cue(1, 0, 1000, "hello")])
+        self.enviar()
+        self.assertIsNone(falso.call_args.kwargs["language"])
 
-        mock_model.transcribe.return_value = ([seg1, seg2], mock_info)
+    def test_diarizacao_ligada_por_padrao(self):
+        falso = self.dublar([cue(1, 0, 1000, "oi")])
+        self.enviar()
+        self.assertIsNotNone(falso.call_args.kwargs["diarize"])
 
-        resposta = self.client.post(
-            "/api/transcribe",
-            data={"file": (io.BytesIO(b"fake audio"), "audio.mp3")}
-        )
+    def test_diarizar_zero_desliga(self):
+        falso = self.dublar([cue(1, 0, 1000, "oi")])
+        self.enviar(query="?diarizar=0")
+        self.assertIsNone(falso.call_args.kwargs["diarize"])
 
-        dados = resposta.get_json()
+
+class TestFalhas(BaseAPI):
+    def test_erro_do_whisper_vira_mensagem(self):
+        self.dublar(erro=TranscriptionError("O Faster-Whisper-XXL não foi "
+                                            "encontrado."))
+        resposta = self.enviar()
+        self.assertEqual(resposta.status_code, 500)
+        self.assertIn("não foi encontrado", resposta.get_json()["erro"])
+
+    def test_arquivo_sem_fala_avisa_em_vez_de_devolver_vazio(self):
+        self.dublar([])
+        resposta = self.enviar()
+        self.assertEqual(resposta.status_code, 422)
+        self.assertIn("fala", resposta.get_json()["erro"])
+
+
+class TestLimpeza(BaseAPI):
+    def test_nao_deixa_nada_na_pasta_de_trabalho(self):
+        # A pasta é de quem usa a página: transcrição de fora não polui.
+        self.dublar([cue(1, 0, 1000, "oi")])
+        self.enviar(nome="passageiro.mp4")
+        self.assertEqual(os.listdir(self.tmp), [])
+
+    def test_apaga_o_temporario_mesmo_quando_falha(self):
+        self.dublar(erro=TranscriptionError("quebrou"))
+        antes = set(os.listdir(tempfile.gettempdir()))
+        self.enviar()
+        sobraram = [n for n in set(os.listdir(tempfile.gettempdir())) - antes
+                    if n.startswith("autosrt-api-")]
+        self.assertEqual(sobraram, [])
+
+
+class TestCaminhoRealAteOSubprocesso(BaseAPI):
+    """Sem dublar o transcribe: só o subprocesso do executável.
+
+    Assim o teste passa pelo build_command, pelo lugar onde o .srt é
+    procurado e pelo load_transcript de verdade. É onde moram os enganos que
+    dublar o módulo inteiro esconde -- pasta de saída errada, nome de arquivo
+    que não bate, rótulo de locutor deixado no texto.
+    """
+
+    def dublar_o_executavel(self, conteudo_srt):
+        """Faz o "Whisper" gravar um .srt onde o de verdade gravaria."""
+        gravados = {}
+
+        def run(command, **kwargs):
+            # Grava onde o comando montado mandou gravar. É isso que prova que
+            # o lado que pede e o lado que procura o .srt combinam.
+            destino = command[command.index("--output_dir") + 1]
+            entrada = command[1]
+            alvo = os.path.join(
+                destino,
+                os.path.splitext(os.path.basename(entrada))[0] + ".srt")
+            with open(alvo, "w", encoding="utf-8") as arquivo:
+                arquivo.write(conteudo_srt)
+            gravados["alvo"] = alvo
+
+        for alvo, novo in (("find_executable", lambda *a, **k: "/bin/true"),
+                           ("_run_process", run)):
+            patch = mock.patch(f"autosrt.transcribe.{alvo}", novo)
+            self.addCleanup(patch.stop)
+            patch.start()
+        return gravados
+
+    def test_le_o_srt_que_o_executavel_gravou(self):
+        self.dublar_o_executavel(
+            "1\n00:00:01,000 --> 00:00:03,500\nBom dia.\n\n"
+            "2\n00:00:04,000 --> 00:00:06,000\nBoa noite.\n")
+
+        dados = self.enviar(nome="filme.mp4").get_json()
         self.assertEqual(dados["linhas"], 2)
-        self.assertIn("Primeira linha", dados["legendas"])
-        self.assertIn("Segunda linha", dados["legendas"])
+        self.assertIn("Bom dia.", dados["legendas"])
+        self.assertIn("00:00:04,000 --> 00:00:06,000", dados["legendas"])
 
-    @mock.patch("autosrt.web._abrir_whisper")
-    def test_transcribe_formato_srt(self, abrir_whisper):
-        """Verifica formato SRT correto."""
-        mock_model = mock.Mock()
-        abrir_whisper.return_value = mock_model
+    def test_rotulo_de_locutor_nao_vaza_para_a_legenda(self):
+        # Com diarização o executável escreve "SPEAKER_00: fala". Quem chama a
+        # API quer a fala, não o rótulo.
+        self.dublar_o_executavel(
+            "1\n00:00:01,000 --> 00:00:02,000\nSPEAKER_00: Bom dia.\n")
 
-        segment = mock.Mock()
-        segment.start = 1.5  # 1,5 segundos
-        segment.end = 5.25  # 5,25 segundos
-        segment.text = "Teste"
+        legendas = self.enviar().get_json()["legendas"]
+        self.assertIn("Bom dia.", legendas)
+        self.assertNotIn("SPEAKER_00", legendas)
 
-        mock_info = mock.Mock()
-        mock_info.language = "pt"
+    def test_executavel_que_nao_gera_nada_vira_erro_explicado(self):
+        gravados = self.dublar_o_executavel("")
+        gravados.clear()
 
-        mock_model.transcribe.return_value = ([segment], mock_info)
+        def nao_grava(command, **kwargs):
+            return None
 
-        resposta = self.client.post(
-            "/api/transcribe",
-            data={"file": (io.BytesIO(b"fake audio"), "audio.mp3")}
-        )
+        patch = mock.patch("autosrt.transcribe._run_process", nao_grava)
+        self.addCleanup(patch.stop)
+        patch.start()
 
-        dados = resposta.get_json()
-        legendas = dados["legendas"]
-
-        # Verificar formato SRT
-        self.assertIn("1\n", legendas)  # Número da legenda
-        self.assertIn("00:00:01,500 --> 00:00:05,250", legendas)  # Timecode correto
-        self.assertIn("Teste", legendas)  # Texto
-
-    def test_transcribe_arquivo_mp3(self):
-        """Aceita arquivo .mp3."""
-        resposta = self.client.post(
-            "/api/transcribe",
-            data={"file": (io.BytesIO(b"fake mp3"), "audio.mp3")}
-        )
-        # Vai falhar porque Whisper não está mockado, mas pelo menos aceita o tipo
-        self.assertNotEqual(resposta.status_code, 400)
-
-    def test_transcribe_arquivo_wav(self):
-        """Aceita arquivo .wav."""
-        resposta = self.client.post(
-            "/api/transcribe",
-            data={"file": (io.BytesIO(b"fake wav"), "audio.wav")}
-        )
-        self.assertNotEqual(resposta.status_code, 400)
-
-    def test_transcribe_arquivo_video(self):
-        """Aceita arquivo .mp4 (vídeo)."""
-        resposta = self.client.post(
-            "/api/transcribe",
-            data={"file": (io.BytesIO(b"fake mp4"), "video.mp4")}
-        )
-        self.assertNotEqual(resposta.status_code, 400)
+        resposta = self.enviar()
+        self.assertEqual(resposta.status_code, 500)
+        self.assertIn("não gerou", resposta.get_json()["erro"])
 
 
 if __name__ == "__main__":

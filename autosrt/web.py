@@ -9,12 +9,15 @@ escolhido de uma pasta do servidor — o arquivo chega lá por cópia de rede.
 Legenda tem alguns quilobytes e pode ser enviada direto pela página.
 """
 
+import io
 import os
+import tempfile
 
 from flask import (Flask, jsonify, request, send_file)
 
-from . import config, llm, pipeline, srt_io, sync
+from . import config, llm, pipeline, srt_io, sync, transcribe
 from .jobs import JobQueue
+from .transcribe import TranscriptionError
 
 DEFAULT_MEDIA_DIR = "midia"
 DEFAULT_PORT = 8000
@@ -243,26 +246,6 @@ def _tamanho_legivel(bytes_) -> str:
     return f"{bytes_:.1f} GB"
 
 
-MODELO_WHISPER_API = "large-v3-turbo"
-
-
-def _abrir_whisper(nome=MODELO_WHISPER_API):
-    """Carrega o Faster Whisper, caindo para a CPU quando não há GPU.
-
-    Fica em uma função à parte porque um import dentro do endpoint não deixa
-    onde encaixar o dublê dos testes.
-    """
-    from faster_whisper import WhisperModel
-
-    try:
-        return WhisperModel(nome, device="cuda", compute_type="float16")
-    except Exception:
-        # Sem GPU, ou com o passthrough do container desligado, float16 não
-        # existe. A CPU é bem mais lenta, mas devolve legenda; recusar o
-        # trabalho não devolve nada.
-        return WhisperModel(nome, device="cpu", compute_type="int8")
-
-
 def _register_routes(app, fila, media_dir, engine):
 
     @app.get("/")
@@ -469,96 +452,78 @@ def _register_routes(app, fila, media_dir, engine):
                          download_name=os.path.basename(job.resultado))
 
     @app.post("/api/transcribe")
-    def transcribe():
-        """Transcreve áudio via Faster Whisper e retorna legendas.
+    def transcrever():
+        """Transcreve um arquivo enviado e devolve a legenda na hora.
 
-        Aceita POST multipart com arquivo de áudio.
-        Retorna JSON com legendas ou arquivo SRT.
+        Existe para ferramentas de fora -- o Subtitle Edit, por exemplo --
+        mandarem o arquivo e receberem o texto na mesma requisicao, sem
+        passar pela fila nem deixar nada guardado no servidor.
 
-        Exemplos:
+        Usa o mesmo Faster-Whisper-XXL que a interface usa. Nao ha um segundo
+        motor: o executavel e apontado por FASTER_WHISPER_PATH ou pela
+        configuracao, e o modelo, a diarizacao e a leitura do .srt sao os
+        mesmos do resto do programa.
+
             curl -X POST -F "file=@audio.mp3" http://localhost:8000/api/transcribe
-            curl -X POST -F "file=@video.mp4" http://localhost:8000/api/transcribe?format=srt
+            curl -X POST -F "file=@video.mp4" \
+                 "http://localhost:8000/api/transcribe?format=srt" -o saida.srt
+
+        Aceita ``idioma`` (padrao: detectar) e ``diarizar=0`` para nao
+        identificar quem fala, que e mais rapido.
         """
         arquivo = request.files.get("file")
         if not arquivo or not arquivo.filename:
             return jsonify({"erro": "Nenhum arquivo enviado."}), 400
 
-        # Validar que é áudio/vídeo
         nome = os.path.basename(arquivo.filename)
-        if not (pipeline.is_media(nome)):
+        if not pipeline.is_media(nome):
             return jsonify({
-                "erro": f"Tipo de arquivo não suportado: {nome}. "
-                       "Envie um vídeo ou áudio (mp3, wav, m4a, mkv, mp4, etc)."
+                "erro": f"Nao sei o que fazer com {nome}. Envie um video ou "
+                        "um audio (mp3, wav, m4a, mkv, mp4, e afins)."
             }), 400
 
-        # Salvar temporariamente
-        import tempfile
-        temp_dir = tempfile.gettempdir()
-        temp_path = os.path.join(temp_dir, f"whisper_{os.urandom(8).hex()}_{nome}")
+        # Tudo dentro de uma pasta temporaria: o arquivo enviado, o .srt que o
+        # Whisper escreve ao lado dele e a copia que sai na resposta. Nada
+        # sobra na pasta de trabalho, que e de quem usa a pagina.
+        with tempfile.TemporaryDirectory(prefix="autosrt-api-") as pasta:
+            entrada = os.path.join(pasta, nome)
+            arquivo.save(entrada)
 
-        try:
-            arquivo.save(temp_path)
-
+            diarizar = request.args.get("diarizar", "1") != "0"
             try:
-                model = _abrir_whisper()
-            except ImportError:
+                cues = transcribe.transcribe(
+                    entrada, output_dir=pasta,
+                    language=request.args.get("idioma") or None,
+                    diarize=transcribe.DEFAULT_DIARIZE_MODEL if diarizar else None)
+            except TranscriptionError as exc:
+                return jsonify({"erro": str(exc)}), 500
+
+            if not cues:
                 return jsonify({
-                    "erro": "Faster Whisper não instalado. "
-                           "Instale com: pip install faster-whisper"
-                }), 500
+                    "erro": "O Whisper nao encontrou fala nenhuma no arquivo."
+                }), 422
 
-            segments, info = model.transcribe(temp_path)
+            # Serializa pelo srt_io, o mesmo que grava as legendas da fila,
+            # para a saida da API ser identica a do resto do programa.
+            saida = os.path.join(pasta, "resposta.srt")
+            srt_io.save_cues(cues, saida)
+            with open(saida, encoding="utf-8") as legenda:
+                texto = legenda.read()
 
-            # Converter para formato SRT
-            cues = []
-            for i, segment in enumerate(segments, 1):
-                start_ms = int(segment.start * 1000)
-                end_ms = int(segment.end * 1000)
+        if request.args.get("format") == "srt":
+            return send_file(
+                io.BytesIO(texto.encode("utf-8")),
+                mimetype="application/x-subrip", as_attachment=True,
+                download_name=os.path.splitext(nome)[0] + ".srt")
 
-                # Converter ms para SRT timecode (HH:MM:SS,mmm)
-                def ms_to_srt_time(ms):
-                    h = ms // 3600000
-                    m = (ms % 3600000) // 60000
-                    s = (ms % 60000) // 1000
-                    ms_rest = ms % 1000
-                    return f"{h:02d}:{m:02d}:{s:02d},{ms_rest:03d}"
-
-                cue_text = f"{i}\n{ms_to_srt_time(start_ms)} --> {ms_to_srt_time(end_ms)}\n{segment.text}"
-                cues.append(cue_text)
-
-            srt_content = "\n\n".join(cues)
-
-            # Verificar se quer retornar como JSON ou arquivo
-            formato = request.args.get("format", "json")
-            if formato == "srt":
-                # Retornar como arquivo .srt para download
-                from io import BytesIO
-                return send_file(
-                    BytesIO(srt_content.encode("utf-8")),
-                    mimetype="text/plain",
-                    as_attachment=True,
-                    download_name=f"{os.path.splitext(nome)[0]}.srt"
-                )
-            else:
-                # Retornar como JSON
-                return jsonify({
-                    "sucesso": True,
-                    "arquivo": nome,
-                    "idioma": info.language,
-                    "legendas": srt_content,
-                    "linhas": len(cues)
-                }), 200
-
-        except Exception as e:
-            return jsonify({"erro": f"Erro ao transcrever: {str(e)}"}), 500
-
-        finally:
-            # Limpar arquivo temporário
-            if os.path.exists(temp_path):
-                try:
-                    os.remove(temp_path)
-                except:
-                    pass
+        return jsonify({
+            "sucesso": True,
+            "arquivo": nome,
+            # Amostra curta demais não derruba a resposta: vem vazio.
+            "idioma": pipeline._safe_detect(cues),
+            "legendas": texto,
+            "linhas": len(cues),
+        })
 
     @app.errorhandler(413)
     def grande_demais(_):
