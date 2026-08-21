@@ -4,7 +4,8 @@ import threading
 import unittest
 
 from autosrt import srt_io
-from autosrt.pipeline import ENGINE_GOOGLE, ENGINE_LLM, translate_file
+from autosrt.cue import Cue
+from autosrt.pipeline import ENGINE_GOOGLE, ENGINE_LLM, process_media, translate_file
 from autosrt.translate import TranslationCancelled
 
 SAMPLE = """1
@@ -159,6 +160,49 @@ class TestPipelineComModelo(unittest.TestCase):
         translate_file(self.origem, destino, engine=ENGINE_LLM,
                        llm_client=EchoLLM())
         self.assertEqual(len(srt_io.load_cues(destino)), 3)
+
+
+class TestMotorDeTranscricaoAlternativo(unittest.TestCase):
+    """process_media aceita um motor substituto ao Whisper local (ex.: via
+    API na nuvem). Regressão de um bug em que esse motor era passado para o
+    parâmetro errado e a transcrição real nunca era usada -- só um .srt
+    local, que nunca existia, era procurado em seguida."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.midia = os.path.join(self.tmp, "filme.mkv")
+        open(self.midia, "wb").close()
+        self.chamado_com = None
+
+    def fake_runner(self, media_path, **kwargs):
+        self.chamado_com = (media_path, kwargs)
+        return [
+            Cue.from_source(index=1, start=0, end=2000, source_text="Hello there."),
+            Cue.from_source(index=2, start=2000, end=4000, source_text="How are you?"),
+        ]
+
+    def test_usa_o_motor_alternativo_em_vez_do_local(self):
+        destino = os.path.join(self.tmp, "saida.srt")
+        resultado = process_media(self.midia, destino, translate=False,
+                                  transcribe_runner=self.fake_runner)
+
+        self.assertEqual(resultado.total, 2)
+        cues = srt_io.load_cues(destino)
+        self.assertEqual(cues[0].source_text, "Hello there.")
+        self.assertEqual(cues[0].start, 0)
+        self.assertEqual(cues[1].start, 2000)
+        self.assertEqual(self.chamado_com[0], self.midia)
+
+    def test_reporta_o_fim_da_fase_mesmo_sem_granularidade(self):
+        # Uma chamada de API só não tem "por cento concluído" no meio do
+        # caminho como o processo local reporta; o que importa é a barra
+        # não ficar parada nem voltar para trás quando a fase termina.
+        destino = os.path.join(self.tmp, "saida.srt")
+        vistos = []
+        process_media(self.midia, destino, translate=False,
+                      transcribe_runner=self.fake_runner,
+                      progress=lambda done, total: vistos.append((done, total)))
+        self.assertIn((100, 100), vistos)
 
 
 class TestPastaDeOriginais(unittest.TestCase):

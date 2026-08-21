@@ -27,47 +27,46 @@ EXIT_NADA_A_FAZER = 2
 
 
 def get_transcribe_runner(whisper_engine, reporter):
-    """Retorna a função de transcrição baseado no engine configurado.
+    """Motor de transcrição alternativo ao Whisper local, via API na nuvem.
+
+    Substitui a transcrição inteira, não só o subprocesso: quem chama recebe
+    de volta ``list[Cue]`` com tempos reais, no mesmo formato que o Whisper
+    local devolve — só sem diarização, que a API não oferece.
 
     Args:
         whisper_engine: "openrouter", "openai", ou "local"
         reporter: Reporter para status/erros
 
     Returns:
-        Função que transcreve áudio e retorna cues SRT
+        Função ``runner(media_path, *, language=None, **_) -> list[Cue]``,
+        ou ``None`` quando o motor é "local" (Whisper local de sempre).
     """
     if whisper_engine == "local":
-        return None  # Usa Whisper local padrão
+        return None
 
-    # Obter API key
-    api_key = config.get_openrouter_api_key()
+    # Cada provedor tem a própria chave: usar a chave errada falharia com
+    # "não autorizado" sem dar nenhuma pista do motivo.
+    if whisper_engine == "openai":
+        api_key = config.get_openai_api_key()
+        nome_config = "openai_api_key"
+    else:
+        api_key = config.get_openrouter_api_key()
+        nome_config = "openrouter_api_key"
+
     if not api_key:
         reporter.error(
             f"--whisper-api {whisper_engine} requer chave de API. "
-            "Configure com: autosrt-config set openrouter_api_key sk-or-..."
+            f"Configure com: autosrt-config set {nome_config} sk-..."
         )
         raise ValueError("Chave de API não configurada")
 
-    # Retornar wrapper que converte transcrição para cues SRT
-    def transcriber_via_api(media_file, **kwargs):
-        """Transcreve via API e retorna cues SRT."""
-        from . import srt_io
-
+    def transcriber_via_api(media_path, *, language=None, **_ignorado):
+        # A transcrição por API é uma única requisição bloqueante: não há
+        # como cancelar no meio, diferente do processo local que é sondado
+        # em loop e pode ser terminado.
         reporter.status(f"Transcrevendo via {whisper_engine} API...")
-        texto = transcribe_api.transcribe(
-            media_file,
-            engine=whisper_engine,
-            api_key=api_key
-        )
-
-        # Converter texto simples para cues SRT
-        # (simplificado - sem diarização)
-        # TODO: Implementar diarização via API se disponível
-        if texto:
-            from .srt_io import Cue
-            cue = Cue(index=1, start=0, end=len(texto) * 100, text=texto)
-            return [cue]
-        return []
+        return transcribe_api.transcribe_via_api(
+            media_path, api_key=api_key, engine=whisper_engine, language=language)
 
     return transcriber_via_api
 

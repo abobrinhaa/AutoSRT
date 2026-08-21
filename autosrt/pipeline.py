@@ -208,30 +208,40 @@ def process_media(media_path, output_path=None, *, engine=DEFAULT_ENGINE,
         output_path = os.path.splitext(media_path)[0] + ".srt"
 
     announce("Transcrevendo o áudio... esta é a parte demorada.")
-    kwargs = {
-        "language": language,
-        "diarize": transcribe_module.DEFAULT_DIARIZE_MODEL if diarize else None,
-        "executable": whisper_path,
-        "cancel_event": cancel_event,
-        "runner": transcribe_runner,
-        "output_dir": os.path.dirname(os.path.abspath(output_path)) or ".",
-    }
-    if whisper_model:
-        kwargs["model"] = whisper_model
 
     # As duas fases dividem uma barra só. Antes cada uma contava de 0 a 100 na
     # sua vez, então a barra enchia, voltava para trás e enchia de novo -- e
     # ninguém conseguia ver quanto faltava para o fim de verdade.
     peso_audio = PESO_TRANSCRICAO if translate else 100
-    if progress:
-        kwargs["progress"] = lambda pct: progress(pct * peso_audio // 100, 100)
 
     def progresso_da_traducao(feitas, total):
         if progress and total:
             andado = (100 - peso_audio) * feitas / total
             progress(int(peso_audio + andado), 100)
 
-    cues = transcribe_module.transcribe(media_path, **kwargs)
+    if transcribe_runner is not None:
+        # Motor alternativo (ex.: transcrição via API na nuvem): substitui o
+        # Whisper local por inteiro. A interface é a mesma -- devolve
+        # list[Cue] -- mas é uma única chamada bloqueante, sem progresso
+        # incremental nem diarização.
+        cues = transcribe_runner(media_path, language=language,
+                                 cancel_event=cancel_event)
+        if progress:
+            progress(peso_audio, 100)
+    else:
+        kwargs = {
+            "language": language,
+            "diarize": transcribe_module.DEFAULT_DIARIZE_MODEL if diarize else None,
+            "executable": whisper_path,
+            "cancel_event": cancel_event,
+            "output_dir": os.path.dirname(os.path.abspath(output_path)) or ".",
+        }
+        if whisper_model:
+            kwargs["model"] = whisper_model
+        if progress:
+            kwargs["progress"] = lambda pct: progress(pct * peso_audio // 100, 100)
+        cues = transcribe_module.transcribe(media_path, **kwargs)
+
     if not cues:
         raise ValueError("O Whisper não encontrou fala nenhuma no arquivo.")
 

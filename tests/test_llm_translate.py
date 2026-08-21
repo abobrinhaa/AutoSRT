@@ -1,4 +1,5 @@
 import threading
+import time
 import unittest
 
 from autosrt import llm_translate
@@ -200,6 +201,78 @@ class TestAlinhamento(unittest.TestCase):
         cues = make_cues("um", "dois")
         translate_cues_llm(cues, "inglês", client=CaoticoClient(), block_size=2)
         self.assertEqual(len(cues), 2)
+
+
+class TestParalelismo(unittest.TestCase):
+    """Regressão de desempenho: os blocos precisam rodar ao mesmo tempo, não
+    um de cada vez -- era isso que fazia o motor padrão (LLM) ser mais lento
+    que o alternativo (Google), que já é paralelo."""
+
+    def test_blocos_rodam_ao_mesmo_tempo(self):
+        simultaneos = []
+        pico = []
+        lock = threading.Lock()
+
+        class SlowClient:
+            def complete(self, system, user):
+                with lock:
+                    simultaneos.append(1)
+                    pico.append(len(simultaneos))
+                time.sleep(0.05)
+                blocos = [f"<{n}>PT:{c.strip()}</{n}>"
+                         for n, c in llm_translate.BLOCK_RE.findall(user)]
+                with lock:
+                    simultaneos.pop()
+                return "\n".join(blocos)
+
+        cues = make_cues(*[f"linha {i}" for i in range(9)])
+        translate_cues_llm(cues, "inglês", client=SlowClient(), block_size=3,
+                           max_workers=3)
+
+        self.assertGreater(max(pico), 1)
+
+    def test_nenhum_incremento_de_progresso_se_perde(self):
+        cues = make_cues(*[f"linha {i}" for i in range(60)])
+        vistos = []
+        lock = threading.Lock()
+
+        def progress(done, total):
+            with lock:
+                vistos.append(done)
+
+        falhas = translate_cues_llm(cues, "inglês", client=EchoClient(),
+                                    block_size=3, max_workers=6,
+                                    progress=progress)
+
+        self.assertEqual(falhas, [])
+        self.assertEqual(len(vistos), 60)
+        # Sem perda de incremento: todos os valores de 1 a 60 aparecem.
+        self.assertEqual(sorted(vistos), list(range(1, 61)))
+
+    def test_cancelar_no_meio_interrompe_blocos_pendentes(self):
+        cancel = threading.Event()
+        chamadas = []
+        lock = threading.Lock()
+
+        class CancelaNoMeioClient:
+            def complete(self, system, user):
+                with lock:
+                    chamadas.append(1)
+                    quantas = len(chamadas)
+                if quantas >= 2:
+                    cancel.set()
+                time.sleep(0.02)
+                blocos = [f"<{n}>PT:{c.strip()}</{n}>"
+                         for n, c in llm_translate.BLOCK_RE.findall(user)]
+                return "\n".join(blocos)
+
+        cues = make_cues(*[f"linha {i}" for i in range(30)])
+        with self.assertRaises(TranslationCancelled):
+            translate_cues_llm(cues, "inglês", client=CancelaNoMeioClient(),
+                               block_size=2, max_workers=2, cancel_event=cancel)
+
+        # Nem todos os blocos rodaram: o cancelamento cortou o resto.
+        self.assertLess(len(chamadas), 15)
 
 
 if __name__ == "__main__":

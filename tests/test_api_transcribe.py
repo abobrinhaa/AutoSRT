@@ -174,6 +174,44 @@ class TestOpcoes(BaseAPI):
         self.assertIsNone(falso.call_args.kwargs["diarize"])
 
 
+class TestTimeout(BaseAPI):
+    """A rota é síncrona de propósito, mas não pode travar para sempre se o
+    processo do Whisper pendurar."""
+
+    def test_timeout_padrao_e_repassado_ao_whisper(self):
+        falso = self.dublar([cue(1, 0, 1000, "oi")])
+        self.enviar()
+        self.assertEqual(falso.call_args.kwargs["timeout"],
+                         web.DEFAULT_TRANSCRIBE_API_TIMEOUT)
+
+    def test_timeout_customizado_por_parametro(self):
+        app = web.create_app(media_dir=self.tmp, transcribe_api_timeout=5)
+        app.config["TESTING"] = True
+        cliente = app.test_client()
+
+        def falso(media_path, **kwargs):
+            return [cue(1, 0, 1000, "oi")]
+        patch = mock.patch("autosrt.transcribe.transcribe", side_effect=falso,
+                           autospec=True)
+        self.addCleanup(patch.stop)
+        mock_transcribe = patch.start()
+
+        cliente.post("/api/transcribe",
+                     data={"file": (io.BytesIO(b"x"), "audio.mp3")})
+        self.assertEqual(mock_transcribe.call_args.kwargs["timeout"], 5)
+
+    def test_timeout_por_variavel_de_ambiente(self):
+        with mock.patch.dict(os.environ, {"AUTOSRT_TRANSCRIBE_API_TIMEOUT": "42"}):
+            app = web.create_app(media_dir=self.tmp)
+        self.assertEqual(app.config["TRANSCRIBE_API_TIMEOUT"], 42.0)
+
+    def test_estouro_de_tempo_vira_erro_claro(self):
+        self.dublar(erro=TranscriptionError("O Whisper passou do tempo limite."))
+        resposta = self.enviar()
+        self.assertEqual(resposta.status_code, 500)
+        self.assertIn("tempo limite", resposta.get_json()["erro"])
+
+
 class TestFalhas(BaseAPI):
     def test_erro_do_whisper_vira_mensagem(self):
         self.dublar(erro=TranscriptionError("O Faster-Whisper-XXL não foi "

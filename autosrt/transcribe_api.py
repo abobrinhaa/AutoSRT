@@ -1,147 +1,144 @@
-"""Transcrição via API (OpenRouter/OpenAI) em vez de processamento local.
+"""Transcrição de áudio via API compatível com OpenAI (nuvem).
 
-Vantagens:
-- Não precisa de GPU local
-- Processamento rápido (via API)
-- Escalável (múltiplos arquivos)
-- Usa mesma chave OpenRouter da tradução
+Alternativa ao Whisper local (:mod:`autosrt.transcribe`) para quem não tem
+GPU. Usa o mesmo endpoint ``/audio/transcriptions`` que a OpenAI documenta,
+sempre pedindo ``response_format=verbose_json`` — é o único jeito de a API
+devolver ``segments`` com início e fim de cada trecho. Sem esses tempos não
+haveria como montar uma legenda de verdade, só um bloco de texto corrido sem
+nenhuma sincronia com o áudio; por isso um provedor que não devolve
+segmentos é tratado como erro, não como um resultado pior.
 
-Uso:
-    from autosrt import config, transcribe_api
-
-    # Configurar
-    api_key = config.get_openrouter_api_key()
-
-    # Transcrever via API
-    texto = transcribe_api.transcribe(
-        "audio.mp3",
-        api_key=api_key,
-        engine="openrouter"
-    )
+Segue a mesma filosofia de "endpoint compatível com OpenAI" do resto do
+projeto (ver :mod:`autosrt.llm`): trocar de provedor é só trocar a URL base.
 """
 
 import os
+import time
+
 import requests
 
+from .cue import Cue
+from .transcribe import TranscriptionError
 
-def transcribe_openrouter(audio_file, api_key, model="openai/whisper-1"):
-    """Transcrever áudio via OpenRouter API.
+DEFAULT_TIMEOUT = 300  # segundos. Transcrição de um filme inteiro é lenta.
+DEFAULT_MAX_RETRIES = 3
+
+# Códigos que compensa repetir: limite de taxa e falhas temporárias do lado
+# do servidor, no mesmo espírito do llm.py.
+RETRIABLE_STATUS = {408, 409, 429, 500, 502, 503, 504}
+
+BASE_URLS = {
+    "openrouter": "https://openrouter.ai/api/v1",
+    "openai": "https://api.openai.com/v1",
+}
+DEFAULT_MODELS = {
+    "openrouter": "openai/whisper-1",
+    "openai": "whisper-1",
+}
+
+
+def _segments_to_cues(segments) -> list:
+    """Converte os ``segments`` com timestamp da API em :class:`Cue`.
+
+    Os tempos da API vêm em segundos (float); o AutoSRT trabalha em
+    milissegundos internamente.
+    """
+    cues = []
+    indice = 0
+    for segmento in segments:
+        texto = (segmento.get("text") or "").strip()
+        if not texto:
+            continue
+        indice += 1
+        inicio_ms = round(float(segmento.get("start", 0)) * 1000)
+        fim_ms = round(float(segmento.get("end", 0)) * 1000)
+        cues.append(Cue.from_source(index=indice, start=inicio_ms, end=fim_ms,
+                                    source_text=texto))
+    return cues
+
+
+def transcribe_via_api(media_path, *, api_key, engine="openrouter",
+                       base_url=None, model=None, language=None,
+                       timeout=DEFAULT_TIMEOUT, max_retries=DEFAULT_MAX_RETRIES,
+                       session=None) -> list:
+    """Transcreve um arquivo de mídia pela API e devolve ``list[Cue]``.
 
     Args:
-        audio_file: Caminho do arquivo de áudio (mp3, wav, m4a, etc)
-        api_key: Chave da OpenRouter API
-        model: Modelo a usar (padrão: openai/whisper-1)
+        media_path: vídeo ou áudio a transcrever.
+        api_key: chave do provedor escolhido.
+        engine: ``"openrouter"`` ou ``"openai"`` — decide a URL base e o
+            nome do modelo padrão. Ignorado quando ``base_url`` é informado.
+        base_url: URL base da API, para provedores customizados.
+        model: nome do modelo. Sendo ``None``, usa o padrão do provedor.
+        language: código do idioma falado, se souber.
+        session: sessão de ``requests`` injetável pelos testes.
 
     Returns:
-        str: Texto transcrito
+        Lista de :class:`~autosrt.cue.Cue`, com tempos reais vindos dos
+        ``segments`` da API. Não há diarização por essa via — ``speaker``
+        fica ``None`` em todas as legendas.
 
     Raises:
-        FileNotFoundError: Se arquivo não existe
-        ValueError: Se API retornar erro
-        requests.RequestException: Erro de conexão
+        TranscriptionError: arquivo ausente, chave ausente, falha de rede
+            persistente, resposta sem ``segments``, ou nenhuma fala
+            reconhecida.
     """
-    if not os.path.isfile(audio_file):
-        raise FileNotFoundError(f"Arquivo de áudio não encontrado: {audio_file}")
-
+    if not os.path.isfile(media_path):
+        raise TranscriptionError(f"Arquivo não encontrado: {media_path}")
     if not api_key:
-        raise ValueError("Chave de API não fornecida")
+        raise TranscriptionError("Chave de API não fornecida.")
 
-    with open(audio_file, "rb") as f:
-        files = {"file": (os.path.basename(audio_file), f)}
-        headers = {"Authorization": f"Bearer {api_key}"}
+    url_base = (base_url or BASE_URLS.get(engine) or BASE_URLS["openrouter"]).rstrip("/")
+    url = f"{url_base}/audio/transcriptions"
+    modelo = model or DEFAULT_MODELS.get(engine, "whisper-1")
+    http = session or requests
+    headers = {"Authorization": f"Bearer {api_key}"}
 
-        response = requests.post(
-            "https://api.openrouter.ai/v1/audio/transcriptions",
-            headers=headers,
-            files=files,
-            data={"model": model},
-            timeout=300  # 5 minutos
-        )
+    resposta = None
+    ultimo_erro = None
+    for tentativa in range(max_retries):
+        with open(media_path, "rb") as arquivo:
+            files = {"file": (os.path.basename(media_path), arquivo)}
+            data = {"model": modelo, "response_format": "verbose_json"}
+            if language:
+                data["language"] = language
+            try:
+                resposta = http.post(url, headers=headers, files=files,
+                                     data=data, timeout=timeout)
+            except requests.RequestException as exc:
+                resposta = None
+                ultimo_erro = f"falha de rede: {exc}"
 
-    if response.status_code != 200:
-        raise ValueError(f"Erro da API: {response.status_code} - {response.text}")
+        if resposta is not None:
+            if resposta.status_code == 200:
+                break
+            detalhe = (resposta.text or "")[:300]
+            ultimo_erro = f"HTTP {resposta.status_code}: {detalhe}"
+            if resposta.status_code not in RETRIABLE_STATUS:
+                raise TranscriptionError(
+                    f"A API de transcrição recusou a requisição - {ultimo_erro}")
+            resposta = None
 
-    result = response.json()
-    if "text" not in result:
-        raise ValueError(f"Resposta inesperada da API: {result}")
+        if tentativa < max_retries - 1:
+            time.sleep(min(10, 2 ** tentativa))
 
-    return result["text"]
+    if resposta is None:
+        raise TranscriptionError(
+            f"A API de transcrição falhou após {max_retries} tentativas - {ultimo_erro}")
 
-
-def OpenAI(**kwargs):
-    """Cliente da OpenAI, carregado só na hora de usar.
-
-    O import fica aqui, e não no topo, porque a biblioteca é opcional; ter um
-    nome no módulo também dá aos testes onde encaixar o dublê.
-    """
     try:
-        from openai import OpenAI as _OpenAI
-    except ImportError:
-        raise ImportError(
-            "OpenAI library não instalada. "
-            "Instale com: pip install openai"
-        )
-    return _OpenAI(**kwargs)
+        corpo = resposta.json()
+    except ValueError:
+        raise TranscriptionError("A API de transcrição devolveu uma resposta que não é JSON.")
 
+    segments = corpo.get("segments")
+    if not segments:
+        raise TranscriptionError(
+            "A API não devolveu tempos por trecho (\"segments\"). Sem eles não "
+            "é possível montar uma legenda sincronizada; confira se o modelo "
+            "escolhido suporta response_format=verbose_json.")
 
-def transcribe_openai(audio_file, api_key):
-    """Transcrever áudio via OpenAI API.
-
-    Requer openai library: pip install openai
-
-    Args:
-        audio_file: Caminho do arquivo de áudio
-        api_key: Chave da OpenAI API
-
-    Returns:
-        str: Texto transcrito
-    """
-    # Validar antes de importar: pedido furado é pedido furado com ou sem a
-    # biblioteca instalada, e trocar isso por um ImportError esconde o erro
-    # de verdade de quem chamou.
-    if not os.path.isfile(audio_file):
-        raise FileNotFoundError(f"Arquivo de áudio não encontrado: {audio_file}")
-
-    if not api_key:
-        raise ValueError("Chave de API não fornecida")
-
-    client = OpenAI(api_key=api_key)
-
-    with open(audio_file, "rb") as f:
-        result = client.audio.transcriptions.create(
-            model="whisper-1",
-            file=f
-        )
-
-    return result.text
-
-
-def transcribe(audio_file, engine="openrouter", api_key=None, **kwargs):
-    """Transcrever com opção de engine.
-
-    Args:
-        audio_file: Arquivo de áudio
-        engine: "openrouter" (padrão), "openai", ou "local"
-        api_key: Chave de API (se usar OpenRouter/OpenAI)
-        **kwargs: Opções adicionais para o engine
-
-    Returns:
-        str: Texto transcrito
-
-    Examples:
-        # Via OpenRouter (recomendado)
-        texto = transcribe("podcast.mp3", engine="openrouter", api_key="sk-or-...")
-
-        # Via OpenAI
-        texto = transcribe("palestra.wav", engine="openai", api_key="sk-...")
-    """
-    if engine == "openrouter":
-        return transcribe_openrouter(audio_file, api_key, **kwargs)
-    elif engine == "openai":
-        return transcribe_openai(audio_file, api_key)
-    elif engine == "local":
-        # Fallback para implementação local
-        from . import transcribe as transcribe_local
-        return transcribe_local.transcribe_file(audio_file, **kwargs)
-    else:
-        raise ValueError(f"Engine desconhecido: {engine}")
+    cues = _segments_to_cues(segments)
+    if not cues:
+        raise TranscriptionError("O áudio não teve fala reconhecida.")
+    return cues

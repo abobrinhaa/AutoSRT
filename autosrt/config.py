@@ -19,6 +19,9 @@ EXAMPLE_CONFIG = {
     "llm_base_url": "https://openrouter.ai/api/v1",
     "llm_model": "deepseek/deepseek-chat-v2.5",
     "faster_whisper_path": "/opt/faster-whisper-xxl/faster-whisper-xxl",
+    # Opcional: reconhece o filme pelo nome do arquivo na lista do servidor.
+    # Chave gratuita em https://www.themoviedb.org/settings/api
+    "tmdb_api_key": "...",
 }
 
 
@@ -109,6 +112,16 @@ def get_tmdb_api_key():
 def get_openrouter_api_key():
     """Chave do OpenRouter, ou ``None`` se não estiver configurada."""
     return get_setting("openrouter_api_key", "OPENROUTER_API_KEY")
+
+
+def get_openai_api_key():
+    """Chave da OpenAI, ou ``None`` se não estiver configurada.
+
+    Separada da chave do OpenRouter porque são provedores diferentes: usar a
+    chave errada para o engine escolhido falharia com "não autorizado" sem
+    nenhuma pista do motivo.
+    """
+    return get_setting("openai_api_key", "OPENAI_API_KEY")
 
 
 def get_whisper_path():

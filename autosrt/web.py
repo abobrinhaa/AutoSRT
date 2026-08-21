@@ -15,7 +15,7 @@ import tempfile
 
 from flask import (Flask, jsonify, request, send_file)
 
-from . import config, llm, pipeline, srt_io, sync, transcribe
+from . import config, llm, pipeline, srt_io, sync, tmdb, transcribe
 from .jobs import JobQueue
 from .transcribe import TranscriptionError
 
@@ -31,8 +31,16 @@ EXTENSOES_ACEITAS = sorted(pipeline.MEDIA_EXTENSIONS | pipeline.SUBTITLE_EXTENSI
 # O limite existe só para não encher o disco por acidente.
 DEFAULT_MAX_UPLOAD_GB = 8
 
+# /api/transcribe é síncrono de propósito (ver docstring da rota): quem
+# chama espera a legenda na mesma requisição, sem passar pela fila. Isso
+# prende uma worker thread do Flask até o Whisper terminar; o limite existe
+# para essa requisição eventualmente desistir em vez de travar para sempre
+# se o processo do Whisper pendurar.
+DEFAULT_TRANSCRIBE_API_TIMEOUT = 1800  # 30 minutos
 
-def create_app(media_dir=None, engine=pipeline.ENGINE_LLM, max_upload_gb=None):
+
+def create_app(media_dir=None, engine=pipeline.ENGINE_LLM, max_upload_gb=None,
+               transcribe_api_timeout=None):
     app = Flask(__name__)
 
     if max_upload_gb is None:
@@ -40,6 +48,12 @@ def create_app(media_dir=None, engine=pipeline.ENGINE_LLM, max_upload_gb=None):
                                              DEFAULT_MAX_UPLOAD_GB))
     app.config["MAX_CONTENT_LENGTH"] = int(max_upload_gb * 1024 ** 3)
     app.config["MAX_UPLOAD_GB"] = max_upload_gb
+
+    if transcribe_api_timeout is None:
+        transcribe_api_timeout = float(
+            os.environ.get("AUTOSRT_TRANSCRIBE_API_TIMEOUT",
+                           DEFAULT_TRANSCRIBE_API_TIMEOUT))
+    app.config["TRANSCRIBE_API_TIMEOUT"] = transcribe_api_timeout
 
     media_dir = os.path.abspath(
         media_dir or os.environ.get("AUTOSRT_MEDIA_DIR", DEFAULT_MEDIA_DIR))
@@ -213,6 +227,11 @@ def _dentro_da_pasta(caminho, pasta) -> bool:
 
 
 def _listar_arquivos(media_dir) -> list:
+    # Buscada uma vez por listagem, não por arquivo: é rápida (variável de
+    # ambiente ou um `.json` local) e evita reabrir o config.json centenas
+    # de vezes numa pasta com muitos filmes.
+    chave_tmdb = config.get_tmdb_api_key()
+
     itens = []
     for raiz, pastas, nomes in os.walk(media_dir):
         # As transcrições no idioma falado não são material de entrada.
@@ -225,14 +244,20 @@ def _listar_arquivos(media_dir) -> list:
             if minusculo.endswith("_backup.srt") or minusculo.endswith(".original.srt"):
                 continue
             relativo = os.path.relpath(caminho, media_dir)
-            irma = legenda_irma(caminho) if pipeline.is_media(caminho) else None
+            eh_midia = pipeline.is_media(caminho)
+            irma = legenda_irma(caminho) if eh_midia else None
             itens.append({
                 "nome": relativo,
                 "pasta": os.path.dirname(relativo) or ".",
                 "tamanho": _tamanho_legivel(os.path.getsize(caminho)),
-                "tipo": "video" if pipeline.is_media(caminho) else "legenda",
+                "tipo": "video" if eh_midia else "legenda",
                 "tem_legenda": bool(irma),
                 "acoes": acoes_para(caminho),
+                # Reconhecimento por nome de arquivo é palpite, não certeza:
+                # None sem chave configurada, ou quando o TMDB não achou
+                # nada parecido o bastante para arriscar um selo errado.
+                "filme": tmdb.lookup_cached(caminho, chave_tmdb)
+                        if eh_midia and chave_tmdb else None,
             })
     return sorted(itens, key=lambda i: i["nome"])
 
@@ -353,7 +378,7 @@ def _register_routes(app, fila, media_dir, engine):
 
     @app.get("/api/config")
     def ler_config():
-        """Estado da configuração. A chave nunca volta para o navegador."""
+        """Estado da configuração. As chaves nunca voltam para o navegador."""
         chave = config.get_openrouter_api_key()
         return jsonify({
             "tem_chave": bool(chave),
@@ -361,6 +386,7 @@ def _register_routes(app, fila, media_dir, engine):
             "modelo": config.get_setting("llm_model", "LLM_MODEL") or llm.DEFAULT_MODEL,
             "base_url": config.get_setting("llm_base_url", "LLM_BASE_URL")
                         or llm.DEFAULT_BASE_URL,
+            "tem_chave_tmdb": bool(config.get_tmdb_api_key()),
         })
 
     @app.post("/api/config")
@@ -370,6 +396,8 @@ def _register_routes(app, fila, media_dir, engine):
 
         if "chave" in dados:
             novos["openrouter_api_key"] = (dados.get("chave") or "").strip()
+        if "chave_tmdb" in dados:
+            novos["tmdb_api_key"] = (dados.get("chave_tmdb") or "").strip()
         for campo, chave_config in (("modelo", "llm_model"),
                                     ("base_url", "llm_base_url")):
             if campo in dados:
@@ -382,6 +410,11 @@ def _register_routes(app, fila, media_dir, engine):
             config.save_config(novos)
         except OSError as exc:
             return jsonify({"erro": f"Não consegui gravar a configuração: {exc}"}), 500
+
+        # A chave nova muda o que o TMDB reconheceria; o cache antigo (vazio,
+        # de quando não havia chave) não vale mais.
+        if "tmdb_api_key" in novos:
+            tmdb.limpar_cache()
 
         return jsonify({"ok": True, "aviso": _aviso_de_ambiente(novos)})
 
@@ -470,6 +503,12 @@ def _register_routes(app, fila, media_dir, engine):
 
         Aceita ``idioma`` (padrao: detectar) e ``diarizar=0`` para nao
         identificar quem fala, que e mais rapido.
+
+        A requisicao fica presa ate o Whisper terminar -- e o proprio
+        proposito da rota, receber tudo numa tacada so. Existe um limite
+        (``AUTOSRT_TRANSCRIBE_API_TIMEOUT``, 1800s por padrao) so para a
+        requisicao desistir e devolver erro em vez de travar para sempre se
+        o processo do Whisper pendurar.
         """
         arquivo = request.files.get("file")
         if not arquivo or not arquivo.filename:
@@ -494,7 +533,8 @@ def _register_routes(app, fila, media_dir, engine):
                 cues = transcribe.transcribe(
                     entrada, output_dir=pasta,
                     language=request.args.get("idioma") or None,
-                    diarize=transcribe.DEFAULT_DIARIZE_MODEL if diarizar else None)
+                    diarize=transcribe.DEFAULT_DIARIZE_MODEL if diarizar else None,
+                    timeout=app.config["TRANSCRIBE_API_TIMEOUT"])
             except TranscriptionError as exc:
                 return jsonify({"erro": str(exc)}), 500
 
@@ -568,6 +608,14 @@ PAGINA = """<!doctype html>
   /* Marca o que acabou de subir, para o usuário achar onde clicar. */
   .item.novo { background: #1e2536; box-shadow: inset 3px 0 0 #3b82f6; }
   .item .acao { flex-shrink: 1; max-width: 220px; }
+  /* Selo de reconhecimento do TMDB: pôster pequeno + título (ano). É um
+     palpite pelo nome do arquivo, por isso fica discreto, não em destaque. */
+  .filme { display: flex; align-items: center; gap: 6px; flex-shrink: 0;
+           max-width: 200px; }
+  .filme .poster { width: 24px; height: 34px; object-fit: cover;
+                   border-radius: 3px; flex-shrink: 0; background: #2a2a33; }
+  .filme .titulo { font-size: 12px; color: #9a9aa2; overflow: hidden;
+                   text-overflow: ellipsis; white-space: nowrap; }
   #arquivo { display: none; }
   #escolher { display: inline-block; padding: 8px 16px; background: #3b82f6;
               color: white; border-radius: 6px; cursor: pointer; font-weight: 500;
@@ -664,8 +712,11 @@ PAGINA = """<!doctype html>
       <label>Endere&ccedil;o da API
         <input type="text" id="base_url" placeholder="https://openrouter.ai/api/v1">
       </label>
+      <label>Chave do TMDB <span id="estado-chave-tmdb"></span>
+        <input type="password" id="chave_tmdb" placeholder="opcional &mdash; reconhece o filme pelo nome do arquivo" autocomplete="off">
+      </label>
       <div class="rodape">
-        <span class="dica-config">A chave fica no config.json do servidor e nunca volta para esta p&aacute;gina.</span>
+        <span class="dica-config">As chaves ficam no config.json do servidor e nunca voltam para esta p&aacute;gina.</span>
         <button id="salvar">Salvar</button>
       </div>
     </div>
@@ -730,6 +781,29 @@ function linhaArquivo(item) {
     // Junto dos outros selos, não colado ao nome: assim o nome mantém a
     // largura que sobra em vez de disputar espaço no meio da linha.
     div.querySelectorAll('.tag')[1].after(selo);
+  }
+
+  // Reconhecimento do TMDB pelo nome do arquivo: é palpite, então some
+  // silenciosamente quando o servidor não achou nada em vez de mostrar um
+  // selo vazio ou errado.
+  if (item.filme) {
+    const bloco = document.createElement('span');
+    bloco.className = 'filme';
+    if (item.filme.poster) {
+      const img = document.createElement('img');
+      img.className = 'poster';
+      img.src = item.filme.poster;
+      img.alt = '';
+      img.loading = 'lazy';
+      bloco.appendChild(img);
+    }
+    const titulo = document.createElement('span');
+    titulo.className = 'titulo';
+    titulo.textContent = item.filme.ano
+      ? `${item.filme.titulo} (${item.filme.ano})` : item.filme.titulo;
+    titulo.title = 'Reconhecido pelo nome do arquivo, via TMDB';
+    bloco.appendChild(titulo);
+    div.querySelector('.nome').after(bloco);
   }
 
   // Legenda que já está no servidor se baixa direto, sem passar pela fila:
@@ -1029,6 +1103,10 @@ async function carregarConfig() {
     ? (c.chave_do_ambiente ? 'chave do ambiente' : 'chave configurada')
     : 'sem chave';
 
+  const seloTmdb = $('estado-chave-tmdb');
+  seloTmdb.className = 'selo ' + (c.tem_chave_tmdb ? 'ok' : 'falta');
+  seloTmdb.textContent = c.tem_chave_tmdb ? 'ativo' : 'sem chave';
+
   // Sem chave, a tradução não funciona: abre o painel para não deixar o
   // usuário descobrir isso só quando o primeiro trabalho falhar.
   if (!c.tem_chave) $('config').open = true;
@@ -1037,6 +1115,7 @@ async function carregarConfig() {
 $('salvar').onclick = async () => {
   const corpo = {modelo: $('modelo').value, base_url: $('base_url').value};
   if ($('chave').value) corpo.chave = $('chave').value;
+  if ($('chave_tmdb').value) corpo.chave_tmdb = $('chave_tmdb').value;
 
   $('salvar').disabled = true;
   const r = await fetch('/api/config', {
@@ -1050,6 +1129,7 @@ $('salvar').onclick = async () => {
   if (!r.ok) { alert(dados.erro); return; }
   if (dados.aviso) alert(dados.aviso);
   $('chave').value = '';
+  $('chave_tmdb').value = '';
   carregarConfig();
 };
 

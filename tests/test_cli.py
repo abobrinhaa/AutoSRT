@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from unittest import mock
 
-from autosrt import cli, pipeline, srt_io
+from autosrt import cli, pipeline, srt_io, transcribe_api
 
 SRT = """1
 00:00:01,000 --> 00:00:03,000
@@ -225,6 +225,71 @@ class TestTranscricao(BaseCLI):
                 total=1, translated=0, failed=[], detected_lang="en")
             self.run_cli([entrada, "--so-transcrever"])
         self.assertFalse(fake.call_args.kwargs["translate"])
+
+
+class TestMotorViaAPI(BaseCLI):
+    """Regressão do motor de transcrição via API: antes, o parâmetro
+    'transcribe_runner' era plugado no lugar errado dentro do pipeline e
+    nunca funcionava de verdade (autosrt/pipeline.py + autosrt/cli.py)."""
+
+    def setUp(self):
+        super().setUp()
+        from autosrt import config
+        self._app_dir = config.app_directory
+        config.app_directory = lambda: self.tmp
+        self._env = {chave: os.environ.pop(chave, None) for chave in
+                     ("OPENROUTER_API_KEY", "OPENAI_API_KEY")}
+
+    def tearDown(self):
+        from autosrt import config
+        config.app_directory = self._app_dir
+        for chave, valor in self._env.items():
+            if valor is not None:
+                os.environ[chave] = valor
+            else:
+                os.environ.pop(chave, None)
+
+    def test_local_e_o_padrao_sem_motor_alternativo(self):
+        entrada = self.touch("filme.mkv")
+        with mock.patch.object(pipeline, "process_media") as fake:
+            fake.return_value = pipeline.PipelineResult(
+                total=1, translated=1, failed=[], detected_lang="en")
+            self.run_cli([entrada])
+        self.assertIsNone(fake.call_args.kwargs["transcribe_runner"])
+
+    def test_sem_chave_recusa_antes_de_processar(self):
+        entrada = self.touch("filme.mkv")
+        with mock.patch.object(pipeline, "process_media") as fake:
+            código = self.run_cli([entrada, "--whisper-api", "openrouter"])
+        self.assertEqual(código, cli.EXIT_ERRO)
+        self.assertFalse(fake.called)
+        self.assertIn("chave", self.err.getvalue())
+
+    def test_openai_usa_a_propria_chave_e_devolve_cues_de_verdade(self):
+        os.environ["OPENAI_API_KEY"] = "sk-openai-teste"
+        entrada = self.touch("filme.mkv")
+        with mock.patch.object(pipeline, "process_media") as fake, \
+             mock.patch.object(transcribe_api, "transcribe_via_api") as fake_api:
+            fake.return_value = pipeline.PipelineResult(
+                total=1, translated=1, failed=[], detected_lang="en")
+            self.run_cli([entrada, "--whisper-api", "openai"])
+
+            runner = fake.call_args.kwargs["transcribe_runner"]
+            self.assertIsNotNone(runner)
+
+            runner(entrada, language="en")
+            fake_api.assert_called_once_with(
+                entrada, api_key="sk-openai-teste", engine="openai", language="en")
+
+    def test_openrouter_nao_usa_a_chave_da_openai(self):
+        os.environ["OPENAI_API_KEY"] = "sk-openai-teste"
+        entrada = self.touch("filme.mkv")
+        with mock.patch.object(pipeline, "process_media") as fake:
+            código = self.run_cli([entrada, "--whisper-api", "openrouter"])
+        # Sem OPENROUTER_API_KEY configurada, mesmo com a chave da OpenAI no
+        # ambiente, o pedido é recusado -- provedores não se substituem.
+        self.assertEqual(código, cli.EXIT_ERRO)
+        self.assertFalse(fake.called)
 
 
 class TestReporter(unittest.TestCase):

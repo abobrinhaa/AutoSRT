@@ -20,13 +20,24 @@ quando a conferência falha.
 """
 
 import re
+import threading
+from concurrent.futures import ThreadPoolExecutor
 
 from .llm import DEFAULT_BASE_URL, DEFAULT_MODEL, LLMClient, LLMError
+from .translate import TranslationCancelled
 
 # Quantas legendas por requisição, e quantas falas de vizinhança mandar junto
 # apenas como contexto (não são traduzidas).
 DEFAULT_BLOCK_SIZE = 20
 DEFAULT_CONTEXT_LINES = 6
+
+# Poucos workers de propósito: cada requisição já carrega um bloco inteiro de
+# legendas, então o ganho é sobrepor a espera de rede entre blocos, não
+# multiplicar o número de requisições por segundo contra o limite de taxa do
+# provedor. Antes disso os blocos eram traduzidos um de cada vez -- um filme
+# de centenas de blocos passava a maior parte do tempo apenas esperando a
+# resposta de cada requisição, em sequência.
+DEFAULT_MAX_WORKERS = 3
 
 BLOCK_RE = re.compile(r"<(\d+)>(.*?)</\1>", re.DOTALL)
 
@@ -121,41 +132,78 @@ def _clean_block(text: str) -> str:
     return "\n".join(linha.strip() for linha in text.strip().split("\n")).strip()
 
 
+class _ContadorProgresso:
+    """Progresso agregado de threads concorrentes, protegido por lock."""
+
+    def __init__(self, total, callback):
+        self._total = total
+        self._callback = callback
+        self._lock = threading.Lock()
+        self._feitas = 0
+
+    def avancar(self) -> None:
+        with self._lock:
+            self._feitas += 1
+            feitas = self._feitas
+        if self._callback:
+            self._callback(feitas, self._total)
+
+
 def translate_cues_llm(cues, source_lang=None, *, client=None,
                        block_size=DEFAULT_BLOCK_SIZE,
                        context_lines=DEFAULT_CONTEXT_LINES,
-                       speaker_genders=None, progress=None, cancel_event=None):
+                       speaker_genders=None, progress=None, cancel_event=None,
+                       max_workers=DEFAULT_MAX_WORKERS):
     """Traduz as legendas no lugar, escrevendo em ``cue.text``.
+
+    Os blocos são traduzidos em paralelo (``max_workers`` de cada vez, como
+    o motor Google em :mod:`autosrt.translate`): cada um é uma requisição de
+    rede independente, e blocos não compartilham nada entre si além do
+    ``client``, que só é lido, nunca alterado, durante uma tradução.
 
     Args:
         cues: lista de :class:`~autosrt.cue.Cue`, modificada no lugar.
         source_lang: nome do idioma de origem, para orientar o modelo.
         client: :class:`~autosrt.llm.LLMClient` ou qualquer objeto com
-            ``complete(system, user)``. Injetável pelos testes.
+            ``complete(system, user)``, seguro para ser chamado de várias
+            threads ao mesmo tempo. Injetável pelos testes.
         speaker_genders: ``{"SPEAKER_00": "homem", ...}``, quando conhecido.
-        progress: chamada como ``progress(feitas, total)``.
+        progress: chamada como ``progress(feitas, total)``. **Invocada a
+            partir das threads de trabalho** -- a interface precisa
+            marshalar para a thread principal.
         cancel_event: ``threading.Event`` para interromper.
+        max_workers: quantos blocos traduzir ao mesmo tempo.
 
     Returns:
-        Lista dos índices que não puderam ser traduzidos. Essas legendas
-        mantêm o texto de origem.
+        Lista dos índices que não puderam ser traduzidos, em ordem
+        crescente. Essas legendas mantêm o texto de origem.
+
+    Raises:
+        TranslationCancelled: se ``cancel_event`` for acionado. Blocos já em
+            voo terminam; os que ainda não começaram são descartados.
     """
     if client is None:
         raise LLMTranslationError("Nenhum cliente de modelo foi configurado.")
 
     total = len(cues)
-    falhas = []
-    feitas = 0
+    if not total:
+        return []
 
+    blocos = []
     for inicio in range(0, total, block_size):
-        if cancel_event is not None and cancel_event.is_set():
-            from .translate import TranslationCancelled
-            raise TranslationCancelled()
-
         fim = min(inicio + block_size, total)
         bloco = [(i + 1, cues[i]) for i in range(inicio, fim)]
         antes = cues[max(0, inicio - context_lines):inicio]
         depois = cues[fim:fim + context_lines]
+        blocos.append((bloco, antes, depois))
+
+    falhas = []
+    falhas_lock = threading.Lock()
+    contador = _ContadorProgresso(total, progress)
+
+    def processar_bloco(bloco, antes, depois):
+        if cancel_event is not None and cancel_event.is_set():
+            raise TranslationCancelled()
 
         traduzidos = _translate_block(
             bloco, antes, depois, source_lang, speaker_genders, client)
@@ -165,11 +213,34 @@ def translate_cues_llm(cues, source_lang=None, *, client=None,
             if texto:
                 cue.text = texto
             else:
-                falhas.append(cue.index)
-            feitas += 1
-            if progress:
-                progress(feitas, total)
+                with falhas_lock:
+                    falhas.append(cue.index)
+            contador.avancar()
 
+    executor = ThreadPoolExecutor(max_workers=max_workers)
+    try:
+        futuros = [executor.submit(processar_bloco, *args) for args in blocos]
+        cancelado = False
+        erro = None
+        for futuro in futuros:
+            try:
+                futuro.result()
+            except TranslationCancelled:
+                cancelado = True
+                # Descarta o que ainda está na fila; o que já começou
+                # termina sozinho no próximo bloco, ao ver o evento.
+                executor.shutdown(wait=False, cancel_futures=True)
+            except Exception as exc:  # pragma: no cover - defensivo
+                erro = erro or exc
+    finally:
+        executor.shutdown(wait=True)
+
+    if cancelado or (cancel_event is not None and cancel_event.is_set()):
+        raise TranslationCancelled()
+    if erro is not None:
+        raise erro
+
+    falhas.sort()
     return falhas
 
 

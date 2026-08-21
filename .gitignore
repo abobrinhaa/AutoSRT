@@ -5,10 +5,13 @@ config.json
 # Backups gerados pelo próprio AutoSRT
 *_backup.srt
 
-# Build do PyInstaller
+# Build do PyInstaller. O executável é publicado nos Releases do GitHub
+# (.github/workflows/build-release.yml), não versionado aqui: um binário de
+# 13+ MB no histórico do Git nunca sai de lá, mesmo trocado de versão.
 build/
 dist/
 *.spec
+AutoSRT.exe
 
 # Python
 __pycache__/

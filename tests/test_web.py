@@ -131,6 +131,69 @@ class TestListagem(BaseWeb):
         self.assertEqual([i["nome"] for i in itens], ["filme.srt"])
 
 
+class TestReconhecimentoTMDB(BaseWeb):
+    """O selo de filme na listagem é um extra: nunca deve travar nem exigir
+    rede quando não há chave configurada, e some sozinho quando o TMDB não
+    reconhece nada."""
+
+    def setUp(self):
+        super().setUp()
+        from autosrt import config, tmdb
+        self.tmdb = tmdb
+        self._chave_original = config.get_tmdb_api_key
+        self._lookup_original = tmdb.lookup_cached
+        tmdb.limpar_cache()
+
+    def tearDown(self):
+        from autosrt import config
+        config.get_tmdb_api_key = self._chave_original
+        self.tmdb.lookup_cached = self._lookup_original
+        self.tmdb.limpar_cache()
+
+    def test_sem_chave_nao_tem_campo_filme(self):
+        from autosrt import config
+        config.get_tmdb_api_key = lambda: None
+        self.tocar("Duna.2021.mkv")
+
+        itens = self.client.get("/api/arquivos").get_json()
+        self.assertIsNone(itens[0]["filme"])
+
+    def test_com_chave_e_reconhecimento_traz_o_filme(self):
+        from autosrt import config
+        config.get_tmdb_api_key = lambda: "chave-teste"
+        self.tmdb.lookup_cached = lambda *a, **kw: {
+            "titulo": "Duna", "ano": 2021,
+            "poster": "https://image.tmdb.org/t/p/w154/x.jpg",
+            "idioma_original": "en", "idioma_original_nome": "Inglês",
+        }
+        self.tocar("Duna.2021.1080p.mkv")
+
+        itens = self.client.get("/api/arquivos").get_json()
+        self.assertEqual(itens[0]["filme"]["titulo"], "Duna")
+        self.assertEqual(itens[0]["filme"]["ano"], 2021)
+
+    def test_legenda_nunca_recebe_campo_filme(self):
+        from autosrt import config
+        config.get_tmdb_api_key = lambda: "chave-teste"
+        self.tmdb.lookup_cached = lambda *a, **kw: {"titulo": "Duna", "ano": 2021,
+                                                     "poster": None,
+                                                     "idioma_original": "en",
+                                                     "idioma_original_nome": "Inglês"}
+        self.escrever("legenda.srt")
+
+        itens = self.client.get("/api/arquivos").get_json()
+        self.assertIsNone(itens[0]["filme"])
+
+    def test_sem_correspondencia_o_selo_nao_aparece(self):
+        from autosrt import config
+        config.get_tmdb_api_key = lambda: "chave-teste"
+        self.tmdb.lookup_cached = lambda *a, **kw: None
+        self.tocar("video_qualquer.mkv")
+
+        itens = self.client.get("/api/arquivos").get_json()
+        self.assertIsNone(itens[0]["filme"])
+
+
 class TestSeguranca(BaseWeb):
     def test_recusa_caminho_para_fora_da_pasta(self):
         resposta = self.client.post("/api/processar",
@@ -571,6 +634,20 @@ class TestConfiguracao(BaseWeb):
             self.assertIn("prioridade", resposta.get_json()["aviso"])
         finally:
             os.environ.pop("OPENROUTER_API_KEY", None)
+
+    def test_sem_chave_tmdb_configurada(self):
+        dados = self.client.get("/api/config").get_json()
+        self.assertFalse(dados["tem_chave_tmdb"])
+
+    def test_grava_a_chave_tmdb(self):
+        resposta = self.client.post("/api/config", json={"chave_tmdb": "abc123"})
+        self.assertEqual(resposta.status_code, 200)
+        self.assertTrue(self.client.get("/api/config").get_json()["tem_chave_tmdb"])
+
+    def test_chave_tmdb_nunca_volta_para_o_navegador(self):
+        self.client.post("/api/config", json={"chave_tmdb": "segredo-tmdb"})
+        corpo = self.client.get("/api/config").get_data(as_text=True)
+        self.assertNotIn("segredo-tmdb", corpo)
 
 
 class TestFila(unittest.TestCase):
