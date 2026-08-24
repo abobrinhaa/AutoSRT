@@ -387,6 +387,10 @@ def _register_routes(app, fila, media_dir, engine):
             "base_url": config.get_setting("llm_base_url", "LLM_BASE_URL")
                         or llm.DEFAULT_BASE_URL,
             "tem_chave_tmdb": bool(config.get_tmdb_api_key()),
+            # Endereços padrão dos dois modos, para o botão de alternar na
+            # página não precisar adivinhar nem duplicar essas constantes.
+            "openrouter_base_url": llm.DEFAULT_BASE_URL,
+            "local_base_url": llm.LOCAL_BASE_URL,
         })
 
     @app.post("/api/config")
@@ -425,6 +429,24 @@ def _register_routes(app, fila, media_dir, engine):
                     "prioridade e continuará sendo usada. Remova-a para valer "
                     "a chave gravada aqui.")
         return None
+
+    @app.get("/api/modelos")
+    def modelos():
+        """Lista os modelos do endereço informado (ou do configurado).
+
+        A chave nunca sai do servidor: quem chama manda no máximo o
+        ``base_url`` a testar (útil antes mesmo de salvar a configuração,
+        para conferir se o endereço digitado responde); a chave usada na
+        requisição é sempre a que já está guardada aqui.
+        """
+        base_url = (request.args.get("base_url") or "").strip() or \
+            config.get_setting("llm_base_url", "LLM_BASE_URL") or llm.DEFAULT_BASE_URL
+        chave = config.get_openrouter_api_key()
+        try:
+            lista = llm.list_models(base_url, api_key=chave)
+        except llm.LLMError as exc:
+            return jsonify({"erro": str(exc)}), 502
+        return jsonify({"modelos": lista})
 
     @app.get("/api/trabalhos")
     def trabalhos():
@@ -674,6 +696,24 @@ PAGINA = """<!doctype html>
           background: #2a2a33; }
   .selo.ok { color: #4ade80; }
   .selo.falta { color: #fbbf24; }
+  .modo-provedor { display: flex; gap: 8px; }
+  .modo-provedor button { flex: 1; background: #2a2a33; color: #d0d0d6;
+                          border: 1px solid #3a3a42; }
+  .modo-provedor button.ativo { background: #21304f; border-color: #3b82f6;
+                                color: #e8e8ea; }
+  .modo-provedor .tag { margin-left: 6px; }
+  .linha-modelo { display: flex; gap: 8px; }
+  .linha-modelo input { flex: 1; }
+  .lista-modelos { max-height: 220px; overflow-y: auto; border: 1px solid #3a3a42;
+                   border-radius: 8px; }
+  .lista-modelos button { display: block; width: 100%; text-align: left;
+                          background: none; border: 0; border-radius: 0;
+                          border-bottom: 1px solid #2e2e36; color: #e8e8ea;
+                          padding: 8px 10px; font-size: 13px; }
+  .lista-modelos button:last-child { border-bottom: 0; }
+  .lista-modelos button:hover { background: #23232b; }
+  .lista-modelos .preco { display: block; color: #9a9aa2; font-size: 12px;
+                          margin-top: 2px; }
 </style>
 </head>
 <body>
@@ -703,15 +743,24 @@ PAGINA = """<!doctype html>
   <details id="config">
     <summary>Configura&ccedil;&atilde;o da tradu&ccedil;&atilde;o <span id="estado-chave"></span></summary>
     <div class="painel">
-      <label>Chave do OpenRouter
-        <input type="password" id="chave" placeholder="sk-or-v1-..." autocomplete="off">
-      </label>
-      <label>Modelo
-        <input type="text" id="modelo" placeholder="deepseek/deepseek-chat-v2.5">
-      </label>
+      <div class="modo-provedor">
+        <button type="button" id="modo-openrouter">OpenRouter<span class="tag">pago</span></button>
+        <button type="button" id="modo-local">Local<span class="tag">gr&aacute;tis</span></button>
+      </div>
       <label>Endere&ccedil;o da API
         <input type="text" id="base_url" placeholder="https://openrouter.ai/api/v1">
       </label>
+      <label>Chave do OpenRouter
+        <input type="password" id="chave" placeholder="sk-or-v1-... (dispens&aacute;vel no modo local)" autocomplete="off">
+      </label>
+      <label>Modelo
+        <div class="linha-modelo">
+          <input type="text" id="modelo" placeholder="deepseek/deepseek-chat-v2.5">
+          <button type="button" id="buscar-modelos" class="fantasma">Buscar modelos</button>
+        </div>
+      </label>
+      <span class="dica-config" id="estado-modelos"></span>
+      <div id="lista-modelos" class="lista-modelos" hidden></div>
       <label>Chave do TMDB <span id="estado-chave-tmdb"></span>
         <input type="password" id="chave_tmdb" placeholder="opcional &mdash; reconhece o filme pelo nome do arquivo" autocomplete="off">
       </label>
@@ -1091,9 +1140,21 @@ $('limpar').onclick = async () => {
   atualizar();
 };
 
+// Guardado depois de cada /api/config: os botões de modo e o salvar
+// precisam saber se já existe chave configurada, sem poder ler o valor dela
+// (a chave nunca volta para a página).
+let configAtual = {};
+
+function marcarModoAtivo() {
+  const url = $('base_url').value.trim();
+  $('modo-openrouter').classList.toggle('ativo', url === configAtual.openrouter_base_url);
+  $('modo-local').classList.toggle('ativo', url === configAtual.local_base_url);
+}
+
 async function carregarConfig() {
   const r = await fetch('/api/config');
   const c = await r.json();
+  configAtual = c;
   $('modelo').value = c.modelo || '';
   $('base_url').value = c.base_url || '';
 
@@ -1107,14 +1168,75 @@ async function carregarConfig() {
   seloTmdb.className = 'selo ' + (c.tem_chave_tmdb ? 'ok' : 'falta');
   seloTmdb.textContent = c.tem_chave_tmdb ? 'ativo' : 'sem chave';
 
+  marcarModoAtivo();
+
   // Sem chave, a tradução não funciona: abre o painel para não deixar o
-  // usuário descobrir isso só quando o primeiro trabalho falhar.
-  if (!c.tem_chave) $('config').open = true;
+  // usuário descobrir isso só quando o primeiro trabalho falhar. Não vale
+  // para o modo local, que não costuma precisar de chave nenhuma.
+  if (!c.tem_chave && $('base_url').value !== c.local_base_url) {
+    $('config').open = true;
+  }
 }
+
+// Só troca o endereço; o usuário continua podendo digitar por cima, para um
+// servidor OpenAI-compatível diferente de Ollama.
+$('modo-openrouter').onclick = () => {
+  $('base_url').value = configAtual.openrouter_base_url;
+  marcarModoAtivo();
+};
+$('modo-local').onclick = () => {
+  $('base_url').value = configAtual.local_base_url;
+  marcarModoAtivo();
+};
+$('base_url').addEventListener('input', marcarModoAtivo);
+
+$('buscar-modelos').onclick = async () => {
+  const botao = $('buscar-modelos');
+  const estado = $('estado-modelos');
+  const lista = $('lista-modelos');
+  botao.disabled = true;
+  estado.textContent = 'Buscando...';
+  lista.hidden = true;
+  lista.innerHTML = '';
+
+  const r = await fetch('/api/modelos?base_url=' + encodeURIComponent($('base_url').value));
+  const dados = await r.json();
+  botao.disabled = false;
+
+  if (!r.ok) {
+    estado.textContent = dados.erro || 'Não consegui buscar os modelos.';
+    return;
+  }
+  if (!dados.modelos.length) {
+    estado.textContent = 'Nenhum modelo encontrado nesse endereço.';
+    return;
+  }
+
+  estado.textContent = `${dados.modelos.length} modelo(s) encontrado(s). Clique para escolher.`;
+  for (const modelo of dados.modelos) {
+    const item = document.createElement('button');
+    item.type = 'button';
+    item.innerHTML = `${modelo.id}` +
+      (modelo.preco ? `<span class="preco">${modelo.preco}</span>` : '');
+    item.onclick = () => {
+      $('modelo').value = modelo.id;
+      lista.hidden = true;
+    };
+    lista.appendChild(item);
+  }
+  lista.hidden = false;
+};
 
 $('salvar').onclick = async () => {
   const corpo = {modelo: $('modelo').value, base_url: $('base_url').value};
-  if ($('chave').value) corpo.chave = $('chave').value;
+  if ($('chave').value) {
+    corpo.chave = $('chave').value;
+  } else if (!configAtual.tem_chave && $('base_url').value === configAtual.local_base_url) {
+    // Servidor local (Ollama e afins) normalmente ignora a chave, mas o
+    // cliente exige algum valor não vazio -- sem isso o usuário bateria
+    // num erro de "falta a chave" só por escolher o modo grátis.
+    corpo.chave = 'local';
+  }
   if ($('chave_tmdb').value) corpo.chave_tmdb = $('chave_tmdb').value;
 
   $('salvar').disabled = true;

@@ -6,6 +6,7 @@ import shutil
 import tempfile
 import time
 import unittest
+from unittest import mock
 
 from autosrt import jobs, pipeline, web
 
@@ -648,6 +649,67 @@ class TestConfiguracao(BaseWeb):
         self.client.post("/api/config", json={"chave_tmdb": "segredo-tmdb"})
         corpo = self.client.get("/api/config").get_data(as_text=True)
         self.assertNotIn("segredo-tmdb", corpo)
+
+    def test_expoe_os_enderecos_padrao_dos_dois_modos(self):
+        from autosrt import llm
+        dados = self.client.get("/api/config").get_json()
+        self.assertEqual(dados["openrouter_base_url"], llm.DEFAULT_BASE_URL)
+        self.assertEqual(dados["local_base_url"], llm.LOCAL_BASE_URL)
+
+
+class TestModelos(BaseWeb):
+    """/api/modelos alimenta o botão "Buscar modelos" do painel: nunca
+    expõe a chave ao navegador, e delega a chamada de rede a llm.list_models
+    (já testado à parte)."""
+
+    def test_lista_modelos_do_endereco_informado(self):
+        from autosrt import web as web_module
+        with mock.patch.object(web_module.llm, "list_models") as fake:
+            fake.return_value = [{"id": "modelo-a", "preco": "grátis"}]
+            resposta = self.client.get(
+                "/api/modelos?base_url=http://localhost:11434/v1")
+
+        self.assertEqual(resposta.status_code, 200)
+        self.assertEqual(resposta.get_json()["modelos"],
+                         [{"id": "modelo-a", "preco": "grátis"}])
+        self.assertEqual(fake.call_args.args[0], "http://localhost:11434/v1")
+
+    def test_sem_base_url_usa_o_configurado(self):
+        from autosrt import config, web as web_module
+        self._app_dir = config.app_directory
+        config.app_directory = lambda: self.tmp
+        self.addCleanup(setattr, config, "app_directory", self._app_dir)
+        self.client.post("/api/config", json={"base_url": "http://meu-servidor/v1"})
+
+        with mock.patch.object(web_module.llm, "list_models") as fake:
+            fake.return_value = []
+            self.client.get("/api/modelos")
+
+        self.assertEqual(fake.call_args.args[0], "http://meu-servidor/v1")
+
+    def test_falha_vira_502_com_mensagem(self):
+        from autosrt import web as web_module
+        from autosrt.llm import LLMError
+        with mock.patch.object(web_module.llm, "list_models") as fake:
+            fake.side_effect = LLMError("servidor local fora do ar")
+            resposta = self.client.get("/api/modelos")
+
+        self.assertEqual(resposta.status_code, 502)
+        self.assertIn("fora do ar", resposta.get_json()["erro"])
+
+    def test_nao_expoe_a_chave_ao_navegador(self):
+        from autosrt import config, web as web_module
+        self._app_dir = config.app_directory
+        config.app_directory = lambda: self.tmp
+        self.addCleanup(setattr, config, "app_directory", self._app_dir)
+        self.client.post("/api/config", json={"chave": "sk-or-v1-segredo"})
+
+        with mock.patch.object(web_module.llm, "list_models") as fake:
+            fake.return_value = []
+            resposta = self.client.get("/api/modelos")
+
+        self.assertNotIn("sk-or-v1-segredo", resposta.get_data(as_text=True))
+        self.assertEqual(fake.call_args.kwargs["api_key"], "sk-or-v1-segredo")
 
 
 class TestFila(unittest.TestCase):

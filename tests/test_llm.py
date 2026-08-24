@@ -2,7 +2,7 @@ import unittest
 
 import requests
 
-from autosrt.llm import DEFAULT_BASE_URL, LLMClient, LLMError
+from autosrt.llm import DEFAULT_BASE_URL, LLMClient, LLMError, list_models
 
 
 class FakeResponse:
@@ -30,6 +30,14 @@ class FakeSession:
         self.calls.append({"url": url, "headers": headers, "json": json})
         resultado = self.responses.pop(0) if self.responses else FakeResponse(
             200, ok_payload())
+        if isinstance(resultado, Exception):
+            raise resultado
+        return resultado
+
+    def get(self, url, headers=None, timeout=None):
+        self.calls.append({"url": url, "headers": headers})
+        resultado = self.responses.pop(0) if self.responses else FakeResponse(
+            200, {"data": []})
         if isinstance(resultado, Exception):
             raise resultado
         return resultado
@@ -141,6 +149,70 @@ class TestErros(unittest.TestCase):
         cliente, _ = self.build(FakeResponse(200, ok_payload("   ")))
         with self.assertRaises(LLMError):
             cliente.complete("s", "u")
+
+
+class TestListModels(unittest.TestCase):
+    def test_monta_id_e_preco_do_openrouter(self):
+        session = FakeSession(FakeResponse(200, {"data": [
+            {"id": "deepseek/deepseek-chat-v3.1",
+             "pricing": {"prompt": "0.00000014", "completion": "0.00000028"}},
+        ]}))
+        modelos = list_models(session=session)
+        self.assertEqual(modelos, [{
+            "id": "deepseek/deepseek-chat-v3.1",
+            "preco": "$0.14/1M entrada · $0.28/1M saída",
+        }])
+
+    def test_sem_pricing_e_none(self):
+        session = FakeSession(FakeResponse(200, {"data": [{"id": "llama3.1"}]}))
+        modelos = list_models(session=session)
+        self.assertIsNone(modelos[0]["preco"])
+
+    def test_pricing_zerado_e_gratis(self):
+        session = FakeSession(FakeResponse(200, {"data": [
+            {"id": "modelo-gratis", "pricing": {"prompt": "0", "completion": "0"}},
+        ]}))
+        modelos = list_models(session=session)
+        self.assertEqual(modelos[0]["preco"], "grátis")
+
+    def test_ordena_por_id(self):
+        session = FakeSession(FakeResponse(200, {"data": [
+            {"id": "zeta"}, {"id": "alfa"},
+        ]}))
+        modelos = list_models(session=session)
+        self.assertEqual([m["id"] for m in modelos], ["alfa", "zeta"])
+
+    def test_ignora_itens_sem_id(self):
+        session = FakeSession(FakeResponse(200, {"data": [
+            {"pricing": {}}, {"id": "valido"},
+        ]}))
+        modelos = list_models(session=session)
+        self.assertEqual([m["id"] for m in modelos], ["valido"])
+
+    def test_manda_a_chave_quando_ha_uma(self):
+        session = FakeSession(FakeResponse(200, {"data": []}))
+        list_models(api_key="sk-teste", session=session)
+        self.assertEqual(session.calls[0]["headers"]["Authorization"], "Bearer sk-teste")
+
+    def test_sem_chave_nao_manda_cabecalho_de_autorizacao(self):
+        session = FakeSession(FakeResponse(200, {"data": []}))
+        list_models(session=session)
+        self.assertEqual(session.calls[0]["headers"], {})
+
+    def test_erro_http_vira_llmerror(self):
+        session = FakeSession(FakeResponse(401, text="sem permissao"))
+        with self.assertRaises(LLMError):
+            list_models(session=session)
+
+    def test_falha_de_rede_vira_llmerror(self):
+        session = FakeSession(requests.ConnectionError("sem rede"))
+        with self.assertRaises(LLMError):
+            list_models(session=session)
+
+    def test_formato_inesperado_vira_llmerror(self):
+        session = FakeSession(FakeResponse(200, {"nao": "e uma lista"}))
+        with self.assertRaises(LLMError):
+            list_models(session=session)
 
 
 if __name__ == "__main__":

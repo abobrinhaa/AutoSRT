@@ -131,3 +131,81 @@ class LLMClient:
         if not isinstance(content, str) or not content.strip():
             raise LLMError("A API devolveu uma resposta vazia.")
         return content
+
+
+# Endereço padrão de um servidor Ollama local, servindo o mesmo formato
+# compatível com OpenAI (``ollama serve`` já expõe isso em /v1). É o
+# provedor local mais comum; quem usar outro servidor troca o endereço.
+LOCAL_BASE_URL = "http://localhost:11434/v1"
+
+DEFAULT_MODELS_TIMEOUT = 10
+
+
+def list_models(base_url=DEFAULT_BASE_URL, api_key=None,
+                timeout=DEFAULT_MODELS_TIMEOUT, session=None) -> list:
+    """Lista os modelos disponíveis num endereço compatível com OpenAI.
+
+    Usado só para sugerir modelos na interface -- a maioria dos provedores
+    (incluindo o OpenRouter) expõe essa lista sem exigir chave, mas a chave
+    configurada é enviada mesmo assim, para servidores privados que exigem.
+
+    Returns:
+        Lista de ``{"id": ..., "preco": ...}``, ordenada por id. ``preco``
+        vem como texto pronto para exibir (ex.: "$0.14/1M entrada · ...",
+        ou "grátis") quando o provedor informa, e ``None`` quando não informa
+        -- servidor local não tem preço para mostrar.
+
+    Raises:
+        LLMError: falha de rede, resposta que não é JSON, ou o provedor
+            recusou o pedido.
+    """
+    url = f"{base_url.rstrip('/')}/models"
+    headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
+    http = session or requests
+
+    try:
+        response = http.get(url, headers=headers, timeout=timeout)
+    except requests.RequestException as exc:
+        raise LLMError(f"Não consegui buscar os modelos: {exc}")
+
+    if response.status_code != 200:
+        detail = (response.text or "")[:300]
+        raise LLMError(f"A API recusou a lista de modelos - HTTP {response.status_code}: {detail}")
+
+    try:
+        data = response.json()
+    except (ValueError, json.JSONDecodeError):
+        raise LLMError("A lista de modelos veio num formato que não é JSON.")
+
+    itens = data.get("data") if isinstance(data, dict) else None
+    if not isinstance(itens, list):
+        raise LLMError("A lista de modelos veio num formato inesperado.")
+
+    modelos = []
+    for item in itens:
+        if not isinstance(item, dict) or not item.get("id"):
+            continue
+        modelos.append({"id": item["id"], "preco": _format_price(item.get("pricing"))})
+
+    modelos.sort(key=lambda m: m["id"])
+    return modelos
+
+
+def _format_price(pricing):
+    """Preço por 1M de tokens, como texto pronto para exibir.
+
+    O OpenRouter informa ``pricing.prompt``/``pricing.completion`` em dólares
+    por token; a maioria dos servidores locais (Ollama, por exemplo) não
+    manda ``pricing`` nenhum, e aí a resposta é ``None`` -- a interface
+    decide o que mostrar nesse caso (normalmente "grátis").
+    """
+    if not isinstance(pricing, dict):
+        return None
+    try:
+        entrada = float(pricing.get("prompt") or 0) * 1_000_000
+        saida = float(pricing.get("completion") or 0) * 1_000_000
+    except (TypeError, ValueError):
+        return None
+    if entrada == 0 and saida == 0:
+        return "grátis"
+    return f"${entrada:.2f}/1M entrada · ${saida:.2f}/1M saída"
