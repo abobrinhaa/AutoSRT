@@ -77,11 +77,23 @@ def whisper_available(explicit_path: str = None) -> bool:
 def build_command(media_path, output_dir, *, executable, model=DEFAULT_MODEL,
                   language=None, diarize=DEFAULT_DIARIZE_MODEL,
                   compute_type=DEFAULT_COMPUTE_TYPE, vad=DEFAULT_VAD,
+                  vad_threshold=None, vad_min_silence_ms=None,
                   max_speakers=None, extra_args=None) -> list:
     """Monta a linha de comando do Faster-Whisper-XXL.
 
     Separado da execução para poder ser verificado nos testes sem o
     executável presente.
+
+    Args:
+        vad_threshold: probabilidade mínima (0 a 1) para um trecho ser
+            considerado fala. O padrão do próprio Whisper (não informado
+            aqui) costuma ficar por volta de 0.5; baixar isso pega fala
+            baixa/sussurrada que passaria batido, ao custo de arriscar
+            confundir ruído de fundo com fala.
+        vad_min_silence_ms: silêncio mínimo, em milissegundos, para a VAD
+            considerar que uma fala terminou. Baixar isso evita que duas
+            falas rápidas e coladas sejam tratadas como uma só (ou que a
+            palavra final de uma fala seja cortada por engano).
     """
     command = [
         executable, media_path,
@@ -96,6 +108,10 @@ def build_command(media_path, output_dir, *, executable, model=DEFAULT_MODEL,
         command += ["--language", language]
     if vad:
         command += ["--vad_method", vad]
+    if vad_threshold is not None:
+        command += ["--vad_threshold", str(vad_threshold)]
+    if vad_min_silence_ms is not None:
+        command += ["--vad_min_silence_duration_ms", str(vad_min_silence_ms)]
     if diarize:
         command += ["--diarize", diarize]
         if max_speakers:
@@ -128,8 +144,9 @@ def split_speaker(text: str):
 def transcribe(media_path, *, output_dir=None, executable=None,
                model=DEFAULT_MODEL, language=None, diarize=DEFAULT_DIARIZE_MODEL,
                compute_type=DEFAULT_COMPUTE_TYPE, vad=DEFAULT_VAD,
+               vad_threshold=None, vad_min_silence_ms=None,
                max_speakers=None, progress=None, cancel_event=None,
-               timeout=None, runner=None) -> list:
+               timeout=None, runner=None, extra_args=None) -> list:
     """Transcreve um arquivo de mídia e devolve a lista de :class:`Cue`.
 
     Args:
@@ -139,9 +156,14 @@ def transcribe(media_path, *, output_dir=None, executable=None,
         model: nome do modelo. ``turbo`` é o ``large-v3-turbo``.
         language: código do idioma falado. ``None`` deixa o Whisper detectar.
         diarize: modelo de diarização, ou ``None`` para não diarizar.
+        vad_threshold: veja :func:`build_command`. ``None`` (padrão) deixa o
+            Whisper usar o próprio valor padrão, sem mexer em nada.
+        vad_min_silence_ms: veja :func:`build_command`.
         progress: chamada como ``progress(percentual)`` conforme o Whisper
             reporta o andamento.
         runner: injeção usada pelos testes, no lugar da execução real.
+        extra_args: argumentos extras repassados direto para o executável,
+            para opções que este módulo ainda não conhece por nome.
 
     Returns:
         Lista de legendas, com ``speaker`` preenchido quando houve diarização.
@@ -167,7 +189,9 @@ def transcribe(media_path, *, output_dir=None, executable=None,
     command = build_command(
         media_path, output_dir, executable=resolved, model=model,
         language=language, diarize=diarize, compute_type=compute_type,
-        vad=vad, max_speakers=max_speakers)
+        vad=vad, vad_threshold=vad_threshold,
+        vad_min_silence_ms=vad_min_silence_ms, max_speakers=max_speakers,
+        extra_args=extra_args)
 
     run = runner or _run_process
     run(command, progress=progress, cancel_event=cancel_event, timeout=timeout)

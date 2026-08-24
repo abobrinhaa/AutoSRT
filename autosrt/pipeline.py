@@ -199,7 +199,8 @@ def process_media(media_path, output_path=None, *, engine=DEFAULT_ENGINE,
                   whisper_path=None, llm_client=None, translate=True,
                   progress=None, status=None, cancel_event=None,
                   transcribe_runner=None, translator_factory=None,
-                  keep_original=True) -> PipelineResult:
+                  keep_original=True, vad_threshold=None,
+                  vad_min_silence_ms=None, transcribe_extra_args=None) -> PipelineResult:
     """Transcreve um arquivo de mídia e traduz o resultado.
 
     É o caminho completo: o áudio vira legenda já sincronizada e com o
@@ -216,6 +217,12 @@ def process_media(media_path, output_path=None, *, engine=DEFAULT_ENGINE,
         translate: sendo ``False``, para depois de transcrever.
         keep_original: grava também o ``<nome>.original.srt`` no idioma
             falado, útil para conferir a transcrição.
+        vad_threshold: veja :func:`autosrt.transcribe.build_command`. Sem
+            efeito quando ``transcribe_runner`` é usado (motor via API não
+            passa pela VAD local).
+        vad_min_silence_ms: idem.
+        transcribe_extra_args: argumentos extras repassados direto ao
+            executável do Whisper local.
 
     Returns:
         :class:`PipelineResult`.
@@ -257,6 +264,9 @@ def process_media(media_path, output_path=None, *, engine=DEFAULT_ENGINE,
             "executable": whisper_path,
             "cancel_event": cancel_event,
             "output_dir": os.path.dirname(os.path.abspath(output_path)) or ".",
+            "vad_threshold": vad_threshold,
+            "vad_min_silence_ms": vad_min_silence_ms,
+            "extra_args": transcribe_extra_args,
         }
         if whisper_model:
             kwargs["model"] = whisper_model

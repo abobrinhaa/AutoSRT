@@ -2,6 +2,7 @@ import os
 import tempfile
 import threading
 import unittest
+from unittest import mock
 
 from autosrt import llm_translate, srt_io
 from autosrt.cue import Cue
@@ -268,6 +269,44 @@ class TestFalhaTotalDeTraducaoLLM(unittest.TestCase):
                                    llm_client=MetadeQuebradoLLM())
         self.assertGreater(resultado.translated, 0)
         self.assertTrue(os.path.exists(destino))
+
+
+class TestSensibilidadeDaVAD(unittest.TestCase):
+    """process_media repassa os parâmetros de VAD para o Whisper local, sem
+    afetar quem nunca pediu nada (padrão continua None -- sem mexer em
+    nada)."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.midia = os.path.join(self.tmp, "filme.mkv")
+        open(self.midia, "wb").close()
+
+    def test_parametros_chegam_ao_whisper_local(self):
+        destino = os.path.join(self.tmp, "saida.srt")
+        with mock.patch("autosrt.transcribe.transcribe") as fake:
+            fake.return_value = [
+                Cue.from_source(index=1, start=0, end=1000, source_text="Oi."),
+            ]
+            process_media(self.midia, destino, translate=False,
+                          vad_threshold=0.2, vad_min_silence_ms=300,
+                          transcribe_extra_args=["--no_speech_threshold", "0.3"])
+
+        self.assertEqual(fake.call_args.kwargs["vad_threshold"], 0.2)
+        self.assertEqual(fake.call_args.kwargs["vad_min_silence_ms"], 300)
+        self.assertEqual(fake.call_args.kwargs["extra_args"],
+                         ["--no_speech_threshold", "0.3"])
+
+    def test_sem_pedir_nada_fica_none(self):
+        destino = os.path.join(self.tmp, "saida.srt")
+        with mock.patch("autosrt.transcribe.transcribe") as fake:
+            fake.return_value = [
+                Cue.from_source(index=1, start=0, end=1000, source_text="Oi."),
+            ]
+            process_media(self.midia, destino, translate=False)
+
+        self.assertIsNone(fake.call_args.kwargs["vad_threshold"])
+        self.assertIsNone(fake.call_args.kwargs["vad_min_silence_ms"])
+        self.assertIsNone(fake.call_args.kwargs["extra_args"])
 
 
 class TestPastaDeOriginais(unittest.TestCase):

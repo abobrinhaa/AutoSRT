@@ -226,6 +226,36 @@ class TestTranscricao(BaseCLI):
             self.run_cli([entrada, "--so-transcrever"])
         self.assertFalse(fake.call_args.kwargs["translate"])
 
+    def test_sensibilidade_da_vad_fica_de_fora_por_padrao(self):
+        entrada = self.touch("filme.mkv")
+        with mock.patch.object(pipeline, "process_media") as fake:
+            fake.return_value = pipeline.PipelineResult(
+                total=1, translated=1, failed=[], detected_lang="en")
+            self.run_cli([entrada])
+        self.assertIsNone(fake.call_args.kwargs["vad_threshold"])
+        self.assertIsNone(fake.call_args.kwargs["vad_min_silence_ms"])
+        self.assertIsNone(fake.call_args.kwargs["transcribe_extra_args"])
+
+    def test_vad_sensibilidade_chega_ao_pipeline(self):
+        entrada = self.touch("filme.mkv")
+        with mock.patch.object(pipeline, "process_media") as fake:
+            fake.return_value = pipeline.PipelineResult(
+                total=1, translated=1, failed=[], detected_lang="en")
+            self.run_cli([entrada, "--vad-sensibilidade", "0.2",
+                         "--vad-silencio-min", "300"])
+        self.assertEqual(fake.call_args.kwargs["vad_threshold"], 0.2)
+        self.assertEqual(fake.call_args.kwargs["vad_min_silence_ms"], 300)
+
+    def test_whisper_args_e_dividido_como_na_linha_de_comando(self):
+        entrada = self.touch("filme.mkv")
+        with mock.patch.object(pipeline, "process_media") as fake:
+            fake.return_value = pipeline.PipelineResult(
+                total=1, translated=1, failed=[], detected_lang="en")
+            self.run_cli([entrada, "--whisper-args",
+                         "--no_speech_threshold 0.3"])
+        self.assertEqual(fake.call_args.kwargs["transcribe_extra_args"],
+                         ["--no_speech_threshold", "0.3"])
+
 
 class TestMotorViaAPI(BaseCLI):
     """Regressão do motor de transcrição via API: antes, o parâmetro

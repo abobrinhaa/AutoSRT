@@ -11,6 +11,7 @@ Uso típico::
 
 import argparse
 import os
+import shlex
 import sys
 
 from . import config, pipeline, srt_io, sync, transcribe, transcribe_api
@@ -119,6 +120,24 @@ def build_parser():
                             "tradutor perde a informação que corrige o gênero")
     grupo.add_argument("--so-transcrever", action="store_true",
                        help="transcreve e para, sem traduzir")
+    grupo.add_argument("--vad-sensibilidade", type=float, metavar="0-1",
+                       dest="vad_threshold",
+                       help="baixar (ex: 0.2) pega fala baixa/sussurrada que "
+                            "fica de fora com o padrão do Whisper, ao custo "
+                            "de arriscar confundir ruído de fundo com fala. "
+                            "Padrão: o do próprio Whisper, sem mexer em nada")
+    grupo.add_argument("--vad-silencio-min", type=int, metavar="MS",
+                       dest="vad_min_silence_ms",
+                       help="silêncio mínimo (ms) para a VAD considerar que "
+                            "uma fala terminou. Baixar evita cortar a "
+                            "palavra final de uma fala rápida")
+    grupo.add_argument("--whisper-args", metavar="\"ARGS\"",
+                       dest="whisper_extra_args",
+                       help="argumentos extras repassados direto ao "
+                            "executável do Whisper local, para opções que "
+                            "este programa ainda não conhece por nome. Uma "
+                            "string só, como na linha de comando; ex: "
+                            "--whisper-args \"--no_speech_threshold 0.3\"")
 
     grupo = parser.add_argument_group("sincronia (só para legendas)")
     grupo.add_argument("--deslocar", type=float, metavar="SEG",
@@ -214,11 +233,16 @@ def process_one(entrada, args, reporter) -> bool:
             if args.whisper_api != "local":
                 transcribe_runner = get_transcribe_runner(args.whisper_api, reporter)
 
+            extra_args = shlex.split(args.whisper_extra_args) \
+                if args.whisper_extra_args else None
             resultado = pipeline.process_media(
                 entrada, saida, engine=args.motor, language=args.idioma,
                 whisper_model=args.modelo, diarize=not args.sem_diarizacao,
                 translate=not args.so_transcrever,
                 transcribe_runner=transcribe_runner,
+                vad_threshold=args.vad_threshold,
+                vad_min_silence_ms=args.vad_min_silence_ms,
+                transcribe_extra_args=extra_args,
                 progress=reporter.progress, status=reporter.status)
         elif pipeline.is_media(entrada):
             reporter.error("--so-traduzir precisa de uma legenda, não de um vídeo")

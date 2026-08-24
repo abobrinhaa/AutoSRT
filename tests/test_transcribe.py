@@ -99,6 +99,33 @@ class TestBuildCommand(unittest.TestCase):
         self.assertNotIn(transcribe.DEFAULT_DIARIZE_MODEL,
                          transcribe.RESTRICTED_DIARIZE_MODELS)
 
+    def test_sensibilidade_da_vad_fica_de_fora_por_padrao(self):
+        # Sem pedir explicitamente, o comportamento não muda: quem nunca
+        # ouviu falar de VAD não é afetado por isso.
+        command = self.build()
+        self.assertNotIn("--vad_threshold", command)
+        self.assertNotIn("--vad_min_silence_duration_ms", command)
+
+    def test_vad_threshold_entra_quando_informado(self):
+        command = self.build(vad_threshold=0.2)
+        posicao = command.index("--vad_threshold")
+        self.assertEqual(command[posicao + 1], "0.2")
+
+    def test_vad_threshold_zero_ainda_entra(self):
+        # 0 é um valor válido (o mais sensível possível) -- "if vad_threshold"
+        # trataria isso como falso e sumiria com a flag por engano.
+        command = self.build(vad_threshold=0)
+        self.assertIn("--vad_threshold", command)
+
+    def test_vad_min_silence_entra_quando_informado(self):
+        command = self.build(vad_min_silence_ms=200)
+        posicao = command.index("--vad_min_silence_duration_ms")
+        self.assertEqual(command[posicao + 1], "200")
+
+    def test_extra_args_vao_no_final(self):
+        command = self.build(extra_args=["--no_speech_threshold", "0.3"])
+        self.assertEqual(command[-2:], ["--no_speech_threshold", "0.3"])
+
 
 class TestLoadTranscript(unittest.TestCase):
     def setUp(self):
@@ -182,6 +209,27 @@ class TestTranscribe(unittest.TestCase):
         mensagem = str(contexto.exception)
         self.assertIn("Purfview", mensagem)
         self.assertIn("FASTER_WHISPER_PATH", mensagem)
+
+    def test_sensibilidade_da_vad_chega_ate_o_comando(self):
+        comandos = []
+
+        def runner(command, **kwargs):
+            comandos.append(command)
+            output_dir = command[command.index("--output_dir") + 1]
+            with open(os.path.join(output_dir, "filme.srt"), "w",
+                     encoding="utf-8") as handle:
+                handle.write(SRT_COM_LOCUTOR)
+
+        transcribe.transcribe(
+            self.media, output_dir=self.tmp, executable=self.fake_exe,
+            runner=runner, vad_threshold=0.15, vad_min_silence_ms=300,
+            extra_args=["--no_speech_threshold", "0.3"])
+
+        command = comandos[0]
+        self.assertEqual(command[command.index("--vad_threshold") + 1], "0.15")
+        self.assertEqual(
+            command[command.index("--vad_min_silence_duration_ms") + 1], "300")
+        self.assertIn("--no_speech_threshold", command)
 
     def test_whisper_que_nao_gera_saida_levanta_erro(self):
         def runner_vazio(command, **kwargs):
