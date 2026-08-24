@@ -743,10 +743,6 @@ PAGINA = """<!doctype html>
   <details id="config">
     <summary>Configura&ccedil;&atilde;o da tradu&ccedil;&atilde;o <span id="estado-chave"></span></summary>
     <div class="painel">
-      <div class="modo-provedor">
-        <button type="button" id="modo-openrouter">OpenRouter<span class="tag">pago</span></button>
-        <button type="button" id="modo-local">Local<span class="tag">gr&aacute;tis</span></button>
-      </div>
       <label>Endere&ccedil;o da API
         <input type="text" id="base_url" placeholder="https://openrouter.ai/api/v1">
       </label>
@@ -764,6 +760,10 @@ PAGINA = """<!doctype html>
       <label>Chave do TMDB <span id="estado-chave-tmdb"></span>
         <input type="password" id="chave_tmdb" placeholder="opcional &mdash; reconhece o filme pelo nome do arquivo" autocomplete="off">
       </label>
+      <div class="modo-provedor">
+        <button type="button" id="modo-openrouter">OpenRouter<span class="tag">pago</span></button>
+        <button type="button" id="modo-local">Local<span class="tag">gr&aacute;tis</span></button>
+      </div>
       <div class="rodape">
         <span class="dica-config">As chaves ficam no config.json do servidor e nunca voltam para esta p&aacute;gina.</span>
         <button id="salvar">Salvar</button>
