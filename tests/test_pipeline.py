@@ -3,8 +3,9 @@ import tempfile
 import threading
 import unittest
 
-from autosrt import srt_io
+from autosrt import llm_translate, srt_io
 from autosrt.cue import Cue
+from autosrt.llm import LLMError
 from autosrt.pipeline import ENGINE_GOOGLE, ENGINE_LLM, process_media, translate_file
 from autosrt.translate import TranslationCancelled
 
@@ -203,6 +204,70 @@ class TestMotorDeTranscricaoAlternativo(unittest.TestCase):
                       transcribe_runner=self.fake_runner,
                       progress=lambda done, total: vistos.append((done, total)))
         self.assertIn((100, 100), vistos)
+
+
+class QuebradoLLM:
+    """Cliente que nunca consegue traduzir nada, para simular chave/modelo/
+    crédito quebrados na API."""
+
+    def complete(self, system, user):
+        raise LLMError("sem créditos")
+
+
+class TestFalhaTotalDeTraducaoLLM(unittest.TestCase):
+    """Antes, uma tradução que falhava para 100% das falas terminava como
+    trabalho "concluído" -- o arquivo saía todo no idioma original sem
+    nenhum aviso visível na interface nem no terminal."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+
+    def escrever(self, nome, conteudo):
+        caminho = os.path.join(self.tmp, nome)
+        with open(caminho, "w", encoding="utf-8") as handle:
+            handle.write(conteudo)
+        return caminho
+
+    def test_falha_em_arquivo_normal_vira_erro_visivel(self):
+        origem = self.escrever("filme.srt", SAMPLE)  # 3 falas
+        destino = os.path.join(self.tmp, "saida.srt")
+
+        with self.assertRaises(LLMError) as ctx:
+            translate_file(origem, destino, engine=ENGINE_LLM,
+                           llm_client=QuebradoLLM())
+        self.assertIn("chave", str(ctx.exception).lower())
+        # Não fica um arquivo "pronto" com tudo em inglês, sem aviso nenhum.
+        self.assertFalse(os.path.exists(destino))
+
+    def test_arquivo_bem_pequeno_continua_com_degradacao_graciosa(self):
+        # Uma legenda de teste com pouquíssimas falas pode legitimamente ter
+        # uma que o modelo não encaixe no formato -- isso não é sinal de que
+        # a API inteira está quebrada, e não deveria virar erro fatal.
+        origem = self.escrever("curto.srt",
+                               "1\n00:00:01,000 --> 00:00:03,000\nHi.\n")
+        destino = os.path.join(self.tmp, "curto_pt.srt")
+
+        resultado = translate_file(origem, destino, engine=ENGINE_LLM,
+                                   llm_client=QuebradoLLM())
+        self.assertEqual(resultado.failure_count, 1)
+        self.assertTrue(os.path.exists(destino))
+
+    def test_falha_parcial_continua_com_degradacao_graciosa(self):
+        class MetadeQuebradoLLM:
+            def complete(self, system, user):
+                numeros = {n for n, _ in llm_translate.BLOCK_RE.findall(user)}
+                if "3" in numeros:
+                    raise LLMError("essa parte falha sempre")
+                return "\n".join(f"<{n}>PT:{c.strip()}</{n}>"
+                                for n, c in llm_translate.BLOCK_RE.findall(user))
+
+        origem = self.escrever("filme.srt", SAMPLE)
+        destino = os.path.join(self.tmp, "saida.srt")
+
+        resultado = translate_file(origem, destino, engine=ENGINE_LLM,
+                                   llm_client=MetadeQuebradoLLM())
+        self.assertGreater(resultado.translated, 0)
+        self.assertTrue(os.path.exists(destino))
 
 
 class TestPastaDeOriginais(unittest.TestCase):

@@ -14,7 +14,18 @@ from dataclasses import dataclass
 
 from . import llm_translate, srt_io
 from .language import detect_language, language_name
+from .llm import LLMError
 from .translate import DEFAULT_TARGET, TranslationCancelled, translate_cues
+
+#: Abaixo disto, uma legenda que falhou por inteiro não é motivo para
+#: interromper o trabalho -- um arquivo de teste com uma ou duas falas pode
+#: legitimamente ter uma que o modelo não consiga encaixar no formato, e a
+#: degradação graciosa (mantém o texto original só naquela linha) continua
+#: sendo o comportamento certo. Acima disto, 100% de falha não é mais "uma
+#: linha difícil": é sinal de que a chamada à API está quebrada por inteiro
+#: (chave, modelo ou crédito), e o arquivo sairia todo no idioma original
+#: sem nenhum aviso visível se isso não virasse erro.
+MIN_CUES_PARA_FALHA_TOTAL_SER_ERRO = 3
 
 #: Motor padrão. O modelo de linguagem traduz em blocos com contexto, que é
 #: o que permite acertar gíria e concordância de gênero. O Google fica como
@@ -136,7 +147,18 @@ def _translate_with_llm(cues, detected_lang, *, llm_client, speaker_genders,
         cues, language_name(detected_lang), client=client,
         speaker_genders=speaker_genders, progress=progress,
         cancel_event=cancel_event)
-    return len(cues) - len(falhas), falhas
+    translated = len(cues) - len(falhas)
+
+    if (translated == 0 and len(cues) >= MIN_CUES_PARA_FALHA_TOTAL_SER_ERRO):
+        raise LLMError(
+            f"A tradução falhou para as {len(cues)} legendas do arquivo -- "
+            "nenhuma foi traduzida. O arquivo ficaria todo no idioma "
+            "original sem nenhum aviso se isso não virasse erro agora. "
+            "Confira a chave de API, o modelo e o endereço configurados "
+            "(painel de configuração, ou openrouter_api_key/llm_model/"
+            "llm_base_url no config.json).")
+
+    return translated, falhas
 
 
 #: Extensões tratadas como mídia (transcrever antes de traduzir). Legendas
