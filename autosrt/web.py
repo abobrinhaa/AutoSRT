@@ -747,7 +747,9 @@ PAGINA = """<!doctype html>
         <input type="text" id="base_url" placeholder="https://openrouter.ai/api/v1">
       </label>
       <label><span id="rotulo-chave">Chave do OpenRouter</span>
-        <input type="password" id="chave" placeholder="sk-or-v1-... (dispens&aacute;vel no modo local)" autocomplete="off">
+        <input type="password" id="chave" placeholder="sk-or-v1-..." autocomplete="off"
+              data-exemplo-openrouter="sk-or-v1-..."
+              data-exemplo-local="normalmente dispens&aacute;vel aqui">
       </label>
       <label>Modelo
         <div class="linha-modelo">
@@ -1150,16 +1152,46 @@ function marcarModoAtivo() {
   const local = url === configAtual.local_base_url;
   $('modo-openrouter').classList.toggle('ativo', url === configAtual.openrouter_base_url);
   $('modo-local').classList.toggle('ativo', local);
+
   // O campo é o mesmo nos dois modos (é sempre "openrouter_api_key" na
-  // configuração), mas o rótulo "OpenRouter" fica errado depois de trocar
-  // para Local -- aqui é só o texto que muda, não o campo.
+  // configuração), mas o rótulo e o exemplo "OpenRouter" ficam errados
+  // depois de trocar para Local -- só o texto ao redor muda, não o campo.
   $('rotulo-chave').textContent = local
     ? 'Chave da API (opcional em modo local)' : 'Chave do OpenRouter';
-  // Idem para o exemplo do campo de modelo: um slug "fornecedor/modelo" só
-  // faz sentido no OpenRouter -- um Ollama local usa nomes como "llama3.1".
+  const chaveInput = $('chave');
+  chaveInput.placeholder = local
+    ? chaveInput.dataset.exemploLocal : chaveInput.dataset.exemploOpenrouter;
+
   const modeloInput = $('modelo');
   modeloInput.placeholder = local
     ? modeloInput.dataset.exemploLocal : modeloInput.dataset.exemploOpenrouter;
+
+  // O selo do topo é sobre a configuração já salva (a chave nunca volta
+  // pra cá pra saber se o que está no campo bate); em modo local, não ter
+  // chave não é uma falta -- é o normal, e não devia soar como aviso.
+  const selo = $('estado-chave');
+  if (local) {
+    selo.className = 'selo ok';
+    selo.textContent = configAtual.tem_chave
+      ? 'chave configurada (opcional aqui)' : 'chave opcional (modo local)';
+  } else {
+    selo.className = 'selo ' + (configAtual.tem_chave ? 'ok' : 'falta');
+    selo.textContent = configAtual.tem_chave
+      ? (configAtual.chave_do_ambiente ? 'chave do ambiente' : 'chave configurada')
+      : 'sem chave';
+  }
+}
+
+// Slug "fornecedor/modelo" (com barra) só existe no catálogo do OpenRouter;
+// servidor local usa nomes como "llama3.1", sem barra. Ao trocar de modo,
+// um valor que claramente pertence ao outro lado é limpo, para não salvar
+// por engano um modelo que não existe no servidor escolhido.
+function limparModeloSeIncompativel(local) {
+  const modeloInput = $('modelo');
+  const temBarra = modeloInput.value.includes('/');
+  if ((local && temBarra) || (!local && modeloInput.value && !temBarra)) {
+    modeloInput.value = '';
+  }
 }
 
 async function carregarConfig() {
@@ -1168,12 +1200,6 @@ async function carregarConfig() {
   configAtual = c;
   $('modelo').value = c.modelo || '';
   $('base_url').value = c.base_url || '';
-
-  const selo = $('estado-chave');
-  selo.className = 'selo ' + (c.tem_chave ? 'ok' : 'falta');
-  selo.textContent = c.tem_chave
-    ? (c.chave_do_ambiente ? 'chave do ambiente' : 'chave configurada')
-    : 'sem chave';
 
   const seloTmdb = $('estado-chave-tmdb');
   seloTmdb.className = 'selo ' + (c.tem_chave_tmdb ? 'ok' : 'falta');
@@ -1193,10 +1219,12 @@ async function carregarConfig() {
 // servidor OpenAI-compatível diferente de Ollama.
 $('modo-openrouter').onclick = () => {
   $('base_url').value = configAtual.openrouter_base_url;
+  limparModeloSeIncompativel(false);
   marcarModoAtivo();
 };
 $('modo-local').onclick = () => {
   $('base_url').value = configAtual.local_base_url;
+  limparModeloSeIncompativel(true);
   marcarModoAtivo();
 };
 $('base_url').addEventListener('input', marcarModoAtivo);

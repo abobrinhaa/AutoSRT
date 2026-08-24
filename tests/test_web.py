@@ -104,6 +104,32 @@ class TestPagina(BaseWeb):
         self.assertIn('data-exemplo-openrouter="deepseek/deepseek-chat"', html)
         self.assertIn('data-exemplo-local="llama3.1"', html)
 
+    def test_placeholder_da_chave_tambem_reage_ao_modo(self):
+        # Regressão: o placeholder do #chave ficava fixo em "sk-or-v1-...
+        # (dispensável no modo local)" nos dois modos -- estranho no
+        # OpenRouter, redundante no Local (o rótulo já diz isso).
+        html = self.client.get("/").get_data(as_text=True)
+        self.assertIn('data-exemplo-openrouter="sk-or-v1-..."', html)
+        self.assertIn('data-exemplo-local="normalmente dispens', html)
+        self.assertNotIn("dispensável no modo local", html)
+
+    def test_selo_de_chave_diferencia_o_modo(self):
+        # Regressão: o selo "chave configurada"/"sem chave" do topo era o
+        # mesmo texto/estilo nos dois modos, mesmo chave sendo opcional
+        # em modo local -- lia como aviso onde não era.
+        html = self.client.get("/").get_data(as_text=True)
+        self.assertIn("chave opcional (modo local)", html)
+        self.assertIn("chave configurada (opcional aqui)", html)
+
+    def test_modelo_e_limpo_ao_trocar_para_modo_incompativel(self):
+        # Regressão: trocar para "Local" mantinha um slug do OpenRouter
+        # (com barra, ex. deepseek/deepseek-chat) no campo Modelo, que não
+        # existe num servidor local -- risco de salvar um modelo inválido.
+        html = self.client.get("/").get_data(as_text=True)
+        self.assertIn("function limparModeloSeIncompativel", html)
+        self.assertIn("limparModeloSeIncompativel(true)", html)
+        self.assertIn("limparModeloSeIncompativel(false)", html)
+
 
 class TestListagem(BaseWeb):
     def test_lista_videos_e_legendas(self):
