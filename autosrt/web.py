@@ -702,6 +702,12 @@ PAGINA = """<!doctype html>
   .modo-provedor button.ativo { background: #21304f; border-color: #3b82f6;
                                 color: #e8e8ea; }
   .modo-provedor .tag { margin-left: 6px; }
+  /* Cor sozinha não é garantia de dar para notar; o texto "selecionado"
+     deixa explícito qual dos dois modos está valendo agora. */
+  .modo-provedor .marca-selecionado { display: none; color: #4ade80;
+                                      font-size: 12px; }
+  .modo-provedor button.ativo .marca-selecionado { display: inline; }
+  #mensagem-salvar.sucesso { color: #4ade80; }
   .linha-modelo { display: flex; gap: 8px; }
   .linha-modelo input { flex: 1; }
   .lista-modelos { max-height: 220px; overflow-y: auto; border: 1px solid #3a3a42;
@@ -743,7 +749,7 @@ PAGINA = """<!doctype html>
   <details id="config">
     <summary>Configura&ccedil;&atilde;o da tradu&ccedil;&atilde;o <span id="estado-chave"></span></summary>
     <div class="painel">
-      <label>Endere&ccedil;o da API
+      <label><span id="rotulo-endereco">Endere&ccedil;o da API</span>
         <input type="text" id="base_url" placeholder="https://openrouter.ai/api/v1">
       </label>
       <label><span id="rotulo-chave">Chave do OpenRouter</span>
@@ -763,11 +769,11 @@ PAGINA = """<!doctype html>
         <input type="password" id="chave_tmdb" placeholder="opcional &mdash; reconhece o filme pelo nome do arquivo" autocomplete="off">
       </label>
       <div class="modo-provedor">
-        <button type="button" id="modo-openrouter">OpenRouter<span class="tag">pago</span></button>
-        <button type="button" id="modo-local">Local<span class="tag">gr&aacute;tis</span></button>
+        <button type="button" id="modo-openrouter">OpenRouter<span class="tag">pago</span><span class="marca-selecionado"> &#10003; selecionado</span></button>
+        <button type="button" id="modo-local">Local<span class="tag">gr&aacute;tis</span><span class="marca-selecionado"> &#10003; selecionado</span></button>
       </div>
       <div class="rodape">
-        <span class="dica-config">As chaves ficam no config.json do servidor e nunca voltam para esta p&aacute;gina.</span>
+        <span class="dica-config" id="mensagem-salvar">As chaves ficam no config.json do servidor e nunca voltam para esta p&aacute;gina.</span>
         <button id="salvar">Salvar</button>
       </div>
     </div>
@@ -1153,11 +1159,15 @@ function marcarModoAtivo() {
   $('modo-openrouter').classList.toggle('ativo', url === configAtual.openrouter_base_url);
   $('modo-local').classList.toggle('ativo', local);
 
+  // "API" não descreve bem um servidor rodando na própria máquina -- o
+  // rótulo troca de vocabulário no modo local, não só de valor.
+  $('rotulo-endereco').textContent = local ? 'Endereço do servidor' : 'Endereço da API';
+
   // O campo é o mesmo nos dois modos (é sempre "openrouter_api_key" na
   // configuração), mas o rótulo e o exemplo "OpenRouter" ficam errados
   // depois de trocar para Local -- só o texto ao redor muda, não o campo.
   $('rotulo-chave').textContent = local
-    ? 'Chave da API (opcional em modo local)' : 'Chave do OpenRouter';
+    ? 'Chave (opcional em modo local)' : 'Chave do OpenRouter';
   const chaveInput = $('chave');
   chaveInput.placeholder = local
     ? chaveInput.dataset.exemploLocal : chaveInput.dataset.exemploOpenrouter;
@@ -1292,7 +1302,24 @@ $('salvar').onclick = async () => {
   $('chave').value = '';
   $('chave_tmdb').value = '';
   carregarConfig();
+  mostrarSucessoDoSalvar();
 };
+
+// Salvar sem aviso nenhum parecia não ter feito nada -- essa é a única
+// confirmação de que a gravação realmente aconteceu.
+const DICA_SALVAR_PADRAO = $('mensagem-salvar').textContent;
+let limparMensagemSalvar = null;
+
+function mostrarSucessoDoSalvar() {
+  const mensagem = $('mensagem-salvar');
+  mensagem.textContent = 'Configuração salva.';
+  mensagem.classList.add('sucesso');
+  if (limparMensagemSalvar) clearTimeout(limparMensagemSalvar);
+  limparMensagemSalvar = setTimeout(() => {
+    mensagem.textContent = DICA_SALVAR_PADRAO;
+    mensagem.classList.remove('sucesso');
+  }, 4000);
+}
 
 carregarConfig();
 carregarArquivos();

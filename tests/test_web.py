@@ -130,6 +130,31 @@ class TestPagina(BaseWeb):
         self.assertIn("limparModeloSeIncompativel(true)", html)
         self.assertIn("limparModeloSeIncompativel(false)", html)
 
+    def test_palavra_api_some_no_modo_local(self):
+        # Regressão: "Chave da API (opcional em modo local)" e "Endereço da
+        # API" continuavam falando de "API" mesmo depois de trocar para um
+        # servidor local, o que não fazia sentido para quem está lendo.
+        html = self.client.get("/").get_data(as_text=True)
+        self.assertIn('id="rotulo-endereco"', html)
+        self.assertIn("Endereço do servidor", html)
+        self.assertIn("Chave (opcional em modo local)", html)
+
+    def test_modo_ativo_tem_marcacao_textual_alem_da_cor(self):
+        # Regressão: só a cor do botão indicava qual modo estava ativo --
+        # sem contraste suficiente (ou lendo em preto e branco), não dava
+        # para saber qual dos dois estava selecionado.
+        html = self.client.get("/").get_data(as_text=True)
+        self.assertIn("marca-selecionado", html)
+        self.assertIn("selecionado", html)
+
+    def test_salvar_mostra_confirmacao_de_sucesso(self):
+        # Regressão: salvar sem erro nem aviso não dava nenhum sinal de que
+        # a gravação aconteceu -- parecia que o botão não tinha feito nada.
+        html = self.client.get("/").get_data(as_text=True)
+        self.assertIn('id="mensagem-salvar"', html)
+        self.assertIn("mostrarSucessoDoSalvar", html)
+        self.assertIn("Configuração salva.", html)
+
 
 class TestListagem(BaseWeb):
     def test_lista_videos_e_legendas(self):
