@@ -95,6 +95,15 @@ class TestPagina(BaseWeb):
             self.assertTrue(chamada.startswith("/"),
                             f"fetch para endereço não relativo: {chamada}")
 
+    def test_rotulo_da_chave_e_exemplo_do_modelo_reagem_ao_modo(self):
+        # Regressão: escolher "Local" trocava a URL mas o painel continuava
+        # com cara de OpenRouter (rótulo da chave, exemplo do modelo).
+        html = self.client.get("/").get_data(as_text=True)
+        self.assertIn('id="rotulo-chave"', html)
+        self.assertIn("marcarModoAtivo", html)
+        self.assertIn('data-exemplo-openrouter="deepseek/deepseek-chat"', html)
+        self.assertIn('data-exemplo-local="llama3.1"', html)
+
 
 class TestListagem(BaseWeb):
     def test_lista_videos_e_legendas(self):

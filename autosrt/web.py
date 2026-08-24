@@ -750,12 +750,12 @@ PAGINA = """<!doctype html>
       <label>Endere&ccedil;o da API
         <input type="text" id="base_url" placeholder="https://openrouter.ai/api/v1">
       </label>
-      <label>Chave do OpenRouter
+      <label><span id="rotulo-chave">Chave do OpenRouter</span>
         <input type="password" id="chave" placeholder="sk-or-v1-... (dispens&aacute;vel no modo local)" autocomplete="off">
       </label>
       <label>Modelo
         <div class="linha-modelo">
-          <input type="text" id="modelo" placeholder="deepseek/deepseek-chat">
+          <input type="text" id="modelo" placeholder="deepseek/deepseek-chat" data-exemplo-openrouter="deepseek/deepseek-chat" data-exemplo-local="llama3.1">
           <button type="button" id="buscar-modelos" class="fantasma">Buscar modelos</button>
         </div>
       </label>
@@ -1147,8 +1147,19 @@ let configAtual = {};
 
 function marcarModoAtivo() {
   const url = $('base_url').value.trim();
+  const local = url === configAtual.local_base_url;
   $('modo-openrouter').classList.toggle('ativo', url === configAtual.openrouter_base_url);
-  $('modo-local').classList.toggle('ativo', url === configAtual.local_base_url);
+  $('modo-local').classList.toggle('ativo', local);
+  // O campo é o mesmo nos dois modos (é sempre "openrouter_api_key" na
+  // configuração), mas o rótulo "OpenRouter" fica errado depois de trocar
+  // para Local -- aqui é só o texto que muda, não o campo.
+  $('rotulo-chave').textContent = local
+    ? 'Chave da API (opcional em modo local)' : 'Chave do OpenRouter';
+  // Idem para o exemplo do campo de modelo: um slug "fornecedor/modelo" só
+  // faz sentido no OpenRouter -- um Ollama local usa nomes como "llama3.1".
+  const modeloInput = $('modelo');
+  modeloInput.placeholder = local
+    ? modeloInput.dataset.exemploLocal : modeloInput.dataset.exemploOpenrouter;
 }
 
 async function carregarConfig() {
