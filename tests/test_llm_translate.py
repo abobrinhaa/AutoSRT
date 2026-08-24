@@ -179,6 +179,52 @@ class TestAlinhamento(unittest.TestCase):
         self.assertEqual(falhas, [1, 2])
         self.assertEqual([c.text for c in cues], ["Hello", "World"])
 
+    def test_on_error_recebe_o_motivo_real_da_falha(self):
+        class QuebradoClient:
+            def complete(self, system, user):
+                raise LLMError("HTTP 404: No endpoints found for o/modelo-morto")
+
+        vistos = []
+        cues = make_cues("Hello", "World")
+        translate_cues_llm(cues, "inglês", client=QuebradoClient(),
+                           block_size=2, on_error=vistos.append)
+
+        self.assertTrue(vistos)
+        self.assertIn("404", str(vistos[-1]))
+        self.assertIn("modelo-morto", str(vistos[-1]))
+
+    def test_sem_on_error_nao_quebra_nada(self):
+        # O parâmetro é opcional -- quem não passa nada continua funcionando
+        # como antes.
+        class QuebradoClient:
+            def complete(self, system, user):
+                raise LLMError("sem creditos")
+
+        cues = make_cues("Hello")
+        falhas = translate_cues_llm(cues, "inglês", client=QuebradoClient())
+        self.assertEqual(falhas, [1])
+
+    def test_on_error_tambem_dispara_na_tentativa_individual(self):
+        # Bloco com mais de uma legenda: a primeira falha na resposta em
+        # bloco (formato errado) e cai para tentativa individual, que também
+        # falha -- o motivo relatado deve ser o da tentativa individual.
+        class MeioQuebradoClient:
+            def __init__(self):
+                self.chamadas = 0
+
+            def complete(self, system, user):
+                self.chamadas += 1
+                if self.chamadas == 1:
+                    return "resposta sem os delimitadores esperados"
+                raise LLMError("HTTP 429: limite de taxa excedido")
+
+        vistos = []
+        cues = make_cues("Hello", "World")
+        translate_cues_llm(cues, "inglês", client=MeioQuebradoClient(),
+                           block_size=2, on_error=vistos.append)
+
+        self.assertTrue(any("429" in str(e) for e in vistos))
+
     def test_resposta_sem_delimitador_ainda_e_aproveitada(self):
         class SemTagClient:
             def __init__(self):

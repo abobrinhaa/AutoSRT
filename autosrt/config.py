@@ -17,7 +17,7 @@ TMDB_ENV_VAR = "TMDB_API_KEY"
 EXAMPLE_CONFIG = {
     "openrouter_api_key": "sk-or-v1-...",
     "llm_base_url": "https://openrouter.ai/api/v1",
-    "llm_model": "deepseek/deepseek-chat-v2.5",
+    "llm_model": "deepseek/deepseek-chat",
     "faster_whisper_path": "/opt/faster-whisper-xxl/faster-whisper-xxl",
     # Opcional: reconhece o filme pelo nome do arquivo na lista do servidor.
     # Chave gratuita em https://www.themoviedb.org/settings/api

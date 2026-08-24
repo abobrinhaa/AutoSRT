@@ -17,8 +17,11 @@ import requests
 DEFAULT_BASE_URL = "https://openrouter.ai/api/v1"
 # Trocável sem mexer no código, pela variável LLM_MODEL ou pelo config.json.
 # Se o provedor aposentar este identificador, a API responde com erro de
-# modelo inexistente e basta apontar outro.
-DEFAULT_MODEL = "deepseek/deepseek-chat-v2.5"
+# modelo inexistente e basta apontar outro -- já aconteceu uma vez com
+# "deepseek-chat-v2.5" (404 "No endpoints found"), por isso o botão
+# "Buscar modelos" do painel web existe: confirma direto na API o que está
+# disponível, em vez de confiar num nome fixo aqui.
+DEFAULT_MODEL = "deepseek/deepseek-chat"
 DEFAULT_TIMEOUT = 180
 DEFAULT_MAX_RETRIES = 4
 

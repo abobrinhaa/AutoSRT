@@ -755,7 +755,7 @@ PAGINA = """<!doctype html>
       </label>
       <label>Modelo
         <div class="linha-modelo">
-          <input type="text" id="modelo" placeholder="deepseek/deepseek-chat-v2.5">
+          <input type="text" id="modelo" placeholder="deepseek/deepseek-chat">
           <button type="button" id="buscar-modelos" class="fantasma">Buscar modelos</button>
         </div>
       </label>

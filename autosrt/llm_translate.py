@@ -153,7 +153,7 @@ def translate_cues_llm(cues, source_lang=None, *, client=None,
                        block_size=DEFAULT_BLOCK_SIZE,
                        context_lines=DEFAULT_CONTEXT_LINES,
                        speaker_genders=None, progress=None, cancel_event=None,
-                       max_workers=DEFAULT_MAX_WORKERS):
+                       max_workers=DEFAULT_MAX_WORKERS, on_error=None):
     """Traduz as legendas no lugar, escrevendo em ``cue.text``.
 
     Os blocos são traduzidos em paralelo (``max_workers`` de cada vez, como
@@ -173,6 +173,14 @@ def translate_cues_llm(cues, source_lang=None, *, client=None,
             marshalar para a thread principal.
         cancel_event: ``threading.Event`` para interromper.
         max_workers: quantos blocos traduzir ao mesmo tempo.
+        on_error: chamada com a :class:`~autosrt.llm.LLMError` toda vez que
+            uma requisição falha (chave inválida, modelo inexistente, sem
+            crédito, etc.). Sem isso o motivo real da falha é descartado, e
+            quem chama só sabe que "algumas legendas falharam", sem saber
+            por quê. **Invocada a partir das threads de trabalho** -- se
+            precisar guardar o valor, proteja com lock. Chamada de novo a
+            cada bloco/legenda que falhar, então quem só quer o último erro
+            deve simplesmente sobrescrever o que guardou.
 
     Returns:
         Lista dos índices que não puderam ser traduzidos, em ordem
@@ -206,7 +214,8 @@ def translate_cues_llm(cues, source_lang=None, *, client=None,
             raise TranslationCancelled()
 
         traduzidos = _translate_block(
-            bloco, antes, depois, source_lang, speaker_genders, client)
+            bloco, antes, depois, source_lang, speaker_genders, client,
+            on_error=on_error)
 
         for numero, cue in bloco:
             texto = traduzidos.get(numero)
@@ -244,7 +253,8 @@ def translate_cues_llm(cues, source_lang=None, *, client=None,
     return falhas
 
 
-def _translate_block(bloco, antes, depois, source_lang, speaker_genders, client):
+def _translate_block(bloco, antes, depois, source_lang, speaker_genders, client,
+                     on_error=None):
     """Traduz um bloco, com uma segunda tentativa e queda para individual."""
     esperados = {numero for numero, _ in bloco}
     prompt = build_prompt(bloco, antes, depois, source_lang, speaker_genders)
@@ -252,8 +262,10 @@ def _translate_block(bloco, antes, depois, source_lang, speaker_genders, client)
     try:
         resposta = client.complete(SYSTEM_PROMPT, prompt)
         traduzidos = parse_response(resposta, esperados)
-    except LLMError:
+    except LLMError as exc:
         traduzidos = {}
+        if on_error:
+            on_error(exc)
 
     if len(traduzidos) == len(esperados):
         return traduzidos
@@ -264,19 +276,21 @@ def _translate_block(bloco, antes, depois, source_lang, speaker_genders, client)
     faltando = [(n, c) for n, c in bloco if n not in traduzidos]
     for numero, cue in faltando:
         individual = _translate_single(cue, numero, antes, depois, source_lang,
-                                       speaker_genders, client)
+                                       speaker_genders, client, on_error=on_error)
         if individual:
             traduzidos[numero] = individual
     return traduzidos
 
 
 def _translate_single(cue, numero, antes, depois, source_lang, speaker_genders,
-                      client):
+                      client, on_error=None):
     prompt = build_prompt([(numero, cue)], antes, depois, source_lang,
                           speaker_genders)
     try:
         resposta = client.complete(SYSTEM_PROMPT, prompt)
-    except LLMError:
+    except LLMError as exc:
+        if on_error:
+            on_error(exc)
         return None
 
     traduzidos = parse_response(resposta, {numero})

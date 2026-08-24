@@ -10,6 +10,7 @@ dois textos.
 
 import os
 import shutil
+import threading
 from dataclasses import dataclass
 
 from . import llm_translate, srt_io
@@ -143,17 +144,29 @@ def translate_file(input_path, output_path=None, *, target=DEFAULT_TARGET,
 def _translate_with_llm(cues, detected_lang, *, llm_client, speaker_genders,
                         progress, cancel_event):
     client = llm_client or llm_translate.client_from_config()
+
+    # Os blocos rodam em paralelo (várias threads), então "o último erro" é
+    # só o mais recente a chegar, não necessariamente o primeiro -- basta
+    # para dar um motivo concreto ao usuário em vez de nenhum.
+    ultimo_erro_lock = threading.Lock()
+    ultimo_erro = []
+
+    def registrar_erro(exc):
+        with ultimo_erro_lock:
+            ultimo_erro[:] = [exc]
+
     falhas = llm_translate.translate_cues_llm(
         cues, language_name(detected_lang), client=client,
         speaker_genders=speaker_genders, progress=progress,
-        cancel_event=cancel_event)
+        cancel_event=cancel_event, on_error=registrar_erro)
     translated = len(cues) - len(falhas)
 
     if (translated == 0 and len(cues) >= MIN_CUES_PARA_FALHA_TOTAL_SER_ERRO):
+        motivo = f" Motivo: {ultimo_erro[0]}" if ultimo_erro else ""
         raise LLMError(
             f"A tradução falhou para as {len(cues)} legendas do arquivo -- "
             "nenhuma foi traduzida. O arquivo ficaria todo no idioma "
-            "original sem nenhum aviso se isso não virasse erro agora. "
+            f"original sem nenhum aviso se isso não virasse erro agora.{motivo} "
             "Confira a chave de API, o modelo e o endereço configurados "
             "(painel de configuração, ou openrouter_api_key/llm_model/"
             "llm_base_url no config.json).")

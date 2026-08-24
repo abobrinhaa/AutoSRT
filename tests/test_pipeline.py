@@ -237,6 +237,27 @@ class TestFalhaTotalDeTraducaoLLM(unittest.TestCase):
             translate_file(origem, destino, engine=ENGINE_LLM,
                            llm_client=QuebradoLLM())
         self.assertIn("chave", str(ctx.exception).lower())
+
+    def test_erro_final_inclui_o_motivo_real_da_api(self):
+        # Regressão: "confira chave/modelo/endereço" sem dizer qual dos três
+        # obrigava a trocar um de cada vez até acertar. Modelo descontinuado
+        # no provedor (404 "No endpoints found") é exatamente o caso real
+        # que motivou isso -- parecia problema de chave, não era.
+        class ModeloMortoLLM:
+            def complete(self, system, user):
+                raise LLMError(
+                    "A API recusou a requisição - HTTP 404: No endpoints "
+                    "found for deepseek/deepseek-chat-v2.5.")
+
+        origem = self.escrever("filme.srt", SAMPLE)
+        destino = os.path.join(self.tmp, "saida.srt")
+
+        with self.assertRaises(LLMError) as ctx:
+            translate_file(origem, destino, engine=ENGINE_LLM,
+                           llm_client=ModeloMortoLLM())
+        mensagem = str(ctx.exception)
+        self.assertIn("404", mensagem)
+        self.assertIn("No endpoints found", mensagem)
         # Não fica um arquivo "pronto" com tudo em inglês, sem aviso nenhum.
         self.assertFalse(os.path.exists(destino))
 

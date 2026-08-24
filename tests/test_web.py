@@ -608,10 +608,10 @@ class TestConfiguracao(BaseWeb):
 
     def test_grava_modelo_e_endereco(self):
         self.client.post("/api/config", json={
-            "modelo": "deepseek/deepseek-chat-v2.5",
+            "modelo": "deepseek/deepseek-chat",
             "base_url": "http://localhost:11434/v1"})
         dados = self.client.get("/api/config").get_json()
-        self.assertEqual(dados["modelo"], "deepseek/deepseek-chat-v2.5")
+        self.assertEqual(dados["modelo"], "deepseek/deepseek-chat")
         self.assertEqual(dados["base_url"], "http://localhost:11434/v1")
 
     def test_arquivo_gravado_e_so_do_dono(self):
