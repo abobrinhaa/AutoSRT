@@ -400,6 +400,9 @@ def _register_routes(app, fila, media_dir, engine):
             # página não precisar adivinhar nem duplicar essas constantes.
             "openrouter_base_url": llm.DEFAULT_BASE_URL,
             "local_base_url": llm.LOCAL_BASE_URL,
+            # None quando não configurado -- "não mexi nisso, decide
+            # sozinho pelo endereço" (ver llm_translate.translate_cues_llm).
+            "llm_block_size": config.get_llm_block_size(),
             # Vazio quando não configurado -- não é "0", é "não mexi nisso,
             # deixa o Whisper no próprio padrão dele".
             "vad_threshold": config.get_vad_threshold(),
@@ -419,6 +422,18 @@ def _register_routes(app, fila, media_dir, engine):
                                     ("base_url", "llm_base_url")):
             if campo in dados:
                 novos[chave_config] = (dados.get(campo) or "").strip()
+
+        if "llm_block_size" in dados:
+            valor = str(dados.get("llm_block_size") or "").strip()
+            if valor:
+                try:
+                    if int(valor) < 1:
+                        raise ValueError
+                except ValueError:
+                    return jsonify({
+                        "erro": "Legendas por requisição precisa ser um "
+                                "número inteiro positivo (ex: 2)."}), 400
+            novos["llm_block_size"] = valor
 
         if "vad_threshold" in dados:
             valor = str(dados.get("vad_threshold") or "").strip()
@@ -931,6 +946,9 @@ PAGINA = """<!doctype html>
       </label>
       <span class="dica-config" id="estado-modelos"></span>
       <div id="lista-modelos" class="lista-modelos" hidden></div>
+      <label><span class="rotulo-com-ajuda">Legendas por requisi&ccedil;&atilde;o<span class="ajuda" tabindex="0" data-tip="Quantas legendas mandar de uma vez pro modelo traduzir. Deixe em branco para decidir sozinho pelo endere&ccedil;o (bloco pequeno pra servidor local, grande pra provedor na nuvem). Sobrescreva se o seu servidor local n&atilde;o for detectado como local (ex.: container acessando o host por IP da rede), ou se quiser um bloco menor mesmo na nuvem.">?</span></span>
+        <input type="text" id="block_size" placeholder="ex: 2 -- em branco decide sozinho pelo endere&ccedil;o">
+      </label>
       <label><span class="rotulo-com-ajuda">Chave do TMDB<span class="ajuda" tabindex="0" data-tip="Opcional. Com uma chave do TMDB, o AutoSRT reconhece o filme pelo nome do arquivo e mostra o p&ocirc;ster na lista.">?</span></span> <span id="estado-chave-tmdb"></span>
         <input type="password" id="chave_tmdb" placeholder="opcional &mdash; reconhece o filme pelo nome do arquivo" autocomplete="off">
       </label>
@@ -1412,6 +1430,8 @@ async function carregarConfig() {
   configAtual = c;
   $('modelo').value = c.modelo || '';
   $('base_url').value = c.base_url || '';
+  // null (não configurado) vira campo vazio -- decide sozinho pelo endereço.
+  $('block_size').value = c.llm_block_size ?? '';
 
   const seloTmdb = $('estado-chave-tmdb');
   seloTmdb.className = 'selo ' + (c.tem_chave_tmdb ? 'ok' : 'falta');
@@ -1502,7 +1522,8 @@ $('salvar').onclick = async () => {
     return;
   }
 
-  const corpo = {modelo: modelo, base_url: baseUrl};
+  const corpo = {modelo: modelo, base_url: baseUrl,
+                 llm_block_size: $('block_size').value.trim()};
   if ($('chave').value) {
     corpo.chave = $('chave').value;
   } else if (!configAtual.tem_chave && $('base_url').value === configAtual.local_base_url) {

@@ -126,5 +126,43 @@ class TestSensibilidadeDaVAD(unittest.TestCase):
         self.assertIsNone(config.get_vad_threshold())
 
 
+class TestTamanhoDeBlocoDoLLM(unittest.TestCase):
+    """llm_block_size sobrepõe a detecção automática por endereço em
+    translate_cues_llm -- necessário para quem serve um modelo local por um
+    IP que a heurística não reconhece, ou quer forçar outro valor."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self._anterior = os.environ.get("AUTOSRT_CONFIG_DIR")
+        os.environ["AUTOSRT_CONFIG_DIR"] = self.tmp
+        self._env_llm = os.environ.pop("LLM_BLOCK_SIZE", None)
+
+    def tearDown(self):
+        if self._anterior is None:
+            os.environ.pop("AUTOSRT_CONFIG_DIR", None)
+        else:
+            os.environ["AUTOSRT_CONFIG_DIR"] = self._anterior
+        if self._env_llm is not None:
+            os.environ["LLM_BLOCK_SIZE"] = self._env_llm
+        else:
+            os.environ.pop("LLM_BLOCK_SIZE", None)
+
+    def test_sem_configuracao_e_none(self):
+        self.assertIsNone(config.get_llm_block_size())
+
+    def test_le_do_arquivo(self):
+        config.save_config({"llm_block_size": "2"})
+        self.assertEqual(config.get_llm_block_size(), 2)
+
+    def test_ambiente_tem_prioridade(self):
+        config.save_config({"llm_block_size": "2"})
+        os.environ["LLM_BLOCK_SIZE"] = "5"
+        self.assertEqual(config.get_llm_block_size(), 5)
+
+    def test_valor_invalido_nao_derruba(self):
+        config.save_config({"llm_block_size": "nao-e-numero"})
+        self.assertIsNone(config.get_llm_block_size())
+
+
 if __name__ == "__main__":
     unittest.main()

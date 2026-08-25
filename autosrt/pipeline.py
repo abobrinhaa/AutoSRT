@@ -143,6 +143,8 @@ def translate_file(input_path, output_path=None, *, target=DEFAULT_TARGET,
 
 def _translate_with_llm(cues, detected_lang, *, llm_client, speaker_genders,
                         progress, cancel_event):
+    from . import config
+
     client = llm_client or llm_translate.client_from_config()
 
     # Os blocos rodam em paralelo (várias threads), então "o último erro" é
@@ -157,6 +159,7 @@ def _translate_with_llm(cues, detected_lang, *, llm_client, speaker_genders,
 
     falhas = llm_translate.translate_cues_llm(
         cues, language_name(detected_lang), client=client,
+        block_size=config.get_llm_block_size(),
         speaker_genders=speaker_genders, progress=progress,
         cancel_event=cancel_event, on_error=registrar_erro)
     translated = len(cues) - len(falhas)

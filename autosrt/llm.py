@@ -147,22 +147,31 @@ DEFAULT_MODELS_TIMEOUT = 10
 
 
 def is_local_base_url(base_url: str) -> bool:
-    """True se o endereço aponta para um servidor rodando na própria máquina.
+    """True se o endereço aponta para um servidor fora da internet pública.
 
     Critério usado para automatismos que só fazem sentido com modelo local
     (ex.: bloco de tradução menor em :mod:`autosrt.llm_translate`, porque
-    modelos pequenos como os que rodam localmente se perdem mais fácil num
-    lote grande de legendas). Reconhece qualquer endereço de loopback
-    (``localhost``, ``127.0.0.1``, ``::1``), não só o :data:`LOCAL_BASE_URL`
-    padrão -- quem aponta pra outra porta continua sendo "local".
+    modelos pequenos como os que costumam rodar assim se perdem mais fácil
+    num lote grande de legendas). Reconhece loopback (``localhost``,
+    ``127.0.0.1``, ``::1``) e também qualquer IP de rede privada (RFC 1918,
+    link-local, ULA em IPv6) -- caso comum de quem serve o modelo (ex.:
+    Ollama) de outra máquina, ou de um container acessando o host pelo IP da
+    LAN, sem loopback compartilhado entre os dois.
+
+    É uma heurística: um IP privado também pode hospedar um modelo grande, e
+    aí o bloco menor é desperdício de chamadas, não um erro -- para quem
+    sabe exatamente o que tem do outro lado, ``block_size`` continua
+    aceitando um valor explícito que ignora esta detecção por completo (veja
+    ``llm_block_size`` na configuração).
     """
     host = (urlparse(base_url).hostname or "").strip("[]")
     if host == "localhost":
         return True
     try:
-        return ipaddress.ip_address(host).is_loopback
+        endereco = ipaddress.ip_address(host)
     except ValueError:
         return False
+    return endereco.is_private
 
 
 def list_models(base_url=DEFAULT_BASE_URL, api_key=None,

@@ -18,6 +18,10 @@ EXAMPLE_CONFIG = {
     "openrouter_api_key": "sk-or-v1-...",
     "llm_base_url": "https://openrouter.ai/api/v1",
     "llm_model": "deepseek/deepseek-chat",
+    # Opcional: legendas por requisição ao motor LLM. Sem isso, decide
+    # sozinho pelo endereço (bloco pequeno para servidor local, grande para
+    # provedor na nuvem) -- só precisa disso quem quer sobrepor a detecção.
+    "llm_block_size": "2",
     "faster_whisper_path": "/opt/faster-whisper-xxl/faster-whisper-xxl",
     # Opcional: reconhece o filme pelo nome do arquivo na lista do servidor.
     # Chave gratuita em https://www.themoviedb.org/settings/api
@@ -132,6 +136,22 @@ def get_openai_api_key():
 def get_whisper_path():
     """Caminho do executável do Faster-Whisper-XXL, se configurado."""
     return get_setting("faster_whisper_path", "FASTER_WHISPER_PATH")
+
+
+def get_llm_block_size():
+    """Legendas por requisição ao motor LLM, ou ``None`` se não configurado.
+
+    Sobrepõe a detecção automática por endereço em
+    :func:`autosrt.llm_translate.translate_cues_llm` -- útil quando a
+    heurística de "endereço local" (loopback ou IP privado) não bate com a
+    realidade: um modelo pequeno servido num IP público, ou um modelo
+    grande servido numa rede privada.
+    """
+    valor = get_setting("llm_block_size", "LLM_BLOCK_SIZE")
+    try:
+        return int(valor) if valor is not None else None
+    except (TypeError, ValueError):
+        return None
 
 
 def get_vad_threshold():

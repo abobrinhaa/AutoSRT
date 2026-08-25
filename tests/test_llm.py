@@ -232,11 +232,17 @@ class TestIsLocalBaseUrl(unittest.TestCase):
     def test_openrouter_nao_e_local(self):
         self.assertFalse(is_local_base_url(DEFAULT_BASE_URL))
 
-    def test_ip_de_rede_local_nao_e_loopback(self):
-        # Outra máquina na rede local não é "esta máquina" -- só loopback
-        # conta, porque é o que garante que o modelo por trás é pequeno o
-        # bastante para precisar do bloco de tradução menor.
-        self.assertFalse(is_local_base_url("http://192.168.1.5:11434/v1"))
+    def test_ip_privado_de_lan_e_local(self):
+        # Regressão: container acessando o Ollama do host por IP de LAN
+        # (ex.: 192.168.1.100) não compartilha loopback com o host, mas o
+        # modelo do outro lado é tão "local" (e tão pequeno) quanto se
+        # fosse localhost -- por isso RFC 1918 conta, não só loopback.
+        self.assertTrue(is_local_base_url("http://192.168.1.5:11434/v1"))
+        self.assertTrue(is_local_base_url("http://10.0.0.5:11434/v1"))
+        self.assertTrue(is_local_base_url("http://172.20.3.4:11434/v1"))
+
+    def test_ip_publico_nao_e_local(self):
+        self.assertFalse(is_local_base_url("http://8.8.8.8:11434/v1"))
 
     def test_vazio_nao_e_local(self):
         self.assertFalse(is_local_base_url(""))
