@@ -170,8 +170,17 @@ class TestPagina(BaseWeb):
         # a gravação aconteceu -- parecia que o botão não tinha feito nada.
         html = self.client.get("/").get_data(as_text=True)
         self.assertIn('id="mensagem-salvar"', html)
-        self.assertIn("mostrarSucessoDoSalvar", html)
+        self.assertIn("function mostrarSucesso", html)
+        self.assertIn("mostrarSucesso('mensagem-salvar')", html)
         self.assertIn("Configuração salva.", html)
+
+    def test_painel_de_transcricao_tem_campos_de_vad(self):
+        html = self.client.get("/").get_data(as_text=True)
+        self.assertIn('id="config-transcricao"', html)
+        self.assertIn('id="vad_threshold"', html)
+        self.assertIn('id="vad_min_silence_ms"', html)
+        self.assertIn('id="estado-vad"', html)
+        self.assertIn("mostrarSucesso('mensagem-salvar-vad')", html)
 
 
 class TestListagem(BaseWeb):
@@ -424,6 +433,46 @@ class TestProcessamento(BaseWeb):
 
     def test_download_de_trabalho_inexistente(self):
         self.assertEqual(self.client.get("/api/baixar/naoexiste").status_code, 404)
+
+
+class TestSensibilidadeDaVadNaFila(BaseWeb):
+    """A sensibilidade da VAD configurada no painel vale para todo trabalho
+    de mídia que passa pela fila -- não é por vídeo."""
+
+    def setUp(self):
+        super().setUp()
+        from autosrt import config
+        self._app_dir = config.app_directory
+        config.app_directory = lambda: self.tmp
+        self.addCleanup(setattr, config, "app_directory", self._app_dir)
+
+    def test_repassa_a_sensibilidade_configurada(self):
+        self.client.post("/api/config", json={
+            "vad_threshold": "0.2", "vad_min_silence_ms": "300"})
+        video = self.tocar("filme.mkv")
+
+        with mock.patch.object(pipeline, "process_media") as fake:
+            fake.return_value = pipeline.PipelineResult(
+                total=1, translated=1, failed=[], detected_lang="en")
+            job = self.client.post("/api/processar",
+                                   json={"arquivo": "filme.mkv"}).get_json()
+            self.esperar(job["id"])
+
+        self.assertEqual(fake.call_args.kwargs["vad_threshold"], 0.2)
+        self.assertEqual(fake.call_args.kwargs["vad_min_silence_ms"], 300)
+
+    def test_sem_configuracao_nao_manda_nada(self):
+        video = self.tocar("filme.mkv")
+
+        with mock.patch.object(pipeline, "process_media") as fake:
+            fake.return_value = pipeline.PipelineResult(
+                total=1, translated=1, failed=[], detected_lang="en")
+            job = self.client.post("/api/processar",
+                                   json={"arquivo": "filme.mkv"}).get_json()
+            self.esperar(job["id"])
+
+        self.assertIsNone(fake.call_args.kwargs["vad_threshold"])
+        self.assertIsNone(fake.call_args.kwargs["vad_min_silence_ms"])
 
 
 class TestAcoesDisponiveis(unittest.TestCase):
@@ -748,6 +797,37 @@ class TestConfiguracao(BaseWeb):
         dados = self.client.get("/api/config").get_json()
         self.assertEqual(dados["openrouter_base_url"], llm.DEFAULT_BASE_URL)
         self.assertEqual(dados["local_base_url"], llm.LOCAL_BASE_URL)
+
+    def test_sensibilidade_da_vad_comeca_vazia(self):
+        dados = self.client.get("/api/config").get_json()
+        self.assertIsNone(dados["vad_threshold"])
+        self.assertIsNone(dados["vad_min_silence_ms"])
+
+    def test_grava_sensibilidade_da_vad(self):
+        resposta = self.client.post("/api/config", json={
+            "vad_threshold": "0.2", "vad_min_silence_ms": "300"})
+        self.assertEqual(resposta.status_code, 200)
+        dados = self.client.get("/api/config").get_json()
+        self.assertEqual(dados["vad_threshold"], 0.2)
+        self.assertEqual(dados["vad_min_silence_ms"], 300)
+
+    def test_vad_threshold_invalido_e_recusado(self):
+        resposta = self.client.post("/api/config",
+                                    json={"vad_threshold": "nao-e-numero"})
+        self.assertEqual(resposta.status_code, 400)
+        self.assertIn("número", resposta.get_json()["erro"])
+        # Não gravou nada de errado.
+        self.assertIsNone(self.client.get("/api/config").get_json()["vad_threshold"])
+
+    def test_vad_min_silence_invalido_e_recusado(self):
+        resposta = self.client.post("/api/config",
+                                    json={"vad_min_silence_ms": "trezentos"})
+        self.assertEqual(resposta.status_code, 400)
+
+    def test_vazio_limpa_a_sensibilidade_da_vad(self):
+        self.client.post("/api/config", json={"vad_threshold": "0.2"})
+        self.client.post("/api/config", json={"vad_threshold": ""})
+        self.assertIsNone(self.client.get("/api/config").get_json()["vad_threshold"])
 
 
 class TestModelos(BaseWeb):

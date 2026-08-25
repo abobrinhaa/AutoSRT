@@ -88,5 +88,43 @@ class TestLeituraEscrita(unittest.TestCase):
             self.assertEqual(json.load(handle)["llm_model"], "x")
 
 
+class TestSensibilidadeDaVAD(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self._anterior = os.environ.get("AUTOSRT_CONFIG_DIR")
+        os.environ["AUTOSRT_CONFIG_DIR"] = self.tmp
+        self._env = {k: os.environ.pop(k, None) for k in
+                     ("AUTOSRT_VAD_THRESHOLD", "AUTOSRT_VAD_MIN_SILENCE_MS")}
+
+    def tearDown(self):
+        if self._anterior is None:
+            os.environ.pop("AUTOSRT_CONFIG_DIR", None)
+        else:
+            os.environ["AUTOSRT_CONFIG_DIR"] = self._anterior
+        for chave, valor in self._env.items():
+            if valor is not None:
+                os.environ[chave] = valor
+            else:
+                os.environ.pop(chave, None)
+
+    def test_sem_configuracao_e_none(self):
+        self.assertIsNone(config.get_vad_threshold())
+        self.assertIsNone(config.get_vad_min_silence_ms())
+
+    def test_le_do_arquivo(self):
+        config.save_config({"vad_threshold": "0.2", "vad_min_silence_ms": "300"})
+        self.assertEqual(config.get_vad_threshold(), 0.2)
+        self.assertEqual(config.get_vad_min_silence_ms(), 300)
+
+    def test_ambiente_tem_prioridade(self):
+        config.save_config({"vad_threshold": "0.2"})
+        os.environ["AUTOSRT_VAD_THRESHOLD"] = "0.05"
+        self.assertEqual(config.get_vad_threshold(), 0.05)
+
+    def test_valor_invalido_nao_derruba(self):
+        config.save_config({"vad_threshold": "nao-e-numero"})
+        self.assertIsNone(config.get_vad_threshold())
+
+
 if __name__ == "__main__":
     unittest.main()

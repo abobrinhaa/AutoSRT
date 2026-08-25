@@ -22,6 +22,11 @@ EXAMPLE_CONFIG = {
     # Opcional: reconhece o filme pelo nome do arquivo na lista do servidor.
     # Chave gratuita em https://www.themoviedb.org/settings/api
     "tmdb_api_key": "...",
+    # Opcional: sensibilidade da VAD para toda transcrição feita pela fila
+    # web (o CLI aceita os mesmos ajustes por linha de comando, que valem
+    # só para aquela execução). Sem isso, usa o padrão do próprio Whisper.
+    "vad_threshold": "0.2",
+    "vad_min_silence_ms": "300",
 }
 
 
@@ -127,3 +132,27 @@ def get_openai_api_key():
 def get_whisper_path():
     """Caminho do executável do Faster-Whisper-XXL, se configurado."""
     return get_setting("faster_whisper_path", "FASTER_WHISPER_PATH")
+
+
+def get_vad_threshold():
+    """Sensibilidade da VAD (0 a 1), ou ``None`` se não configurada.
+
+    Quanto menor, mais sensível a fala baixa/sussurrada -- e mais risco de
+    confundir ruído de fundo com fala. ``None`` deixa o Whisper no próprio
+    padrão dele, sem mexer em nada.
+    """
+    valor = get_setting("vad_threshold", "AUTOSRT_VAD_THRESHOLD")
+    try:
+        return float(valor) if valor is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def get_vad_min_silence_ms():
+    """Silêncio mínimo (ms) para a VAD considerar que uma fala terminou,
+    ou ``None`` se não configurado."""
+    valor = get_setting("vad_min_silence_ms", "AUTOSRT_VAD_MIN_SILENCE_MS")
+    try:
+        return int(valor) if valor is not None else None
+    except (TypeError, ValueError):
+        return None

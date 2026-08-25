@@ -157,7 +157,9 @@ def _executar(job, engine):
     if pipeline.is_media(job.entrada):
         resultado = pipeline.process_media(
             job.entrada, engine=engine, status=status, progress=progresso,
-            cancel_event=job.cancelar, translate=(acao != "transcrever"))
+            cancel_event=job.cancelar, translate=(acao != "transcrever"),
+            vad_threshold=config.get_vad_threshold(),
+            vad_min_silence_ms=config.get_vad_min_silence_ms())
         job.resultado = os.path.splitext(job.entrada)[0] + ".srt"
     else:
         saida = srt_io.srt_output_path(job.entrada)
@@ -398,6 +400,10 @@ def _register_routes(app, fila, media_dir, engine):
             # página não precisar adivinhar nem duplicar essas constantes.
             "openrouter_base_url": llm.DEFAULT_BASE_URL,
             "local_base_url": llm.LOCAL_BASE_URL,
+            # Vazio quando não configurado -- não é "0", é "não mexi nisso,
+            # deixa o Whisper no próprio padrão dele".
+            "vad_threshold": config.get_vad_threshold(),
+            "vad_min_silence_ms": config.get_vad_min_silence_ms(),
         })
 
     @app.post("/api/config")
@@ -413,6 +419,28 @@ def _register_routes(app, fila, media_dir, engine):
                                     ("base_url", "llm_base_url")):
             if campo in dados:
                 novos[chave_config] = (dados.get(campo) or "").strip()
+
+        if "vad_threshold" in dados:
+            valor = str(dados.get("vad_threshold") or "").strip()
+            if valor:
+                try:
+                    float(valor)
+                except ValueError:
+                    return jsonify({
+                        "erro": "Sensibilidade da VAD precisa ser um número "
+                                "entre 0 e 1 (ex: 0.2)."}), 400
+            novos["vad_threshold"] = valor
+
+        if "vad_min_silence_ms" in dados:
+            valor = str(dados.get("vad_min_silence_ms") or "").strip()
+            if valor:
+                try:
+                    int(valor)
+                except ValueError:
+                    return jsonify({
+                        "erro": "Silêncio mínimo precisa ser um número "
+                                "inteiro de milissegundos (ex: 300)."}), 400
+            novos["vad_min_silence_ms"] = valor
 
         if not novos:
             return jsonify({"erro": "Nada para gravar."}), 400
@@ -691,21 +719,23 @@ PAGINA = """<!doctype html>
   .dispensar { font-size: 18px; line-height: 1; padding: 2px 8px; }
   h2 #limpar { float: right; text-transform: none; letter-spacing: 0;
                font-size: 13px; }
-  details#config { margin-top: 36px; border: 1px solid #2e2e36;
-                   border-radius: 12px; }
-  details#config summary { padding: 14px; cursor: pointer; color: #9a9aa2;
-                           font-size: 14px; }
-  details#config .painel { padding: 0 14px 14px; display: grid; gap: 12px; }
-  details#config label { display: grid; gap: 6px; font-size: 14px;
-                         color: #9a9aa2; }
+  details#config, details#config-transcricao {
+    margin-top: 36px; border: 1px solid #2e2e36; border-radius: 12px; }
+  details#config summary, details#config-transcricao summary {
+    padding: 14px; cursor: pointer; color: #9a9aa2; font-size: 14px; }
+  details#config .painel, details#config-transcricao .painel {
+    padding: 0 14px 14px; display: grid; gap: 12px; }
+  details#config label, details#config-transcricao label {
+    display: grid; gap: 6px; font-size: 14px; color: #9a9aa2; }
   /* Sem isto, o atributo "hidden" perde para a regra acima: display:grid é
      de autor e sempre vence o display:none da folha de estilo do navegador,
      não importa a especificidade -- então esconder via JS não escondia
      nada de verdade. */
   details#config label[hidden] { display: none; }
-  details#config input { font: inherit; background: #2a2a33; color: #e8e8ea;
-                         border: 1px solid #3a3a42; border-radius: 8px;
-                         padding: 8px 10px; }
+  details#config input, details#config-transcricao input {
+    font: inherit; background: #2a2a33; color: #e8e8ea;
+    border: 1px solid #3a3a42; border-radius: 8px; padding: 8px 10px; }
+  details#config-transcricao p.dica-config { margin: 0; }
   .rodape { display: flex; align-items: center; gap: 12px; }
   .dica-config { flex: 1; font-size: 13px; color: #6f6f78; }
   .selo { font-size: 12px; padding: 2px 8px; border-radius: 999px;
@@ -789,6 +819,23 @@ PAGINA = """<!doctype html>
       <div class="rodape">
         <span class="dica-config" id="mensagem-salvar">As chaves ficam no config.json do servidor e nunca voltam para esta p&aacute;gina.</span>
         <button id="salvar">Salvar</button>
+      </div>
+    </div>
+  </details>
+
+  <details id="config-transcricao">
+    <summary>Configura&ccedil;&atilde;o da transcri&ccedil;&atilde;o <span id="estado-vad" class="selo"></span></summary>
+    <div class="painel">
+      <p class="dica-config">Vale para todo arquivo processado pela fila -- n&atilde;o &eacute; por v&iacute;deo. Deixe em branco para usar o padr&atilde;o do pr&oacute;prio Whisper, sem mexer em nada.</p>
+      <label>Sensibilidade da VAD (0 a 1)
+        <input type="text" id="vad_threshold" placeholder="ex: 0.2 -- menor pega fala mais baixa">
+      </label>
+      <label>Sil&ecirc;ncio m&iacute;nimo (ms)
+        <input type="text" id="vad_min_silence_ms" placeholder="ex: 300 -- evita cortar a &uacute;ltima palavra de falas r&aacute;pidas">
+      </label>
+      <div class="rodape">
+        <span class="dica-config" id="mensagem-salvar-vad">Mudan&ccedil;as valem a partir do pr&oacute;ximo trabalho enviado &agrave; fila.</span>
+        <button id="salvar-vad">Salvar</button>
       </div>
     </div>
   </details>
@@ -1225,6 +1272,14 @@ async function carregarConfig() {
   seloTmdb.className = 'selo ' + (c.tem_chave_tmdb ? 'ok' : 'falta');
   seloTmdb.textContent = c.tem_chave_tmdb ? 'ativo' : 'sem chave';
 
+  // null (não configurado) vira campo vazio, não "null" escrito na tela.
+  $('vad_threshold').value = c.vad_threshold ?? '';
+  $('vad_min_silence_ms').value = c.vad_min_silence_ms ?? '';
+  const seloVad = $('estado-vad');
+  const vadAtiva = c.vad_threshold !== null || c.vad_min_silence_ms !== null;
+  seloVad.className = 'selo ' + (vadAtiva ? 'ok' : '');
+  seloVad.textContent = vadAtiva ? 'ajustada' : 'padrão do Whisper';
+
   marcarModoAtivo();
 
   // Sem chave, a tradução não funciona: abre o painel para não deixar o
@@ -1327,21 +1382,43 @@ $('salvar').onclick = async () => {
   $('chave').value = '';
   $('chave_tmdb').value = '';
   carregarConfig();
-  mostrarSucessoDoSalvar();
+  mostrarSucesso('mensagem-salvar');
+};
+
+$('salvar-vad').onclick = async () => {
+  const corpo = {
+    vad_threshold: $('vad_threshold').value.trim(),
+    vad_min_silence_ms: $('vad_min_silence_ms').value.trim(),
+  };
+
+  $('salvar-vad').disabled = true;
+  const r = await fetch('/api/config', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(corpo)
+  });
+  const dados = await r.json();
+  $('salvar-vad').disabled = false;
+
+  if (!r.ok) { alert(dados.erro); return; }
+  carregarConfig();
+  mostrarSucesso('mensagem-salvar-vad');
 };
 
 // Salvar sem aviso nenhum parecia não ter feito nada -- essa é a única
-// confirmação de que a gravação realmente aconteceu.
-const DICA_SALVAR_PADRAO = $('mensagem-salvar').textContent;
-let limparMensagemSalvar = null;
-
-function mostrarSucessoDoSalvar() {
-  const mensagem = $('mensagem-salvar');
+// confirmação de que a gravação realmente aconteceu. A mensagem original de
+// cada rodapé é lida uma vez e guardada no próprio elemento, pra função
+// servir os dois painéis sem precisar de uma variável por painel.
+function mostrarSucesso(idMensagem) {
+  const mensagem = $(idMensagem);
+  if (mensagem.dataset.textoPadrao === undefined) {
+    mensagem.dataset.textoPadrao = mensagem.textContent;
+  }
   mensagem.textContent = 'Configuração salva.';
   mensagem.classList.add('sucesso');
-  if (limparMensagemSalvar) clearTimeout(limparMensagemSalvar);
-  limparMensagemSalvar = setTimeout(() => {
-    mensagem.textContent = DICA_SALVAR_PADRAO;
+  clearTimeout(Number(mensagem.dataset.timeoutId) || undefined);
+  mensagem.dataset.timeoutId = setTimeout(() => {
+    mensagem.textContent = mensagem.dataset.textoPadrao;
     mensagem.classList.remove('sucesso');
   }, 4000);
 }
