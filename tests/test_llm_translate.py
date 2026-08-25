@@ -293,6 +293,100 @@ class TestAlinhamento(unittest.TestCase):
         self.assertEqual(len(cues), 2)
 
 
+class TestVerificacaoDeMudancaDeIdioma(unittest.TestCase):
+    """Regressão: bater a contagem de blocos não prova que a tradução
+    aconteceu -- um modelo travado que devolve a entrada intacta passava
+    despercebido, porque a única checagem era "veio um bloco pra cada
+    número pedido"."""
+
+    def test_eco_da_entrada_conta_como_falha(self):
+        class EcoClient:
+            def complete(self, system, user):
+                blocos = []
+                for numero, conteudo in llm_translate.BLOCK_RE.findall(user):
+                    blocos.append(f"<{numero}>{conteudo}</{numero}>")
+                return "\n".join(blocos)
+
+        cues = make_cues("Hello", "World")
+        falhas = translate_cues_llm(cues, "inglês", client=EcoClient(),
+                                    block_size=2)
+
+        self.assertEqual(falhas, [1, 2])
+        self.assertEqual([c.text for c in cues], ["Hello", "World"])
+
+    def test_eco_so_em_uma_legenda_cai_para_individual(self):
+        # A primeira legenda do bloco vem intacta (falha), a segunda vem
+        # traduzida de verdade -- só a primeira deve cair pra tentativa
+        # individual, e como continua intacta lá também, falha de vez.
+        class MeioEcoClient:
+            def complete(self, system, user):
+                blocos = []
+                for numero, conteudo in llm_translate.BLOCK_RE.findall(user):
+                    conteudo = conteudo.strip()
+                    texto = conteudo if conteudo == "Hello" else f"PT:{conteudo}"
+                    blocos.append(f"<{numero}>{texto}</{numero}>")
+                return "\n".join(blocos)
+
+        cues = make_cues("Hello", "World")
+        falhas = translate_cues_llm(cues, "inglês", client=MeioEcoClient(),
+                                    block_size=2)
+
+        self.assertEqual(falhas, [1])
+        self.assertEqual(cues[0].text, "Hello")
+        self.assertEqual(cues[1].text, "PT:World")
+
+    def test_diferenca_de_maiusculas_ou_espaco_nao_conta_como_traducao(self):
+        class QuaseEcoClient:
+            def complete(self, system, user):
+                blocos = []
+                for numero, conteudo in llm_translate.BLOCK_RE.findall(user):
+                    texto = f"  {conteudo.strip().upper()}  "
+                    blocos.append(f"<{numero}>{texto}</{numero}>")
+                return "\n".join(blocos)
+
+        cues = make_cues("Hello")
+        falhas = translate_cues_llm(cues, "inglês", client=QuaseEcoClient())
+        self.assertEqual(falhas, [1])
+
+
+class TestTamanhoDeBlocoAutomatico(unittest.TestCase):
+    """Motor local (Ollama etc.) ganha bloco bem menor sozinho, sem que quem
+    chama precise saber disso -- é o caso do pipeline, que não passa
+    block_size explicitamente."""
+
+    def test_local_usa_bloco_pequeno_por_padrao(self):
+        class ClienteLocal(EchoClient):
+            base_url = "http://localhost:11434/v1"
+
+        cliente = ClienteLocal()
+        cues = make_cues(*[f"linha {i}" for i in range(4)])
+        translate_cues_llm(cues, "inglês", client=cliente)
+
+        # DEFAULT_LOCAL_BLOCK_SIZE == 2: 4 legendas viram 2 requisições.
+        self.assertEqual(len(cliente.prompts), 2)
+
+    def test_provedor_normal_usa_bloco_grande_por_padrao(self):
+        class ClienteNuvem(EchoClient):
+            base_url = "https://openrouter.ai/api/v1"
+
+        cliente = ClienteNuvem()
+        cues = make_cues(*[f"linha {i}" for i in range(4)])
+        translate_cues_llm(cues, "inglês", client=cliente)
+
+        # DEFAULT_BLOCK_SIZE == 20: as 4 legendas cabem numa requisição só.
+        self.assertEqual(len(cliente.prompts), 1)
+
+    def test_block_size_explicito_tem_prioridade_sobre_deteccao(self):
+        class ClienteLocal(EchoClient):
+            base_url = "http://localhost:11434/v1"
+
+        cliente = ClienteLocal()
+        cues = make_cues(*[f"linha {i}" for i in range(4)])
+        translate_cues_llm(cues, "inglês", client=cliente, block_size=4)
+
+        self.assertEqual(len(cliente.prompts), 1)
+
+
 class TestParalelismo(unittest.TestCase):
     """Regressão de desempenho: os blocos precisam rodar ao mesmo tempo, não
     um de cada vez -- era isso que fazia o motor padrão (LLM) ser mais lento

@@ -23,13 +23,19 @@ import re
 import threading
 from concurrent.futures import ThreadPoolExecutor
 
-from .llm import DEFAULT_BASE_URL, DEFAULT_MODEL, LLMClient, LLMError
+from .llm import (DEFAULT_BASE_URL, DEFAULT_MODEL, LLMClient, LLMError,
+                  is_local_base_url)
 from .transcribe import SPEAKER_RE
 from .translate import TranslationCancelled
 
 # Quantas legendas por requisição, e quantas falas de vizinhança mandar junto
-# apenas como contexto (não são traduzidas).
+# apenas como contexto (não são traduzidas). Modelos locais (tipicamente
+# 3B-8B) se perdem mais fácil tentando manter a numeração de um lote grande
+# -- foi isso que gerou tags como "<N>"/"</B>" vazando pra legenda final com
+# o llama3.1 -- por isso ganham um bloco bem menor; ver
+# :data:`DEFAULT_LOCAL_BLOCK_SIZE` e a escolha em :func:`translate_cues_llm`.
 DEFAULT_BLOCK_SIZE = 20
+DEFAULT_LOCAL_BLOCK_SIZE = 2
 DEFAULT_CONTEXT_LINES = 6
 
 # Poucos workers de propósito: cada requisição já carrega um bloco inteiro de
@@ -155,7 +161,7 @@ class _ContadorProgresso:
 
 
 def translate_cues_llm(cues, source_lang=None, *, client=None,
-                       block_size=DEFAULT_BLOCK_SIZE,
+                       block_size=None,
                        context_lines=DEFAULT_CONTEXT_LINES,
                        speaker_genders=None, progress=None, cancel_event=None,
                        max_workers=DEFAULT_MAX_WORKERS, on_error=None):
@@ -172,6 +178,12 @@ def translate_cues_llm(cues, source_lang=None, *, client=None,
         client: :class:`~autosrt.llm.LLMClient` ou qualquer objeto com
             ``complete(system, user)``, seguro para ser chamado de várias
             threads ao mesmo tempo. Injetável pelos testes.
+        block_size: quantas legendas mandar por requisição. Se deixado em
+            ``None`` (o padrão), decide sozinho: :data:`DEFAULT_BLOCK_SIZE`
+            para um provedor normal, ou :data:`DEFAULT_LOCAL_BLOCK_SIZE`
+            quando ``client.base_url`` aponta para a própria máquina (ex.:
+            Ollama) -- modelo local costuma ser pequeno e se perde num lote
+            grande de legendas numeradas.
         speaker_genders: ``{"SPEAKER_00": "homem", ...}``, quando conhecido.
         progress: chamada como ``progress(feitas, total)``. **Invocada a
             partir das threads de trabalho** -- a interface precisa
@@ -197,6 +209,11 @@ def translate_cues_llm(cues, source_lang=None, *, client=None,
     """
     if client is None:
         raise LLMTranslationError("Nenhum cliente de modelo foi configurado.")
+
+    if block_size is None:
+        base_url = getattr(client, "base_url", "") or ""
+        block_size = (DEFAULT_LOCAL_BLOCK_SIZE if is_local_base_url(base_url)
+                     else DEFAULT_BLOCK_SIZE)
 
     total = len(cues)
     if not total:
@@ -258,10 +275,28 @@ def translate_cues_llm(cues, source_lang=None, *, client=None,
     return falhas
 
 
+def _traducao_mudou(original: str, traduzido: str) -> bool:
+    """True se ``traduzido`` não é só o texto de origem devolvido intacto.
+
+    A contagem de blocos bater (um texto pra cada número pedido) não prova
+    que a tradução aconteceu -- um modelo fraco que trava, ou que devolve a
+    entrada por engano, produz uma resposta perfeitamente bem formada e
+    passa despercebido. A comparação é só com o texto de origem (ignorando
+    maiúsculas/minúsculas e espaço nas pontas): não tenta detectar o idioma
+    do resultado, só recusar o caso claro de eco. Uma legenda cuja tradução
+    correta por acaso é idêntica à original (um nome próprio, "OK") aciona
+    esta checagem à toa e faz uma tentativa extra de bloco/individual sem
+    necessidade, mas nunca produz um resultado errado -- o texto de origem é
+    exatamente o que ficaria mantido de qualquer forma.
+    """
+    return original.strip().casefold() != traduzido.strip().casefold()
+
+
 def _translate_block(bloco, antes, depois, source_lang, speaker_genders, client,
                      on_error=None):
     """Traduz um bloco, com uma segunda tentativa e queda para individual."""
     esperados = {numero for numero, _ in bloco}
+    cues_por_numero = dict(bloco)
     prompt = build_prompt(bloco, antes, depois, source_lang, speaker_genders)
 
     try:
@@ -272,12 +307,18 @@ def _translate_block(bloco, antes, depois, source_lang, speaker_genders, client,
         if on_error:
             on_error(exc)
 
+    traduzidos = {
+        numero: texto for numero, texto in traduzidos.items()
+        if _traducao_mudou(cues_por_numero[numero].source_text, texto)
+    }
+
     if len(traduzidos) == len(esperados):
         return traduzidos
 
-    # O modelo devolveu quantidade errada. Insistir no bloco inteiro costuma
-    # repetir o mesmo desvio, então cada legenda que faltou vai sozinha - aí
-    # não existe risco de desalinhar, ainda que se perca o contexto.
+    # O modelo devolveu quantidade errada, ou devolveu a entrada intacta em
+    # algum bloco. Insistir no bloco inteiro costuma repetir o mesmo desvio,
+    # então cada legenda que faltou vai sozinha - aí não existe risco de
+    # desalinhar, ainda que se perca o contexto.
     faltando = [(n, c) for n, c in bloco if n not in traduzidos]
     for numero, cue in faltando:
         individual = _translate_single(cue, numero, antes, depois, source_lang,
@@ -299,12 +340,15 @@ def _translate_single(cue, numero, antes, depois, source_lang, speaker_genders,
         return None
 
     traduzidos = parse_response(resposta, {numero})
-    if traduzidos:
-        return traduzidos[numero]
+    texto = traduzidos.get(numero)
+    if texto and _traducao_mudou(cue.source_text, texto):
+        return texto
 
     # Última chance: resposta sem os delimitadores, mas de uma linha só.
     limpo = _clean_block(re.sub(r"</?\d+>", "", resposta or ""))
-    return limpo or None
+    if limpo and _traducao_mudou(cue.source_text, limpo):
+        return limpo
+    return None
 
 
 def client_from_config(config_getter=None, **overrides):

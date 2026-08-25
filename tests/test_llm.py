@@ -2,7 +2,8 @@ import unittest
 
 import requests
 
-from autosrt.llm import DEFAULT_BASE_URL, LLMClient, LLMError, list_models
+from autosrt.llm import (DEFAULT_BASE_URL, LLMClient, LLMError,
+                         is_local_base_url, list_models)
 
 
 class FakeResponse:
@@ -213,6 +214,32 @@ class TestListModels(unittest.TestCase):
         session = FakeSession(FakeResponse(200, {"nao": "e uma lista"}))
         with self.assertRaises(LLMError):
             list_models(session=session)
+
+
+class TestIsLocalBaseUrl(unittest.TestCase):
+    def test_localhost_e_local(self):
+        self.assertTrue(is_local_base_url("http://localhost:11434/v1"))
+
+    def test_127_0_0_1_e_local(self):
+        self.assertTrue(is_local_base_url("http://127.0.0.1:1234/v1"))
+
+    def test_ipv6_loopback_e_local(self):
+        self.assertTrue(is_local_base_url("http://[::1]:11434/v1"))
+
+    def test_porta_diferente_da_padrao_continua_local(self):
+        self.assertTrue(is_local_base_url("http://localhost:8080/v1"))
+
+    def test_openrouter_nao_e_local(self):
+        self.assertFalse(is_local_base_url(DEFAULT_BASE_URL))
+
+    def test_ip_de_rede_local_nao_e_loopback(self):
+        # Outra máquina na rede local não é "esta máquina" -- só loopback
+        # conta, porque é o que garante que o modelo por trás é pequeno o
+        # bastante para precisar do bloco de tradução menor.
+        self.assertFalse(is_local_base_url("http://192.168.1.5:11434/v1"))
+
+    def test_vazio_nao_e_local(self):
+        self.assertFalse(is_local_base_url(""))
 
 
 if __name__ == "__main__":
