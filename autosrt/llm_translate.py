@@ -306,6 +306,13 @@ def client_from_config(config_getter=None, **overrides):
     """Cria o cliente a partir da configuração local.
 
     A chave vem do ambiente ou do ``config.json``, nunca do código.
+
+    Raises:
+        LLMError: endereço customizado (ex.: servidor local) sem modelo
+            configurado. ``DEFAULT_MODEL`` só é um padrão razoável para o
+            OpenRouter -- aplicá-lo a qualquer outro endereço adivinharia um
+            nome de modelo que quase certamente não existe lá, e o erro só
+            apareceria depois, como se o modelo tivesse "sumido" sozinho.
     """
     from . import config
 
@@ -314,7 +321,16 @@ def client_from_config(config_getter=None, **overrides):
         "openrouter_api_key", "OPENROUTER_API_KEY")
     base_url = overrides.pop("base_url", None) or getter(
         "llm_base_url", "LLM_BASE_URL") or DEFAULT_BASE_URL
-    model = overrides.pop("model", None) or getter(
-        "llm_model", "LLM_MODEL") or DEFAULT_MODEL
+    model = overrides.pop("model", None) or getter("llm_model", "LLM_MODEL")
+
+    if not model:
+        if base_url == DEFAULT_BASE_URL:
+            model = DEFAULT_MODEL
+        else:
+            raise LLMError(
+                f"Nenhum modelo configurado para {base_url}. "
+                f'"{DEFAULT_MODEL}" só é um padrão razoável para o '
+                "OpenRouter; para outro endereço, informe o modelo "
+                "explicitamente (llm_model no config.json, ou no painel).")
 
     return LLMClient(api_key=api_key, base_url=base_url, model=model, **overrides)

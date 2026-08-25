@@ -95,23 +95,32 @@ class TestPagina(BaseWeb):
             self.assertTrue(chamada.startswith("/"),
                             f"fetch para endereço não relativo: {chamada}")
 
-    def test_rotulo_da_chave_e_exemplo_do_modelo_reagem_ao_modo(self):
-        # Regressão: escolher "Local" trocava a URL mas o painel continuava
-        # com cara de OpenRouter (rótulo da chave, exemplo do modelo).
+    def test_exemplo_do_modelo_reage_ao_modo(self):
+        # Regressão: escolher "Local" trocava a URL mas o exemplo do campo
+        # Modelo continuava sugerindo um slug do OpenRouter.
         html = self.client.get("/").get_data(as_text=True)
-        self.assertIn('id="rotulo-chave"', html)
         self.assertIn("marcarModoAtivo", html)
         self.assertIn('data-exemplo-openrouter="deepseek/deepseek-chat"', html)
         self.assertIn('data-exemplo-local="llama3.1"', html)
 
-    def test_placeholder_da_chave_tambem_reage_ao_modo(self):
-        # Regressão: o placeholder do #chave ficava fixo em "sk-or-v1-...
-        # (dispensável no modo local)" nos dois modos -- estranho no
-        # OpenRouter, redundante no Local (o rótulo já diz isso).
+    def test_barra_de_acoes_esconde_de_verdade_com_pasta_vazia(self):
+        # Mesma classe de bug do campo-chave: "display: flex" de autor
+        # vencia o "display: none" do atributo hidden vindo do navegador --
+        # verificado com um navegador de verdade que a barra de ações
+        # continuava visível numa pasta vazia até este override existir.
         html = self.client.get("/").get_data(as_text=True)
-        self.assertIn('data-exemplo-openrouter="sk-or-v1-..."', html)
-        self.assertIn('data-exemplo-local="normalmente dispens', html)
-        self.assertNotIn("dispensável no modo local", html)
+        self.assertIn(".barra-acoes[hidden] { display: none; }", html)
+
+    def test_campo_chave_some_no_modo_local(self):
+        # Regressão: o campo "Chave" continuava visível (só com rótulo
+        # diferente) no modo Local, onde normalmente não faz sentido nenhum
+        # -- e um "hidden" via JS não bastava, porque a regra
+        # "details#config label { display: grid }" vencia o hidden sem um
+        # override explícito (verificado num navegador de verdade).
+        html = self.client.get("/").get_data(as_text=True)
+        self.assertIn('id="campo-chave"', html)
+        self.assertIn("campo-chave').hidden = local", html)
+        self.assertIn("details#config label[hidden] { display: none; }", html)
 
     def test_selo_de_chave_diferencia_o_modo(self):
         # Regressão: o selo "chave configurada"/"sem chave" do topo era o
@@ -131,13 +140,22 @@ class TestPagina(BaseWeb):
         self.assertIn("limparModeloSeIncompativel(false)", html)
 
     def test_palavra_api_some_no_modo_local(self):
-        # Regressão: "Chave da API (opcional em modo local)" e "Endereço da
-        # API" continuavam falando de "API" mesmo depois de trocar para um
-        # servidor local, o que não fazia sentido para quem está lendo.
+        # Regressão: "Endereço da API" continuava falando de "API" mesmo
+        # depois de trocar para um servidor local, o que não fazia sentido
+        # para quem está lendo.
         html = self.client.get("/").get_data(as_text=True)
         self.assertIn('id="rotulo-endereco"', html)
         self.assertIn("Endereço do servidor", html)
-        self.assertIn("Chave (opcional em modo local)", html)
+
+    def test_salvar_recusa_modelo_vazio_fora_do_openrouter(self):
+        # Regressão: salvar com o campo Modelo vazio (ex.: só trocou para
+        # "Local" e não digitou nada) apagava o modelo configurado, e a
+        # tela seguinte mostrava o modelo padrão do OpenRouter como se
+        # fosse o que estava configurado -- parecia que o nome do Ollama
+        # tinha "sumido" e virado outro modelo sozinho.
+        html = self.client.get("/").get_data(as_text=True)
+        self.assertIn("baseUrl !== configAtual.openrouter_base_url", html)
+        self.assertIn("Informe um modelo antes de salvar", html)
 
     def test_modo_ativo_tem_marcacao_textual_alem_da_cor(self):
         # Regressão: só a cor do botão indicava qual modo estava ativo --
@@ -673,6 +691,21 @@ class TestConfiguracao(BaseWeb):
         dados = self.client.get("/api/config").get_json()
         self.assertEqual(dados["modelo"], "deepseek/deepseek-chat")
         self.assertEqual(dados["base_url"], "http://localhost:11434/v1")
+
+    def test_endereco_customizado_sem_modelo_nao_finge_um_modelo_do_openrouter(self):
+        # Regressão: salvar um endereço local sem modelo (ex.: o campo de
+        # modelo ficou vazio) fazia a resposta mostrar o modelo padrão do
+        # OpenRouter como se fosse "o que está configurado" -- na prática,
+        # ninguém digitou aquilo, e um servidor local não tem esse modelo.
+        self.client.post("/api/config", json={"base_url": "http://localhost:11434/v1"})
+        dados = self.client.get("/api/config").get_json()
+        self.assertEqual(dados["modelo"], "")
+
+    def test_endereco_do_openrouter_sem_modelo_ainda_mostra_o_padrao(self):
+        from autosrt import llm
+        self.client.post("/api/config", json={"base_url": llm.DEFAULT_BASE_URL})
+        dados = self.client.get("/api/config").get_json()
+        self.assertEqual(dados["modelo"], llm.DEFAULT_MODEL)
 
     def test_arquivo_gravado_e_so_do_dono(self):
         self.client.post("/api/config", json={"chave": "sk-or-v1-teste"})

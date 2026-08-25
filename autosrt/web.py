@@ -380,12 +380,19 @@ def _register_routes(app, fila, media_dir, engine):
     def ler_config():
         """Estado da configuração. As chaves nunca voltam para o navegador."""
         chave = config.get_openrouter_api_key()
+        base_url = config.get_setting("llm_base_url", "LLM_BASE_URL") or llm.DEFAULT_BASE_URL
+        modelo_configurado = config.get_setting("llm_model", "LLM_MODEL")
+        # DEFAULT_MODEL só é um padrão razoável para o próprio OpenRouter;
+        # mostrá-lo como se fosse "o modelo configurado" para um endereço
+        # diferente (ex.: servidor local) é enganoso -- ninguém digitou
+        # isso, e um servidor local quase certamente não tem esse modelo.
+        modelo = modelo_configurado or (
+            llm.DEFAULT_MODEL if base_url == llm.DEFAULT_BASE_URL else "")
         return jsonify({
             "tem_chave": bool(chave),
             "chave_do_ambiente": bool(os.environ.get("OPENROUTER_API_KEY")),
-            "modelo": config.get_setting("llm_model", "LLM_MODEL") or llm.DEFAULT_MODEL,
-            "base_url": config.get_setting("llm_base_url", "LLM_BASE_URL")
-                        or llm.DEFAULT_BASE_URL,
+            "modelo": modelo,
+            "base_url": base_url,
             "tem_chave_tmdb": bool(config.get_tmdb_api_key()),
             # Endereços padrão dos dois modos, para o botão de alternar na
             # página não precisar adivinhar nem duplicar essas constantes.
@@ -647,6 +654,10 @@ PAGINA = """<!doctype html>
   .barra-acoes { display: flex; align-items: center; gap: 12px;
                  margin-bottom: 10px; padding: 10px 14px; border-radius: 10px;
                  background: #23232b; }
+  /* Mesmo motivo do details#config label[hidden] acima: display:flex é de
+     autor e vence o display:none do hidden vindo do navegador -- sem isto,
+     a pasta vazia mostrava a barra de ações do mesmo jeito. */
+  .barra-acoes[hidden] { display: none; }
   .barra-acoes .conta { flex: 1; color: #9a9aa2; font-size: 14px; }
   select { font: inherit; background: #2a2a33; color: #e8e8ea;
            border: 1px solid #3a3a42; border-radius: 8px; padding: 6px 8px; }
@@ -687,6 +698,11 @@ PAGINA = """<!doctype html>
   details#config .painel { padding: 0 14px 14px; display: grid; gap: 12px; }
   details#config label { display: grid; gap: 6px; font-size: 14px;
                          color: #9a9aa2; }
+  /* Sem isto, o atributo "hidden" perde para a regra acima: display:grid é
+     de autor e sempre vence o display:none da folha de estilo do navegador,
+     não importa a especificidade -- então esconder via JS não escondia
+     nada de verdade. */
+  details#config label[hidden] { display: none; }
   details#config input { font: inherit; background: #2a2a33; color: #e8e8ea;
                          border: 1px solid #3a3a42; border-radius: 8px;
                          padding: 8px 10px; }
@@ -752,10 +768,8 @@ PAGINA = """<!doctype html>
       <label><span id="rotulo-endereco">Endere&ccedil;o da API</span>
         <input type="text" id="base_url" placeholder="https://openrouter.ai/api/v1">
       </label>
-      <label><span id="rotulo-chave">Chave do OpenRouter</span>
-        <input type="password" id="chave" placeholder="sk-or-v1-..." autocomplete="off"
-              data-exemplo-openrouter="sk-or-v1-..."
-              data-exemplo-local="normalmente dispens&aacute;vel aqui">
+      <label id="campo-chave">Chave do OpenRouter
+        <input type="password" id="chave" placeholder="sk-or-v1-..." autocomplete="off">
       </label>
       <label>Modelo
         <div class="linha-modelo">
@@ -1163,14 +1177,10 @@ function marcarModoAtivo() {
   // rótulo troca de vocabulário no modo local, não só de valor.
   $('rotulo-endereco').textContent = local ? 'Endereço do servidor' : 'Endereço da API';
 
-  // O campo é o mesmo nos dois modos (é sempre "openrouter_api_key" na
-  // configuração), mas o rótulo e o exemplo "OpenRouter" ficam errados
-  // depois de trocar para Local -- só o texto ao redor muda, não o campo.
-  $('rotulo-chave').textContent = local
-    ? 'Chave (opcional em modo local)' : 'Chave do OpenRouter';
-  const chaveInput = $('chave');
-  chaveInput.placeholder = local
-    ? chaveInput.dataset.exemploLocal : chaveInput.dataset.exemploOpenrouter;
+  // Servidor local normalmente não pede chave nenhuma -- o campo some
+  // inteiro em vez de só trocar de rótulo, que ainda deixava parecer que
+  // era preciso preencher alguma coisa ali.
+  $('campo-chave').hidden = local;
 
   const modeloInput = $('modelo');
   modeloInput.placeholder = local
@@ -1277,7 +1287,22 @@ $('buscar-modelos').onclick = async () => {
 };
 
 $('salvar').onclick = async () => {
-  const corpo = {modelo: $('modelo').value, base_url: $('base_url').value};
+  const baseUrl = $('base_url').value.trim();
+  const modelo = $('modelo').value.trim();
+
+  // O modelo padrão embutido só existe no catálogo do OpenRouter; salvar
+  // vazio em qualquer outro endereço fazia a tela voltar a mostrar aquele
+  // nome como se fosse o configurado, sem ninguém ter digitado isso -- daí
+  // a impressão de que o modelo local "sumia" e virava um nome do OpenRouter.
+  if (!modelo && baseUrl !== configAtual.openrouter_base_url) {
+    alert('Informe um modelo antes de salvar. Sem isso a tradução não vai '
+        + 'funcionar nesse endereço -- o "deepseek/deepseek-chat" padrão só '
+        + 'existe no catálogo do OpenRouter.');
+    $('modelo').focus();
+    return;
+  }
+
+  const corpo = {modelo: modelo, base_url: baseUrl};
   if ($('chave').value) {
     corpo.chave = $('chave').value;
   } else if (!configAtual.tem_chave && $('base_url').value === configAtual.local_base_url) {

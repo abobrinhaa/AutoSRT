@@ -4,10 +4,10 @@ import unittest
 
 from autosrt import llm_translate
 from autosrt.cue import Cue
-from autosrt.llm import LLMError
+from autosrt.llm import DEFAULT_BASE_URL, DEFAULT_MODEL, LLMError
 from autosrt.llm_translate import (LLMTranslationError, build_prompt,
-                                   describe_speakers, parse_response,
-                                   translate_cues_llm)
+                                   client_from_config, describe_speakers,
+                                   parse_response, translate_cues_llm)
 from autosrt.translate import TranslationCancelled
 
 
@@ -319,6 +319,43 @@ class TestParalelismo(unittest.TestCase):
 
         # Nem todos os blocos rodaram: o cancelamento cortou o resto.
         self.assertLess(len(chamadas), 15)
+
+
+class TestClientFromConfig(unittest.TestCase):
+    """Regressão: um endereço customizado (servidor local, por exemplo) sem
+    modelo configurado caía de volta no DEFAULT_MODEL do OpenRouter --
+    silenciosamente errado, porque esse nome quase certamente não existe
+    num servidor local. O sintoma relatado foi o campo de modelo "sumir" e
+    virar o modelo do OpenRouter sozinho."""
+
+    def getter_de(self, valores):
+        return lambda nome, env=None: valores.get(nome)
+
+    def test_sem_base_url_customizado_usa_o_padrao_do_openrouter(self):
+        cliente = client_from_config(config_getter=self.getter_de({}),
+                                     api_key="chave")
+        self.assertEqual(cliente.model, DEFAULT_MODEL)
+        self.assertEqual(cliente.base_url, DEFAULT_BASE_URL)
+
+    def test_base_url_do_openrouter_explicita_tambem_usa_o_padrao(self):
+        cliente = client_from_config(config_getter=self.getter_de({
+            "llm_base_url": DEFAULT_BASE_URL}), api_key="chave")
+        self.assertEqual(cliente.model, DEFAULT_MODEL)
+
+    def test_base_url_customizado_sem_modelo_e_erro_claro(self):
+        with self.assertRaises(LLMError) as ctx:
+            client_from_config(config_getter=self.getter_de({
+                "llm_base_url": "http://localhost:11434/v1"}), api_key="chave")
+        mensagem = str(ctx.exception)
+        self.assertIn("localhost:11434", mensagem)
+        self.assertIn("modelo", mensagem.lower())
+
+    def test_base_url_customizado_com_modelo_funciona(self):
+        cliente = client_from_config(config_getter=self.getter_de({
+            "llm_base_url": "http://localhost:11434/v1",
+            "llm_model": "llama3.1"}), api_key="chave")
+        self.assertEqual(cliente.model, "llama3.1")
+        self.assertEqual(cliente.base_url, "http://localhost:11434/v1")
 
 
 if __name__ == "__main__":
