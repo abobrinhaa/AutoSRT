@@ -24,6 +24,7 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 
 from .llm import DEFAULT_BASE_URL, DEFAULT_MODEL, LLMClient, LLMError
+from .transcribe import SPEAKER_RE
 from .translate import TranslationCancelled
 
 # Quantas legendas por requisição, e quantas falas de vizinhança mandar junto
@@ -126,9 +127,13 @@ def parse_response(text, expected_numbers) -> dict:
 
 
 def _clean_block(text: str) -> str:
-    # O modelo às vezes repete o rótulo de locutor; ele não é fala.
-    text = re.sub(r"^\s*\((?:SPEAKER|SPK)[ _]?\d+\)\s*", "", text,
-                  flags=re.IGNORECASE)
+    # O modelo às vezes ecoa o rótulo de locutor que foi mandado como dica
+    # de gênero no prompt (build_prompt manda "(SPEAKER_00)"); ele não é
+    # fala e não pode aparecer na legenda. Usa o mesmo reconhecimento do
+    # transcribe.py, e não só o formato exato mandado no prompt, porque o
+    # modelo é livre para ecoar em qualquer formato parecido que já viu em
+    # treino -- colchetes, dois-pontos, etc (ex.: "[SPEAKER_00]: fala").
+    text = SPEAKER_RE.sub("", text)
     return "\n".join(linha.strip() for linha in text.strip().split("\n")).strip()
 
 

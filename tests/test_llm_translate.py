@@ -1,3 +1,4 @@
+import re
 import threading
 import time
 import unittest
@@ -97,6 +98,21 @@ class TestParseResponse(unittest.TestCase):
         self.assertEqual(
             parse_response("<1>(SPEAKER_00) Olá</1>", {1}), {1: "Olá"})
 
+    def test_remove_rotulo_em_formato_diferente_do_prompt(self):
+        # Regressão: build_prompt manda a dica como "(SPEAKER_00)", mas o
+        # modelo é livre para ecoar em outro formato -- nesse caso relatado,
+        # colchetes com dois-pontos, que a limpeza não reconhecia porque só
+        # sabia o formato exato de parênteses.
+        self.assertEqual(
+            parse_response(
+                "<1539>[SPEAKER_15]: Pense em mim quando estiver fumando.</1539>",
+                {1539}),
+            {1539: "Pense em mim quando estiver fumando."})
+
+    def test_remove_rotulo_sem_parenteses_nem_colchetes(self):
+        self.assertEqual(
+            parse_response("<1>SPEAKER_00: Olá</1>", {1}), {1: "Olá"})
+
     def test_resposta_vazia(self):
         self.assertEqual(parse_response("", {1}), {})
 
@@ -131,6 +147,34 @@ class TestTraducao(unittest.TestCase):
                            "inglês", client=cliente, block_size=4)
         # 10 legendas em blocos de 4 => 3 requisicoes.
         self.assertEqual(len(cliente.prompts), 3)
+
+    def test_rotulo_de_locutor_nao_vaza_para_a_legenda_final(self):
+        # Regressão relatada: o modelo ecoou a dica de locutor no formato
+        # "[SPEAKER_15]: fala" (colchetes+dois-pontos) em vez do formato
+        # "(SPEAKER_15)" que build_prompt manda, e o rótulo sobrava na
+        # legenda final porque só o formato de parênteses era limpo.
+        class ClienteQueEcoaColchetes:
+            def complete(self, system, user):
+                blocos = []
+                for numero, conteudo in llm_translate.BLOCK_RE.findall(user):
+                    speaker = "SPEAKER_15" if numero == "1" else "SPEAKER_09"
+                    # conteudo já vem com "(SPEAKER_XX) " na frente -- é a
+                    # dica que build_prompt manda; troca pelo formato que o
+                    # modelo "ecoou" em vez de manter os dois.
+                    texto = re.sub(r"^\(SPEAKER_\d+\)\s*", "", conteudo.strip())
+                    blocos.append(f"<{numero}>[{speaker}]: PT:{texto}</{numero}>")
+                return "\n".join(blocos)
+
+        cues = make_cues("Think of me when you're smoking.", "Oh, I will.",
+                         speakers=["SPEAKER_15", "SPEAKER_09"])
+        falhas = translate_cues_llm(cues, "inglês",
+                                    client=ClienteQueEcoaColchetes())
+
+        self.assertEqual(falhas, [])
+        for cue in cues:
+            self.assertNotIn("SPEAKER", cue.text)
+        self.assertEqual(cues[0].text,
+                         "PT:Think of me when you're smoking.")
 
     def test_cancelamento(self):
         cancel = threading.Event()
