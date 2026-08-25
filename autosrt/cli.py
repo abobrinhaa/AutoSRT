@@ -110,6 +110,11 @@ def build_parser():
     grupo.add_argument("--modelo", metavar="NOME",
                        default=transcribe.DEFAULT_MODEL,
                        help=f"modelo do Whisper (padrão: {transcribe.DEFAULT_MODEL})")
+    grupo.add_argument("--compute-type", metavar="TIPO",
+                       dest="whisper_compute_type",
+                       help="precisão do cálculo na GPU (auto, int8, float16). "
+                            "Em placas Pascal, int8 costuma ser mais rápido "
+                            f"que float16 (padrão: {transcribe.DEFAULT_COMPUTE_TYPE})")
     grupo.add_argument("--whisper-api", metavar="ENGINE",
                        choices=["openrouter", "openai", "local"],
                        default="local",
@@ -242,6 +247,7 @@ def process_one(entrada, args, reporter) -> bool:
                 transcribe_runner=transcribe_runner,
                 vad_threshold=args.vad_threshold,
                 vad_min_silence_ms=args.vad_min_silence_ms,
+                whisper_compute_type=args.whisper_compute_type,
                 transcribe_extra_args=extra_args,
                 progress=reporter.progress, status=reporter.status)
         elif pipeline.is_media(entrada):

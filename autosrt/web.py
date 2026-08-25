@@ -159,7 +159,9 @@ def _executar(job, engine):
             job.entrada, engine=engine, status=status, progress=progresso,
             cancel_event=job.cancelar, translate=(acao != "transcrever"),
             vad_threshold=config.get_vad_threshold(),
-            vad_min_silence_ms=config.get_vad_min_silence_ms())
+            vad_min_silence_ms=config.get_vad_min_silence_ms(),
+            whisper_model=config.get_whisper_model(),
+            whisper_compute_type=config.get_whisper_compute_type())
         job.resultado = os.path.splitext(job.entrada)[0] + ".srt"
     else:
         saida = srt_io.srt_output_path(job.entrada)
@@ -403,6 +405,10 @@ def _register_routes(app, fila, media_dir, engine):
             # None quando não configurado -- "não mexi nisso, decide
             # sozinho pelo endereço" (ver llm_translate.translate_cues_llm).
             "llm_block_size": config.get_llm_block_size(),
+            # Vazio quando não configurado -- é "não mexi nisso, usa o
+            # padrão do transcribe.py" (turbo / auto).
+            "whisper_model": config.get_whisper_model(),
+            "whisper_compute_type": config.get_whisper_compute_type(),
             # Vazio quando não configurado -- não é "0", é "não mexi nisso,
             # deixa o Whisper no próprio padrão dele".
             "vad_threshold": config.get_vad_threshold(),
@@ -434,6 +440,13 @@ def _register_routes(app, fila, media_dir, engine):
                         "erro": "Legendas por requisição precisa ser um "
                                 "número inteiro positivo (ex: 2)."}), 400
             novos["llm_block_size"] = valor
+
+        # Texto livre de propósito: a lista de modelos e de compute types de
+        # quem transcreve muda com a versão do Faster-Whisper, e uma lista
+        # fixa aqui viraria mentira na próxima atualização dele.
+        for campo in ("whisper_model", "whisper_compute_type"):
+            if campo in dados:
+                novos[campo] = str(dados.get(campo) or "").strip()
 
         if "vad_threshold" in dados:
             valor = str(dados.get("vad_threshold") or "").strip()
@@ -967,6 +980,12 @@ PAGINA = """<!doctype html>
     <summary data-tip="Ajustes finos da detec&ccedil;&atilde;o de fala (VAD) usada pelo Whisper ao transcrever.">Configura&ccedil;&atilde;o da transcri&ccedil;&atilde;o <span id="estado-vad" class="selo"></span></summary>
     <div class="painel">
       <p class="dica-config">Vale para todo arquivo processado pela fila -- n&atilde;o &eacute; por v&iacute;deo. Deixe em branco para usar o padr&atilde;o do pr&oacute;prio Whisper, sem mexer em nada.</p>
+      <label><span class="rotulo-com-ajuda">Modelo do Whisper<span class="ajuda" tabindex="0" data-tip="Qual modelo transcreve o &aacute;udio. Em branco usa o 'turbo' (r&aacute;pido e leve). O 'large-v3' &eacute; mais preciso, por&eacute;m mais pesado e mais lento -- em placa de 5 GB ele s&oacute; cabe com folga em int8.">?</span></span>
+        <input type="text" id="whisper_model" placeholder="em branco = turbo (padr&atilde;o). Ex: large-v3, medium, small">
+      </label>
+      <label><span class="rotulo-com-ajuda">Tipo de c&aacute;lculo<span class="ajuda" tabindex="0" data-tip="Precis&atilde;o num&eacute;rica usada na GPU. Em branco ('auto') o pr&oacute;prio CTranslate2 escolhe. Em placas Pascal (s&eacute;rie P, sem tensor cores) o 'int8' costuma ser mais r&aacute;pido que 'float16' e ocupa metade da mem&oacute;ria.">?</span></span>
+        <input type="text" id="whisper_compute_type" placeholder="em branco = auto. Ex: int8, float16, float32">
+      </label>
       <label><span class="rotulo-com-ajuda">Sensibilidade da VAD (0 a 1)<span class="ajuda" tabindex="0" data-tip="O quanto o Whisper precisa 'ouvir' pra considerar que h&aacute; fala. Um valor menor pega fala mais baixa, mas tamb&eacute;m mais ru&iacute;do.">?</span></span>
         <input type="text" id="vad_threshold" placeholder="ex: 0.2 -- menor pega fala mais baixa">
       </label>
@@ -1438,10 +1457,13 @@ async function carregarConfig() {
   seloTmdb.textContent = c.tem_chave_tmdb ? 'ativo' : 'sem chave';
 
   // null (não configurado) vira campo vazio, não "null" escrito na tela.
+  $('whisper_model').value = c.whisper_model ?? '';
+  $('whisper_compute_type').value = c.whisper_compute_type ?? '';
   $('vad_threshold').value = c.vad_threshold ?? '';
   $('vad_min_silence_ms').value = c.vad_min_silence_ms ?? '';
   const seloVad = $('estado-vad');
-  const vadAtiva = c.vad_threshold !== null || c.vad_min_silence_ms !== null;
+  const vadAtiva = c.vad_threshold !== null || c.vad_min_silence_ms !== null
+    || !!c.whisper_model || !!c.whisper_compute_type;
   seloVad.className = 'selo ' + (vadAtiva ? 'ok' : '');
   seloVad.textContent = vadAtiva ? 'ajustada' : 'padrão do Whisper';
 
@@ -1553,6 +1575,8 @@ $('salvar').onclick = async () => {
 
 $('salvar-vad').onclick = async () => {
   const corpo = {
+    whisper_model: $('whisper_model').value.trim(),
+    whisper_compute_type: $('whisper_compute_type').value.trim(),
     vad_threshold: $('vad_threshold').value.trim(),
     vad_min_silence_ms: $('vad_min_silence_ms').value.trim(),
   };

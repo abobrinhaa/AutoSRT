@@ -23,6 +23,10 @@ EXAMPLE_CONFIG = {
     # provedor na nuvem) -- só precisa disso quem quer sobrepor a detecção.
     "llm_block_size": "2",
     "faster_whisper_path": "/opt/faster-whisper-xxl/faster-whisper-xxl",
+    # Opcional: modelo e precisão da transcrição, para toda a fila web.
+    # Em branco usa turbo/auto, os padrões do transcribe.py.
+    "whisper_model": "large-v3",
+    "whisper_compute_type": "int8",
     # Opcional: reconhece o filme pelo nome do arquivo na lista do servidor.
     # Chave gratuita em https://www.themoviedb.org/settings/api
     "tmdb_api_key": "...",
@@ -136,6 +140,28 @@ def get_openai_api_key():
 def get_whisper_path():
     """Caminho do executável do Faster-Whisper-XXL, se configurado."""
     return get_setting("faster_whisper_path", "FASTER_WHISPER_PATH")
+
+
+def get_whisper_model():
+    """Modelo do Whisper, ou ``None`` para o padrão do :mod:`~autosrt.transcribe`.
+
+    Existe porque a fila web usava o padrão fixo e não tinha como trocar --
+    o ajuste só existia no ``--modelo`` da linha de comando, justamente na
+    interface que foi feita para quem não abre terminal.
+    """
+    return get_setting("whisper_model", "WHISPER_MODEL")
+
+
+def get_whisper_compute_type():
+    """Tipo de cálculo do Whisper (``auto``, ``int8``, ``float16``...).
+
+    ``None`` mantém o ``auto``, que deixa o CTranslate2 escolher. Vale
+    informar explicitamente quando a escolha automática não é a melhor para
+    a placa: em GPUs Pascal (sem tensor cores), ``int8`` costuma ser mais
+    rápido que ``float16`` e ocupa metade da memória, o que é o que permite
+    rodar os modelos grandes numa placa de 5 GB.
+    """
+    return get_setting("whisper_compute_type", "WHISPER_COMPUTE_TYPE")
 
 
 def get_llm_block_size():

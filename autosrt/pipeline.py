@@ -216,7 +216,8 @@ def process_media(media_path, output_path=None, *, engine=DEFAULT_ENGINE,
                   progress=None, status=None, cancel_event=None,
                   transcribe_runner=None, translator_factory=None,
                   keep_original=True, vad_threshold=None,
-                  vad_min_silence_ms=None, transcribe_extra_args=None) -> PipelineResult:
+                  vad_min_silence_ms=None, whisper_compute_type=None,
+                  transcribe_extra_args=None) -> PipelineResult:
     """Transcreve um arquivo de mídia e traduz o resultado.
 
     É o caminho completo: o áudio vira legenda já sincronizada e com o
@@ -237,6 +238,9 @@ def process_media(media_path, output_path=None, *, engine=DEFAULT_ENGINE,
             efeito quando ``transcribe_runner`` é usado (motor via API não
             passa pela VAD local).
         vad_min_silence_ms: idem.
+        whisper_compute_type: ``auto`` (padrão), ``int8``, ``float16``...
+            ``None`` deixa o CTranslate2 escolher. Idem quanto ao
+            ``transcribe_runner``.
         transcribe_extra_args: argumentos extras repassados direto ao
             executável do Whisper local.
 
@@ -286,6 +290,8 @@ def process_media(media_path, output_path=None, *, engine=DEFAULT_ENGINE,
         }
         if whisper_model:
             kwargs["model"] = whisper_model
+        if whisper_compute_type:
+            kwargs["compute_type"] = whisper_compute_type
         if progress:
             kwargs["progress"] = lambda pct: progress(pct * peso_audio // 100, 100)
         cues = transcribe_module.transcribe(media_path, **kwargs)

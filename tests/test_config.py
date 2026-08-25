@@ -126,6 +126,45 @@ class TestSensibilidadeDaVAD(unittest.TestCase):
         self.assertIsNone(config.get_vad_threshold())
 
 
+class TestModeloDoWhisper(unittest.TestCase):
+    """A fila web usava o padrão fixo do transcribe.py e não tinha como
+    trocar -- o ajuste só existia no --modelo do CLI, justamente na
+    interface pensada para quem não abre terminal."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self._anterior = os.environ.get("AUTOSRT_CONFIG_DIR")
+        os.environ["AUTOSRT_CONFIG_DIR"] = self.tmp
+        self._env = {k: os.environ.pop(k, None) for k in
+                     ("WHISPER_MODEL", "WHISPER_COMPUTE_TYPE")}
+
+    def tearDown(self):
+        if self._anterior is None:
+            os.environ.pop("AUTOSRT_CONFIG_DIR", None)
+        else:
+            os.environ["AUTOSRT_CONFIG_DIR"] = self._anterior
+        for chave, valor in self._env.items():
+            if valor is not None:
+                os.environ[chave] = valor
+            else:
+                os.environ.pop(chave, None)
+
+    def test_sem_configuracao_e_none(self):
+        self.assertIsNone(config.get_whisper_model())
+        self.assertIsNone(config.get_whisper_compute_type())
+
+    def test_le_do_arquivo(self):
+        config.save_config({"whisper_model": "large-v3",
+                            "whisper_compute_type": "int8"})
+        self.assertEqual(config.get_whisper_model(), "large-v3")
+        self.assertEqual(config.get_whisper_compute_type(), "int8")
+
+    def test_ambiente_tem_prioridade(self):
+        config.save_config({"whisper_model": "large-v3"})
+        os.environ["WHISPER_MODEL"] = "medium"
+        self.assertEqual(config.get_whisper_model(), "medium")
+
+
 class TestTamanhoDeBlocoDoLLM(unittest.TestCase):
     """llm_block_size sobrepõe a detecção automática por endereço em
     translate_cues_llm -- necessário para quem serve um modelo local por um
