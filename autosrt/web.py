@@ -638,24 +638,91 @@ PAGINA = """<!doctype html>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>AutoSRT</title>
 <style>
-  :root { color-scheme: dark; }
+  :root {
+    color-scheme: light dark;
+    --bg-grad: linear-gradient(180deg, #f8f9fb 0%, #eef0f4 100%);
+    --surface: #ffffff;
+    --surface-2: #eef0f4;
+    --surface-hover: #e6e9ef;
+    --border: #dfe2e8;
+    --text: #16161c;
+    --text-muted: #666a75;
+    --accent: #3b82f6;
+    --accent-hover: #2f6fd8;
+    --accent-soft: #e6efff;
+    --success: #16a34a;
+    --success-soft: #e5f7ec;
+    --danger: #dc2626;
+    --danger-soft: #fdebea;
+    --warning: #b45309;
+    --shadow-sm: 0 1px 2px rgba(20, 22, 30, .05);
+    --shadow-md: 0 10px 30px rgba(20, 22, 30, .10);
+    --radius: 14px;
+    --radius-sm: 9px;
+  }
+  /* Sem preferência salva, segue o tema do sistema -- e sem JS nenhum
+     rodado ainda, para a primeira pintura já vir no tom certo. */
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-tema="claro"]) {
+      --bg-grad: linear-gradient(180deg, #1b1b1f 0%, #17171b 100%);
+      --surface: #212129; --surface-2: #26262f; --surface-hover: #2c2c36;
+      --border: #313139; --text: #ecedf1; --text-muted: #9a9aa2;
+      --accent-hover: #5c9bfc; --accent-soft: #1e2c47;
+      --success: #4ade80; --success-soft: #16311f;
+      --danger: #f87171; --danger-soft: #3a1c1c; --warning: #fbbf24;
+      --shadow-sm: 0 1px 2px rgba(0, 0, 0, .35);
+      --shadow-md: 0 10px 30px rgba(0, 0, 0, .45);
+    }
+  }
+  /* Escolha manual (botão no topo) sempre vence a preferência do sistema. */
+  :root[data-tema="escuro"] {
+    --bg-grad: linear-gradient(180deg, #1b1b1f 0%, #17171b 100%);
+    --surface: #212129; --surface-2: #26262f; --surface-hover: #2c2c36;
+    --border: #313139; --text: #ecedf1; --text-muted: #9a9aa2;
+    --accent-hover: #5c9bfc; --accent-soft: #1e2c47;
+    --success: #4ade80; --success-soft: #16311f;
+    --danger: #f87171; --danger-soft: #3a1c1c; --warning: #fbbf24;
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, .35);
+    --shadow-md: 0 10px 30px rgba(0, 0, 0, .45);
+  }
   * { box-sizing: border-box; }
-  body { margin: 0; font: 16px/1.5 system-ui, -apple-system, sans-serif;
-         background: #1b1b1f; color: #e8e8ea; }
-  main { max-width: 780px; margin: 0 auto; padding: 24px 16px 64px; }
-  h1 { font-size: 24px; margin: 8px 0 4px; }
-  p.sub { color: #9a9aa2; margin: 0 0 28px; }
-  h2 { font-size: 15px; text-transform: uppercase; letter-spacing: .06em;
-       color: #9a9aa2; margin: 32px 0 12px; }
-  .drop { border: 2px dashed #3a3a42; border-radius: 12px; padding: 28px 16px;
-          text-align: center; color: #9a9aa2; cursor: pointer;
-          transition: border-color .15s, background .15s; }
-  .drop:hover, .drop.ativo { border-color: #3b82f6; background: #21212a; }
-  .drop #dica { margin: 4px 0 14px; font-size: 14px; }
-  .tag.legenda-pronta { color: #4ade80; }
-  .lista { border: 1px solid #2e2e36; border-radius: 12px; overflow: hidden; }
-  .item { display: flex; align-items: center; gap: 12px; padding: 12px 14px;
-          border-bottom: 1px solid #2e2e36; }
+  body { margin: 0; font: 16px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif;
+         background: var(--bg-grad); color: var(--text);
+         transition: background-color .2s ease, color .2s ease; }
+  main { max-width: 820px; margin: 0 auto; padding: 24px 16px 64px; }
+  .cabecalho { display: flex; align-items: flex-start; justify-content: space-between;
+               gap: 16px; flex-wrap: wrap; }
+  h1 { font-size: 26px; margin: 8px 0 4px; letter-spacing: -.01em; }
+  p.sub { color: var(--text-muted); margin: 0 0 28px; }
+  h2 { font-size: 14px; text-transform: uppercase; letter-spacing: .07em;
+       color: var(--text-muted); margin: 32px 0 12px; }
+  .alternar-tema { flex-shrink: 0; width: 40px; height: 40px; padding: 0; margin-top: 4px;
+                    border-radius: 999px; background: var(--surface);
+                    border: 1px solid var(--border); color: var(--text);
+                    display: flex; align-items: center; justify-content: center;
+                    box-shadow: var(--shadow-sm); transition: transform .15s ease, background .15s ease; }
+  .alternar-tema:hover { background: var(--surface-hover); transform: translateY(-1px); }
+  .alternar-tema svg { width: 19px; height: 19px; }
+  .alternar-tema .icone-lua { display: none; }
+  :root[data-tema="escuro"] .alternar-tema .icone-sol { display: none; }
+  :root[data-tema="escuro"] .alternar-tema .icone-lua { display: block; }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-tema="claro"]) .alternar-tema .icone-sol { display: none; }
+    :root:not([data-tema="claro"]) .alternar-tema .icone-lua { display: block; }
+  }
+  .drop { border: 2px dashed var(--border); border-radius: var(--radius); padding: 30px 16px;
+          text-align: center; color: var(--text-muted); cursor: pointer; background: var(--surface);
+          transition: border-color .15s, background .15s, transform .15s; }
+  .drop:hover, .drop.ativo { border-color: var(--accent); background: var(--accent-soft); }
+  .drop.ativo { transform: scale(1.008); }
+  .drop svg { width: 28px; height: 28px; color: var(--text-muted); }
+  .drop #dica { margin: 8px 0 14px; font-size: 14px; }
+  .tag.legenda-pronta { color: var(--success); }
+  .lista { border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden;
+           background: var(--surface); box-shadow: var(--shadow-sm); }
+  .item { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; padding: 12px 14px;
+          border-bottom: 1px solid var(--border); transition: background .15s ease; }
+  .item:hover { background: var(--surface-2); }
   .item:last-child { border-bottom: 0; }
   /* min-width impede que o nome seja espremido até sumir quando a linha
      acumula selos e um seletor longo; os selos não encolhem, o nome sim. */
@@ -663,117 +730,172 @@ PAGINA = """<!doctype html>
                 text-overflow: ellipsis; white-space: nowrap; }
   .item .tag { flex-shrink: 0; }
   /* Marca o que acabou de subir, para o usuário achar onde clicar. */
-  .item.novo { background: #1e2536; box-shadow: inset 3px 0 0 #3b82f6; }
+  .item.novo { background: var(--accent-soft); box-shadow: inset 3px 0 0 var(--accent); }
   .item .acao { flex-shrink: 1; max-width: 220px; }
   /* Selo de reconhecimento do TMDB: pôster pequeno + título (ano). É um
      palpite pelo nome do arquivo, por isso fica discreto, não em destaque. */
   .filme { display: flex; align-items: center; gap: 6px; flex-shrink: 0;
            max-width: 200px; }
   .filme .poster { width: 24px; height: 34px; object-fit: cover;
-                   border-radius: 3px; flex-shrink: 0; background: #2a2a33; }
-  .filme .titulo { font-size: 12px; color: #9a9aa2; overflow: hidden;
+                   border-radius: 3px; flex-shrink: 0; background: var(--surface-2); }
+  .filme .titulo { font-size: 12px; color: var(--text-muted); overflow: hidden;
                    text-overflow: ellipsis; white-space: nowrap; }
   #arquivo { display: none; }
-  #escolher { display: inline-block; padding: 8px 16px; background: #3b82f6;
-              color: white; border-radius: 6px; cursor: pointer; font-weight: 500;
-              border: none; }
-  .pasta { padding: 8px 14px; background: #23232b; font-size: 13px;
-           color: #9a9aa2; border-bottom: 1px solid #2e2e36; }
-  .barra-acoes { display: flex; align-items: center; gap: 12px;
-                 margin-bottom: 10px; padding: 10px 14px; border-radius: 10px;
-                 background: #23232b; }
+  #escolher { display: inline-block; padding: 9px 18px; background: var(--accent);
+              color: #fff; border-radius: 999px; cursor: pointer; font-weight: 600;
+              border: none; transition: background .15s ease, transform .15s ease; }
+  #escolher:hover { background: var(--accent-hover); transform: translateY(-1px); }
+  .pasta { padding: 8px 14px; background: var(--surface-2); font-size: 13px;
+           color: var(--text-muted); border-bottom: 1px solid var(--border); }
+  .barra-acoes { display: flex; flex-wrap: wrap; align-items: center; gap: 12px;
+                 margin-bottom: 10px; padding: 10px 14px; border-radius: var(--radius-sm);
+                 background: var(--surface-2); }
   /* Mesmo motivo do details#config label[hidden] acima: display:flex é de
      autor e vence o display:none do hidden vindo do navegador -- sem isto,
      a pasta vazia mostrava a barra de ações do mesmo jeito. */
   .barra-acoes[hidden] { display: none; }
-  .barra-acoes .conta { flex: 1; color: #9a9aa2; font-size: 14px; }
-  select { font: inherit; background: #2a2a33; color: #e8e8ea;
-           border: 1px solid #3a3a42; border-radius: 8px; padding: 6px 8px; }
-  input[type=checkbox] { width: 17px; height: 17px; accent-color: #3b82f6;
+  .barra-acoes .conta { flex: 1; color: var(--text-muted); font-size: 14px; }
+  select { font: inherit; background: var(--surface); color: var(--text);
+           border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 6px 8px; }
+  input[type=checkbox] { width: 17px; height: 17px; accent-color: var(--accent);
                          cursor: pointer; }
   label.tudo { display: flex; align-items: center; gap: 8px; cursor: pointer;
-               color: #9a9aa2; font-size: 14px; }
-  .tag { font-size: 12px; color: #9a9aa2; background: #2a2a33;
+               color: var(--text-muted); font-size: 14px; }
+  .tag { font-size: 12px; color: var(--text-muted); background: var(--surface-2);
          padding: 2px 8px; border-radius: 999px; }
-  button { font: inherit; border: 0; border-radius: 8px; padding: 8px 16px;
-           background: #3b82f6; color: #fff; cursor: pointer; }
-  button:hover { background: #2f6fd8; }
-  button.fantasma { background: #2a2a33; color: #d0d0d6; }
-  button:disabled { opacity: .5; cursor: default; }
-  .barra { height: 6px; background: #2a2a33; border-radius: 999px;
+  button { font: inherit; border: 0; border-radius: var(--radius-sm); padding: 8px 16px;
+           background: var(--accent); color: #fff; cursor: pointer;
+           transition: background .15s ease, transform .1s ease; }
+  button:hover:enabled { background: var(--accent-hover); transform: translateY(-1px); }
+  button.fantasma { background: var(--surface-2); color: var(--text); }
+  button.fantasma:hover:enabled { background: var(--surface-hover); }
+  button:disabled { opacity: .5; cursor: default; transform: none; }
+  button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible,
+  summary:focus-visible, [tabindex]:focus-visible {
+    outline: 2px solid var(--accent); outline-offset: 2px; }
+  .barra { height: 6px; background: var(--surface-2); border-radius: 999px;
            overflow: hidden; margin-top: 8px; }
-  .barra > div { height: 100%; background: #3b82f6; width: 0;
+  .barra > div { height: 100%; background: var(--accent); width: 0;
                  transition: width .3s; }
-  .trabalho { border: 1px solid #2e2e36; border-radius: 12px;
-              padding: 14px; margin-bottom: 10px; }
-  .trabalho .topo { display: flex; align-items: center; gap: 12px; }
-  .etapa { color: #9a9aa2; font-size: 14px; margin-top: 6px; }
-  .erro { color: #f87171; }
-  .ok { color: #4ade80; }
-  .vazio { color: #9a9aa2; padding: 20px; text-align: center; }
-  a.baixar { color: #3b82f6; text-decoration: none; font-weight: 500; }
+  .trabalho { border: 1px solid var(--border); border-radius: var(--radius);
+              padding: 14px; margin-bottom: 10px; background: var(--surface);
+              box-shadow: var(--shadow-sm); }
+  .trabalho .topo { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  .etapa { color: var(--text-muted); font-size: 14px; margin-top: 6px; }
+  .erro { color: var(--danger); }
+  .ok { color: var(--success); }
+  .vazio { color: var(--text-muted); padding: 20px; text-align: center; }
+  a.baixar { color: var(--accent); text-decoration: none; font-weight: 600; }
+  a.baixar:hover { text-decoration: underline; }
   .item a.baixar { flex-shrink: 0; }
-  .apagar { flex-shrink: 0; background: none; border: 1px solid #4a2b2b;
-            color: #f87171; }
-  .apagar:hover:enabled { background: #2a1c1c; border-color: #7f1d1d; }
+  .apagar { flex-shrink: 0; background: none; border: 1px solid var(--danger-soft);
+            color: var(--danger); }
+  .apagar:hover:enabled { background: var(--danger-soft); }
   .dispensar { font-size: 18px; line-height: 1; padding: 2px 8px; }
   h2 #limpar { float: right; text-transform: none; letter-spacing: 0;
                font-size: 13px; }
   details#config, details#config-transcricao {
-    margin-top: 36px; border: 1px solid #2e2e36; border-radius: 12px; }
+    margin-top: 20px; border: 1px solid var(--border); border-radius: var(--radius);
+    background: var(--surface); box-shadow: var(--shadow-sm); }
   details#config summary, details#config-transcricao summary {
-    padding: 14px; cursor: pointer; color: #9a9aa2; font-size: 14px; }
+    padding: 14px; cursor: pointer; color: var(--text-muted); font-size: 14px;
+    display: flex; align-items: center; gap: 8px; }
+  details#config summary::marker, details#config-transcricao summary::marker {
+    color: var(--accent); }
   details#config .painel, details#config-transcricao .painel {
     padding: 0 14px 14px; display: grid; gap: 12px; }
   details#config label, details#config-transcricao label {
-    display: grid; gap: 6px; font-size: 14px; color: #9a9aa2; }
+    display: grid; gap: 6px; font-size: 14px; color: var(--text-muted); }
   /* Sem isto, o atributo "hidden" perde para a regra acima: display:grid é
      de autor e sempre vence o display:none da folha de estilo do navegador,
      não importa a especificidade -- então esconder via JS não escondia
      nada de verdade. */
   details#config label[hidden] { display: none; }
   details#config input, details#config-transcricao input {
-    font: inherit; background: #2a2a33; color: #e8e8ea;
-    border: 1px solid #3a3a42; border-radius: 8px; padding: 8px 10px; }
+    font: inherit; background: var(--surface-2); color: var(--text);
+    border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 8px 10px; }
   details#config-transcricao p.dica-config { margin: 0; }
-  .rodape { display: flex; align-items: center; gap: 12px; }
-  .dica-config { flex: 1; font-size: 13px; color: #6f6f78; }
+  .rodape { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  .dica-config { flex: 1; font-size: 13px; color: var(--text-muted); }
   .selo { font-size: 12px; padding: 2px 8px; border-radius: 999px;
-          background: #2a2a33; }
-  .selo.ok { color: #4ade80; }
-  .selo.falta { color: #fbbf24; }
-  .modo-provedor { display: flex; gap: 8px; }
-  .modo-provedor button { flex: 1; background: #2a2a33; color: #d0d0d6;
-                          border: 1px solid #3a3a42; }
-  .modo-provedor button.ativo { background: #21304f; border-color: #3b82f6;
-                                color: #e8e8ea; }
+          background: var(--surface-2); }
+  .selo.ok { color: var(--success); }
+  .selo.falta { color: var(--warning); }
+  .modo-provedor { display: flex; gap: 8px; flex-wrap: wrap; }
+  .modo-provedor button { flex: 1; min-width: 140px; background: var(--surface-2);
+                          color: var(--text); border: 1px solid var(--border); }
+  .modo-provedor button.ativo { background: var(--accent-soft); border-color: var(--accent);
+                                color: var(--text); }
   .modo-provedor .tag { margin-left: 6px; }
   /* Cor sozinha não é garantia de dar para notar; o texto "selecionado"
      deixa explícito qual dos dois modos está valendo agora. */
-  .modo-provedor .marca-selecionado { display: none; color: #4ade80;
+  .modo-provedor .marca-selecionado { display: none; color: var(--success);
                                       font-size: 12px; }
   .modo-provedor button.ativo .marca-selecionado { display: inline; }
-  #mensagem-salvar.sucesso { color: #4ade80; }
-  .linha-modelo { display: flex; gap: 8px; }
-  .linha-modelo input { flex: 1; }
-  .lista-modelos { max-height: 220px; overflow-y: auto; border: 1px solid #3a3a42;
-                   border-radius: 8px; }
+  #mensagem-salvar.sucesso { color: var(--success); }
+  .linha-modelo { display: flex; gap: 8px; flex-wrap: wrap; }
+  .linha-modelo input { flex: 1; min-width: 160px; }
+  .lista-modelos { max-height: 220px; overflow-y: auto; border: 1px solid var(--border);
+                   border-radius: var(--radius-sm); }
   .lista-modelos button { display: block; width: 100%; text-align: left;
                           background: none; border: 0; border-radius: 0;
-                          border-bottom: 1px solid #2e2e36; color: #e8e8ea;
+                          border-bottom: 1px solid var(--border); color: var(--text);
                           padding: 8px 10px; font-size: 13px; }
   .lista-modelos button:last-child { border-bottom: 0; }
-  .lista-modelos button:hover { background: #23232b; }
-  .lista-modelos .preco { display: block; color: #9a9aa2; font-size: 12px;
+  .lista-modelos button:hover { background: var(--surface-2); }
+  .lista-modelos .preco { display: block; color: var(--text-muted); font-size: 12px;
                           margin-top: 2px; }
+  /* Tooltips: ficam nas abas de configuração (summary) e em campos que
+     merecem uma explicação curta -- o "?" ao lado do rótulo. */
+  .rotulo-com-ajuda { display: inline-flex; align-items: center; gap: 6px; }
+  .ajuda { display: inline-flex; align-items: center; justify-content: center;
+           width: 16px; height: 16px; border-radius: 999px; background: var(--surface-2);
+           color: var(--text-muted); font-size: 11px; font-weight: 700; cursor: help;
+           border: 1px solid var(--border); }
+  [data-tip] { position: relative; }
+  [data-tip]::after {
+    content: attr(data-tip); position: absolute; bottom: calc(100% + 8px); left: 50%;
+    transform: translateX(-50%) translateY(4px); background: var(--text); color: var(--surface);
+    padding: 7px 10px; border-radius: 8px; font-size: 12px; line-height: 1.4;
+    width: max-content; max-width: min(260px, 80vw); box-shadow: var(--shadow-md);
+    opacity: 0; pointer-events: none; transition: opacity .15s ease, transform .15s ease;
+    z-index: 30; white-space: normal; text-align: left; font-weight: 400; }
+  [data-tip]:hover::after, [data-tip]:focus-visible::after {
+    opacity: 1; transform: translateX(-50%) translateY(0); }
+  summary[data-tip]::after { left: 0; transform: translateX(0) translateY(4px); }
+  summary[data-tip]:hover::after, summary[data-tip]:focus-visible::after {
+    transform: translateX(0) translateY(0); }
+  @media (max-width: 560px) {
+    .item .acao { max-width: none; flex: 1 1 100%; }
+    .barra-acoes { flex-direction: column; align-items: stretch; }
+    .trabalho .topo .acao { flex: 1 1 100%; display: flex; gap: 8px; }
+    [data-tip]::after, summary[data-tip]::after { max-width: min(220px, 78vw); }
+  }
 </style>
 </head>
 <body>
 <main>
-  <h1>AutoSRT</h1>
-  <p class="sub">Transcreve o áudio do filme e traduz a legenda para português.</p>
+  <div class="cabecalho">
+    <div>
+      <h1>AutoSRT</h1>
+      <p class="sub">Transcreve o áudio do filme e traduz a legenda para português.</p>
+    </div>
+    <button type="button" id="alternar-tema" class="alternar-tema" aria-pressed="false"
+            title="Alternar entre tema claro e escuro" aria-label="Alternar entre tema claro e escuro">
+      <svg class="icone-sol" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+           stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4"></circle>
+        <path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"></path></svg>
+      <svg class="icone-lua" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+        <path d="M20.4 14.7A8.5 8.5 0 1 1 9.3 3.6a7 7 0 0 0 11.1 11.1Z"></path></svg>
+    </button>
+  </div>
 
   <div class="drop" id="drop">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+         stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <path d="M12 16V4M12 4l-4 4M12 4l4 4"></path>
+      <path d="M4 16v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"></path>
+    </svg>
     <strong>Arraste o filme e a legenda aqui</strong>
     <div id="dica">pode mandar os dois juntos &mdash; v&iacute;deo, &aacute;udio ou legenda</div>
     <label for="arquivo" id="escolher">Escolher arquivos...</label>
@@ -793,15 +915,15 @@ PAGINA = """<!doctype html>
   <div id="trabalhos"><div class="vazio">Nada ainda.</div></div>
 
   <details id="config">
-    <summary>Configura&ccedil;&atilde;o da tradu&ccedil;&atilde;o <span id="estado-chave"></span></summary>
+    <summary data-tip="Endere&ccedil;o, chave e modelo do servi&ccedil;o usado para traduzir as legendas para portugu&ecirc;s.">Configura&ccedil;&atilde;o da tradu&ccedil;&atilde;o <span id="estado-chave"></span></summary>
     <div class="painel">
-      <label><span id="rotulo-endereco">Endere&ccedil;o da API</span>
+      <label><span class="rotulo-com-ajuda"><span id="rotulo-endereco">Endere&ccedil;o da API</span><span class="ajuda" tabindex="0" data-tip="Para onde mandar o texto a traduzir: o endere&ccedil;o da API do OpenRouter, ou de um servidor compat&iacute;vel na sua rede, como o Ollama.">?</span></span>
         <input type="text" id="base_url" placeholder="https://openrouter.ai/api/v1">
       </label>
-      <label id="campo-chave">Chave do OpenRouter
+      <label id="campo-chave"><span class="rotulo-com-ajuda">Chave do OpenRouter<span class="ajuda" tabindex="0" data-tip="Sua chave de API do OpenRouter. Fica guardada s&oacute; no servidor e nunca volta para esta p&aacute;gina.">?</span></span>
         <input type="password" id="chave" placeholder="sk-or-v1-..." autocomplete="off">
       </label>
-      <label>Modelo
+      <label><span class="rotulo-com-ajuda">Modelo<span class="ajuda" tabindex="0" data-tip="Qual modelo de linguagem usar na tradu&ccedil;&atilde;o. Clique em 'Buscar modelos' para ver os dispon&iacute;veis nesse endere&ccedil;o.">?</span></span>
         <div class="linha-modelo">
           <input type="text" id="modelo" placeholder="deepseek/deepseek-chat" data-exemplo-openrouter="deepseek/deepseek-chat" data-exemplo-local="llama3.1">
           <button type="button" id="buscar-modelos" class="fantasma">Buscar modelos</button>
@@ -809,7 +931,7 @@ PAGINA = """<!doctype html>
       </label>
       <span class="dica-config" id="estado-modelos"></span>
       <div id="lista-modelos" class="lista-modelos" hidden></div>
-      <label>Chave do TMDB <span id="estado-chave-tmdb"></span>
+      <label><span class="rotulo-com-ajuda">Chave do TMDB<span class="ajuda" tabindex="0" data-tip="Opcional. Com uma chave do TMDB, o AutoSRT reconhece o filme pelo nome do arquivo e mostra o p&ocirc;ster na lista.">?</span></span> <span id="estado-chave-tmdb"></span>
         <input type="password" id="chave_tmdb" placeholder="opcional &mdash; reconhece o filme pelo nome do arquivo" autocomplete="off">
       </label>
       <div class="modo-provedor">
@@ -824,13 +946,13 @@ PAGINA = """<!doctype html>
   </details>
 
   <details id="config-transcricao">
-    <summary>Configura&ccedil;&atilde;o da transcri&ccedil;&atilde;o <span id="estado-vad" class="selo"></span></summary>
+    <summary data-tip="Ajustes finos da detec&ccedil;&atilde;o de fala (VAD) usada pelo Whisper ao transcrever.">Configura&ccedil;&atilde;o da transcri&ccedil;&atilde;o <span id="estado-vad" class="selo"></span></summary>
     <div class="painel">
       <p class="dica-config">Vale para todo arquivo processado pela fila -- n&atilde;o &eacute; por v&iacute;deo. Deixe em branco para usar o padr&atilde;o do pr&oacute;prio Whisper, sem mexer em nada.</p>
-      <label>Sensibilidade da VAD (0 a 1)
+      <label><span class="rotulo-com-ajuda">Sensibilidade da VAD (0 a 1)<span class="ajuda" tabindex="0" data-tip="O quanto o Whisper precisa 'ouvir' pra considerar que h&aacute; fala. Um valor menor pega fala mais baixa, mas tamb&eacute;m mais ru&iacute;do.">?</span></span>
         <input type="text" id="vad_threshold" placeholder="ex: 0.2 -- menor pega fala mais baixa">
       </label>
-      <label>Sil&ecirc;ncio m&iacute;nimo (ms)
+      <label><span class="rotulo-com-ajuda">Sil&ecirc;ncio m&iacute;nimo (ms)<span class="ajuda" tabindex="0" data-tip="Tempo m&iacute;nimo de sil&ecirc;ncio, em milissegundos, para separar duas falas. Evita cortar a &uacute;ltima palavra de falas r&aacute;pidas.">?</span></span>
         <input type="text" id="vad_min_silence_ms" placeholder="ex: 300 -- evita cortar a &uacute;ltima palavra de falas r&aacute;pidas">
       </label>
       <div class="rodape">
@@ -843,6 +965,29 @@ PAGINA = """<!doctype html>
 
 <script>
 const $ = (id) => document.getElementById(id);
+
+// Tema claro/escuro: começa pela preferência do sistema (a folha de estilo
+// já cobre isso sozinha, sem esperar o JS) e a partir daí obedece só a
+// escolha manual, guardada para persistir entre visitas.
+const CHAVE_TEMA = 'autosrt-tema';
+
+function temaPreferido() {
+  const salvo = localStorage.getItem(CHAVE_TEMA);
+  if (salvo === 'claro' || salvo === 'escuro') return salvo;
+  return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'escuro' : 'claro';
+}
+
+function aplicarTema(tema) {
+  document.documentElement.setAttribute('data-tema', tema);
+  $('alternar-tema').setAttribute('aria-pressed', String(tema === 'escuro'));
+}
+
+aplicarTema(temaPreferido());
+$('alternar-tema').onclick = () => {
+  const novo = document.documentElement.getAttribute('data-tema') === 'escuro' ? 'claro' : 'escuro';
+  localStorage.setItem(CHAVE_TEMA, novo);
+  aplicarTema(novo);
+};
 
 async function carregarArquivos() {
   const r = await fetch('/api/arquivos');
