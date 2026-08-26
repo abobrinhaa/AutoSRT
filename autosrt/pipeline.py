@@ -178,11 +178,26 @@ def _audio_preparado(media_path, modo, *, announce=None):
     if modo == NORMALIZE_AUTO:
         if announce:
             announce("Conferindo o volume do áudio...")
-        if not audio_module.volume_baixo(media_path):
+        medido = audio_module.medir_volume_medio(media_path)
+        if medido is None:
+            # "Não sei" não pode passar por "está bom". Sem ffmpeg, a
+            # medição falha para todo arquivo, e tratar isso em silêncio
+            # desliga a normalização inteira sem ninguém perceber -- o
+            # mesmo tipo de falha muda que esta função existe para evitar.
+            logger.warning(
+                "não deu para medir o volume de %s (ffmpeg ausente ou "
+                "arquivo sem áudio); seguindo sem normalizar", media_path)
+            if announce:
+                announce("Não deu para medir o volume (ffmpeg ausente?); "
+                         "seguindo sem normalizar.")
+            yield media_path
+            return
+        if medido >= audio_module.LIMIAR_VOLUME_BAIXO:
             yield media_path
             return
         if announce:
-            announce("Áudio fraco: normalizando antes de transcrever...")
+            announce(f"Áudio fraco ({medido:.1f} dB): normalizando antes "
+                     "de transcrever...")
     elif announce:
         announce("Normalizando o áudio...")
 
