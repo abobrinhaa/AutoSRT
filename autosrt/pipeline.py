@@ -16,7 +16,7 @@ import tempfile
 import threading
 from dataclasses import dataclass
 
-from . import llm_translate, srt_io
+from . import limpeza, llm_translate, srt_io
 from .language import detect_language, language_name
 from .llm import LLMError
 from .translate import DEFAULT_TARGET, TranslationCancelled, translate_cues
@@ -120,6 +120,17 @@ def translate_file(input_path, output_path=None, *, target=DEFAULT_TARGET,
     announce("Lendo arquivo...")
     cues = srt_io.load_cues(input_path)
 
+    # Descrição de som para surdos ("(TIROS)", "[música]") e tag quebrada
+    # não são coisa para o tradutor ver -- gastam requisição traduzindo
+    # barulho, e uma tag sem fechar contamina a formatação do arquivo
+    # inteiro em muitos tocadores. Antes de detectar idioma, e não depois,
+    # porque uma legenda que era só descrição some da amostra.
+    cues, _ = limpeza.preparar_cues(cues)
+    if not cues:
+        raise ValueError(
+            "Depois de tirar as descrições de som, não sobrou fala nenhuma "
+            "para traduzir neste arquivo.")
+
     announce("Detectando idioma...")
     detected_lang = detect_language(cues)
 
@@ -144,6 +155,11 @@ def translate_file(input_path, output_path=None, *, target=DEFAULT_TARGET,
             cues, detected_lang, target=target, progress=progress,
             cancel_event=cancel_event, translator_factory=translator_factory)
         translated, failed = report.translated, report.failed
+
+    # Junta linha curta partida à toa, quebra linha que passou da largura de
+    # leitura. Só depois de traduzir: o português costuma sair mais comprido
+    # que o inglês, e decidir isso antes seria decidir no tamanho errado.
+    limpeza.finalizar_cues(cues)
 
     announce("Gravando...")
     srt_io.save_cues(cues, output_path)
@@ -412,10 +428,22 @@ def process_media(media_path, output_path=None, *, engine=DEFAULT_ENGINE,
     if not cues:
         raise ValueError("O Whisper não encontrou fala nenhuma no arquivo.")
 
+    # Mede a cobertura antes de limpar: o que importa aqui é até onde o
+    # Whisper realmente ouviu fala, não quantas linhas sobram depois do
+    # SDH sair.
     aviso = _aviso_de_cobertura(media_path, cues)
     if aviso:
         logger.warning("%s: %s", os.path.basename(media_path), aviso)
         announce(aviso)
+
+    # Faixa muda, mas Whisper alucina descrição de som do mesmo jeito que
+    # alucina "Thank you." em áudio fraco (ver autosrt.audio) -- "[Music]",
+    # "(background noise)" -- e legenda pronta às vezes chega com SDH.
+    cues, _ = limpeza.preparar_cues(cues)
+    if not cues:
+        raise ValueError(
+            "O Whisper só encontrou descrição de som (música, ruído), "
+            "nenhuma fala de verdade, no arquivo.")
 
     detected_lang = language or _safe_detect(cues)
 
@@ -423,6 +451,7 @@ def process_media(media_path, output_path=None, *, engine=DEFAULT_ENGINE,
         srt_io.save_cues(cues, original_path_for(output_path))
 
     if not translate:
+        limpeza.finalizar_cues(cues)
         srt_io.save_cues(cues, output_path)
         return PipelineResult(total=len(cues), translated=0, failed=[],
                               detected_lang=detected_lang, engine="nenhum",
@@ -444,6 +473,8 @@ def process_media(media_path, output_path=None, *, engine=DEFAULT_ENGINE,
             cancel_event=cancel_event,
             translator_factory=translator_factory)
         translated, failed = report.translated, report.failed
+
+    limpeza.finalizar_cues(cues)
 
     announce("Gravando...")
     srt_io.save_cues(cues, output_path)

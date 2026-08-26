@@ -4,6 +4,7 @@ import unittest
 from unittest import mock
 
 from autosrt import jobs, pipeline
+from autosrt.cue import Cue
 
 
 class TestBarraUnica(unittest.TestCase):
@@ -17,7 +18,11 @@ class TestBarraUnica(unittest.TestCase):
         """Roda o pipeline com Whisper e tradutor de mentira, colhendo a barra."""
         vistos = []
 
-        cues = [mock.Mock(text=f"linha {i}", speaker=None) for i in range(4)]
+        # Cue de verdade, não Mock: o pipeline agora também lê source_text
+        # para a limpeza (SDH, tags), e um Mock sem esse campo configurado
+        # devolve outro Mock em vez de string.
+        cues = [Cue.from_source(index=i + 1, start=i * 1000, end=(i + 1) * 1000,
+                                source_text=f"linha {i}") for i in range(4)]
 
         def whisper_falso(media_path, **kwargs):
             progresso = kwargs.get("progress")

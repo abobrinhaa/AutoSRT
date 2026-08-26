@@ -117,6 +117,54 @@ class TestPipeline(unittest.TestCase):
         self.assertEqual(vistos[-1], (3, 3))
 
 
+class TestLimpezaNoFluxoDeTraducao(unittest.TestCase):
+    """A limpeza (SDH, tag quebrada, linha) roda dentro de translate_file,
+    então quem chama não precisa lembrar de fazer isso à parte."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+
+    def escrever(self, conteudo):
+        origem = os.path.join(self.tmp, "filme.srt")
+        with open(origem, "w", encoding="utf-8") as handle:
+            handle.write(conteudo)
+        return origem
+
+    def test_legenda_so_de_sdh_nao_sobra_no_arquivo_final(self):
+        origem = self.escrever(
+            "1\n00:00:01,000 --> 00:00:03,000\n(TIROS)\n\n"
+            "2\n00:00:04,000 --> 00:00:06,000\nCorre agora!\n")
+        destino = os.path.join(self.tmp, "saida.srt")
+
+        resultado = translate_file(origem, destino, engine=ENGINE_LLM,
+                                   llm_client=EchoLLM())
+
+        self.assertEqual(resultado.total, 1)
+        cues = srt_io.load_cues(destino)
+        self.assertEqual(len(cues), 1)
+        self.assertNotIn("TIROS", cues[0].text)
+
+    def test_tag_de_italico_quebrada_sai_fechada(self):
+        origem = self.escrever(
+            "1\n00:00:01,000 --> 00:00:03,000\n<i>Fala em itálico sem fechar\n")
+        destino = os.path.join(self.tmp, "saida.srt")
+
+        translate_file(origem, destino, engine=ENGINE_LLM, llm_client=EchoLLM())
+
+        texto = srt_io.load_cues(destino)[0].text
+        self.assertEqual(texto.count("<i>"), texto.count("</i>"))
+
+    def test_frase_curta_partida_em_duas_linhas_sai_junta(self):
+        origem = self.escrever(
+            "1\n00:00:01,000 --> 00:00:03,000\nNão\nvá embora.\n")
+        destino = os.path.join(self.tmp, "saida.srt")
+
+        translate_file(origem, destino, engine=ENGINE_LLM, llm_client=EchoLLM())
+
+        self.assertNotIn("\n", srt_io.load_cues(destino)[0].text)
+
+
 class EchoLLM:
     """Cliente de modelo falso: devolve os blocos pedidos, traduzidos."""
 

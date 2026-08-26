@@ -61,6 +61,13 @@ Regras:
   resposta.
 - Preste atenção em quem fala cada linha para acertar a concordância de
   gênero em português.
+- Nome próprio não se traduz: pessoas, sobrenomes, apelidos, lugares, naves,
+  empresas e marcas ficam exatamente como vieram, MESMO quando coincidem com
+  uma palavra comum. "Cannon" é o sobrenome Cannon, não "canhão"; o mesmo
+  vale para Baker, Church, Rose, Stone, Frost. A única exceção é o nome que
+  tem forma consagrada em português (New York vira Nova York). Um nome
+  traduzido por engano vira outro personagem no meio do filme.
+- Mantenha cada nome escrito do mesmo jeito do começo ao fim.
 - Preserve as quebras de linha internas de cada legenda.
 - Preserve as marcações de formatação exatamente como vieram, incluindo tags
   como <i></i> e o travessão que abre cada fala em legendas de diálogo.
