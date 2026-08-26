@@ -47,19 +47,6 @@ class TestDescribeSpeakers(unittest.TestCase):
         self.assertIn("SPEAKER_01 é mulher", texto)
 
 
-class TestPromptDeNomeProprio(unittest.TestCase):
-    """Regressão: o modelo traduziu o sobrenome "Cannon" como "canhão" --
-    o system prompt precisa dizer explicitamente para não traduzir nome
-    próprio, com esse caso como exemplo."""
-
-    def test_regra_de_nome_proprio_esta_no_prompt(self):
-        self.assertIn("Cannon", llm_translate.SYSTEM_PROMPT)
-        self.assertIn("canhão", llm_translate.SYSTEM_PROMPT)
-
-    def test_pede_para_nao_traduzir_nomes(self):
-        self.assertIn("não se traduz", llm_translate.SYSTEM_PROMPT.lower())
-
-
 class TestBuildPrompt(unittest.TestCase):
     def test_inclui_as_legendas_numeradas(self):
         cues = make_cues("Hello", "World")

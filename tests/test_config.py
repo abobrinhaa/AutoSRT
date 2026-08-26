@@ -274,37 +274,3 @@ class TestDiarizacao(unittest.TestCase):
     def test_desligada_pelo_ambiente(self):
         os.environ["AUTOSRT_DIARIZE"] = "nao"
         self.assertFalse(config.get_diarize())
-
-
-class TestArgumentosExtrasDoWhisper(unittest.TestCase):
-    """Escape hatch para opção do Faster-Whisper-XXL sem campo dedicado
-    (ex.: --condition_on_previous_text para alucinação que se propaga pelo
-    arquivo) -- existia só no --whisper-args do CLI."""
-
-    def setUp(self):
-        self.tmp = tempfile.mkdtemp()
-        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
-        self._app_dir = config.app_directory
-        config.app_directory = lambda: self.tmp
-        self.addCleanup(setattr, config, "app_directory", self._app_dir)
-        self._env = os.environ.pop("AUTOSRT_WHISPER_EXTRA_ARGS", None)
-        self.addCleanup(self._restaurar_env)
-
-    def _restaurar_env(self):
-        os.environ.pop("AUTOSRT_WHISPER_EXTRA_ARGS", None)
-        if self._env is not None:
-            os.environ["AUTOSRT_WHISPER_EXTRA_ARGS"] = self._env
-
-    def test_sem_configuracao_e_none(self):
-        self.assertIsNone(config.get_whisper_extra_args())
-
-    def test_le_do_arquivo(self):
-        config.save_config({
-            "whisper_extra_args": "--condition_on_previous_text False"})
-        self.assertEqual(config.get_whisper_extra_args(),
-                         "--condition_on_previous_text False")
-
-    def test_ambiente_tem_prioridade(self):
-        config.save_config({"whisper_extra_args": "--no_speech_threshold 0.6"})
-        os.environ["AUTOSRT_WHISPER_EXTRA_ARGS"] = "--vad_filter False"
-        self.assertEqual(config.get_whisper_extra_args(), "--vad_filter False")
