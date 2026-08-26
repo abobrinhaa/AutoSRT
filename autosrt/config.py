@@ -238,3 +238,23 @@ def get_vad_min_silence_ms():
         return int(valor) if valor is not None else None
     except (TypeError, ValueError):
         return None
+
+
+def get_diarize() -> bool:
+    """Se a transcrição deve marcar quem fala cada linha. Padrão: sim.
+
+    Existe porque a fila web diarizava sempre, sem como desligar -- o
+    ``--sem-diarizacao`` só existia na linha de comando, justamente na
+    interface que foi feita para quem não abre terminal.
+
+    Desligar é o primeiro teste quando a legenda sai com buracos: a
+    diarização é a maior diferença entre o que o AutoSRT pede ao Whisper e
+    um comando digitado à mão, ela roda um segundo modelo (pyannote) por
+    cima do áudio, e trecho que esse modelo não atribuir a ninguém é trecho
+    que corre o risco de não virar legenda. A tradução perde só a dica de
+    gênero por locutor; o texto continua saindo.
+    """
+    valor = get_setting("diarizar", "AUTOSRT_DIARIZE")
+    if valor is None:
+        return True
+    return str(valor).strip().lower() not in ("nao", "não", "0", "false", "nunca")

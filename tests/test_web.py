@@ -473,6 +473,32 @@ class TestSensibilidadeDaVadNaFila(BaseWeb):
 
         self.assertIsNone(fake.call_args.kwargs["vad_threshold"])
         self.assertIsNone(fake.call_args.kwargs["vad_min_silence_ms"])
+        # Sem ninguém dizer nada, quem fala cada linha continua sendo
+        # identificado -- é o que dá ao tradutor a dica de gênero.
+        self.assertTrue(fake.call_args.kwargs["diarize"])
+
+    def test_desligar_a_diarizacao_chega_na_transcricao(self):
+        # A diarização roda um segundo modelo por cima do áudio e é a maior
+        # diferença entre o que a fila pede ao Whisper e um comando digitado
+        # à mão -- desligá-la é o primeiro teste de quem está com legenda
+        # saindo com buracos. Antes só a linha de comando tinha esse botão.
+        self.client.post("/api/config", json={"diarizar": False})
+        self.tocar("filme.mkv")
+
+        with mock.patch.object(pipeline, "process_media") as fake:
+            fake.return_value = pipeline.PipelineResult(
+                total=1, translated=1, failed=[], detected_lang="en")
+            job = self.client.post("/api/processar",
+                                   json={"arquivo": "filme.mkv"}).get_json()
+            self.esperar(job["id"])
+
+        self.assertFalse(fake.call_args.kwargs["diarize"])
+
+    def test_a_diarizacao_volta_pelo_mesmo_caminho(self):
+        self.client.post("/api/config", json={"diarizar": False})
+        self.assertFalse(self.client.get("/api/config").get_json()["diarizar"])
+        self.client.post("/api/config", json={"diarizar": True})
+        self.assertTrue(self.client.get("/api/config").get_json()["diarizar"])
 
 
 class TestAcoesDisponiveis(unittest.TestCase):

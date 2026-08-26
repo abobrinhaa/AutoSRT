@@ -160,6 +160,7 @@ def _executar(job, engine):
             job.entrada, engine=engine, status=status, progress=progresso,
             cancel_event=job.cancelar, translate=(acao != "transcrever"),
             language=config.get_whisper_language(),
+            diarize=config.get_diarize(),
             normalize_audio=config.get_normalize_audio(),
             vad_method=config.get_vad_method(),
             vad_threshold=config.get_vad_threshold(),
@@ -414,6 +415,7 @@ def _register_routes(app, fila, media_dir, engine):
             "whisper_model": config.get_whisper_model(),
             "whisper_compute_type": config.get_whisper_compute_type(),
             "whisper_language": config.get_whisper_language(),
+            "diarizar": config.get_diarize(),
             "normalize_audio": config.get_normalize_audio(),
             "vad_method": config.get_vad_method(),
             "vad_method_padrao": transcribe.DEFAULT_VAD,
@@ -452,6 +454,11 @@ def _register_routes(app, fila, media_dir, engine):
         # Texto livre de propósito: a lista de modelos e de compute types de
         # quem transcreve muda com a versão do Faster-Whisper, e uma lista
         # fixa aqui viraria mentira na próxima atualização dele.
+        if "diarizar" in dados:
+            # Checkbox manda booleano; o config.json guarda texto, que é o
+            # que o get_setting sabe ler de volta (e do ambiente também).
+            novos["diarizar"] = "sim" if dados.get("diarizar") else "nao"
+
         if "normalize_audio" in dados:
             valor = str(dados.get("normalize_audio") or "").strip().lower()
             if valor and valor not in ("auto", "sempre", "nunca"):
@@ -879,6 +886,8 @@ PAGINA = """<!doctype html>
   .modo-provedor button.ativo .marca-selecionado { display: inline; }
   #mensagem-salvar.sucesso { color: var(--success); }
   .linha-modelo { display: flex; gap: 8px; flex-wrap: wrap; }
+  .linha-caixa { flex-direction: row; align-items: center; gap: 8px; }
+  .linha-caixa input { width: auto; }
   .linha-modelo input { flex: 1; min-width: 160px; }
   .lista-modelos { max-height: 220px; overflow-y: auto; border: 1px solid var(--border);
                    border-radius: var(--radius-sm); }
@@ -1007,6 +1016,9 @@ PAGINA = """<!doctype html>
       </label>
       <label><span class="rotulo-com-ajuda">Idioma falado<span class="ajuda" tabindex="0" data-tip="C&oacute;digo do idioma do &aacute;udio (en, es, fr...). Em branco, o Whisper detecta sozinho analisando os primeiros segundos -- e um come&ccedil;o at&iacute;pico (trilha, sil&ecirc;ncio, vinheta) pode levar a uma detec&ccedil;&atilde;o errada que estraga justamente o in&iacute;cio da transcri&ccedil;&atilde;o. Informar o idioma elimina esse risco.">?</span></span>
         <input type="text" id="whisper_language" placeholder="em branco = detectar sozinho. Ex: en, es, fr">
+      </label>
+      <label class="linha-caixa"><input type="checkbox" id="diarizar" checked>
+        <span class="rotulo-com-ajuda">Identificar quem fala (diariza&ccedil;&atilde;o)<span class="ajuda" tabindex="0" data-tip="Marca o locutor de cada fala, o que d&aacute; ao tradutor a dica de g&ecirc;nero ('ele disse' x 'ela disse'). Custa um segundo modelo rodando por cima do &aacute;udio: se a legenda est&aacute; saindo com trechos faltando, desligar isto &eacute; o primeiro teste -- trecho que esse modelo n&atilde;o atribui a ningu&eacute;m corre o risco de n&atilde;o virar legenda. O texto continua saindo; some s&oacute; a dica de g&ecirc;nero.">?</span></span>
       </label>
       <label><span class="rotulo-com-ajuda">Modelo do Whisper<span class="ajuda" tabindex="0" data-tip="Qual modelo transcreve o &aacute;udio. Em branco usa o 'turbo' (r&aacute;pido e leve). O 'large-v3' &eacute; mais preciso, por&eacute;m mais pesado e mais lento -- em placa de 5 GB ele s&oacute; cabe com folga em int8.">?</span></span>
         <input type="text" id="whisper_model" placeholder="em branco = turbo (padr&atilde;o). Ex: large-v3, medium, small">
@@ -1521,6 +1533,7 @@ async function carregarConfig() {
   // null (não configurado) vira campo vazio, não "null" escrito na tela.
   $('normalize_audio').value = c.normalize_audio || 'auto';
   $('whisper_language').value = c.whisper_language ?? '';
+  $('diarizar').checked = c.diarizar !== false;
   $('whisper_model').value = c.whisper_model ?? '';
   $('whisper_compute_type').value = c.whisper_compute_type ?? '';
   $('vad_method').value = c.vad_method ?? '';
@@ -1531,7 +1544,7 @@ async function carregarConfig() {
   const seloVad = $('estado-vad');
   const vadAtiva = c.vad_threshold !== null || c.vad_min_silence_ms !== null
     || !!c.whisper_model || !!c.whisper_compute_type || !!c.vad_method
-    || !!c.whisper_language;
+    || !!c.whisper_language || c.diarizar === false;
   seloVad.className = 'selo ' + (vadAtiva ? 'ok' : '');
   seloVad.textContent = vadAtiva ? 'ajustada' : 'padrão do Whisper';
 
@@ -1645,6 +1658,7 @@ $('salvar-vad').onclick = async () => {
   const corpo = {
     normalize_audio: $('normalize_audio').value,
     whisper_language: $('whisper_language').value.trim(),
+    diarizar: $('diarizar').checked,
     whisper_model: $('whisper_model').value.trim(),
     whisper_compute_type: $('whisper_compute_type').value.trim(),
     vad_method: $('vad_method').value.trim(),

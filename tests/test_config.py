@@ -1,5 +1,6 @@
 import json
 import os
+import shutil
 import tempfile
 import unittest
 
@@ -239,3 +240,37 @@ class TestTamanhoDeBlocoDoLLM(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestDiarizacao(unittest.TestCase):
+    """A diarização é ligada por padrão e desligável pela configuração."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        self._app_dir = config.app_directory
+        config.app_directory = lambda: self.tmp
+        self.addCleanup(setattr, config, "app_directory", self._app_dir)
+        self._env = os.environ.pop("AUTOSRT_DIARIZE", None)
+        self.addCleanup(self._restaurar_env)
+
+    def _restaurar_env(self):
+        os.environ.pop("AUTOSRT_DIARIZE", None)
+        if self._env is not None:
+            os.environ["AUTOSRT_DIARIZE"] = self._env
+
+    def test_padrao_e_ligada(self):
+        self.assertTrue(config.get_diarize())
+
+    def test_desligada_pelo_arquivo(self):
+        config.save_config({"diarizar": "nao"})
+        self.assertFalse(config.get_diarize())
+
+    def test_religada_pelo_arquivo(self):
+        config.save_config({"diarizar": "nao"})
+        config.save_config({"diarizar": "sim"})
+        self.assertTrue(config.get_diarize())
+
+    def test_desligada_pelo_ambiente(self):
+        os.environ["AUTOSRT_DIARIZE"] = "nao"
+        self.assertFalse(config.get_diarize())
