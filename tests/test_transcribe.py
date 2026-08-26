@@ -144,14 +144,31 @@ class TestBuildCommand(unittest.TestCase):
         command = self.build(condition_on_previous_text=None)
         self.assertNotIn("--condition_on_previous_text", command)
 
-    def test_hallucination_silence_threshold_fica_de_fora_por_padrao(self):
+    def test_hallucination_silence_threshold_ligado_por_padrao_em_2s(self):
+        # Regressão concreta: "And this is the second one." repetida 4
+        # vezes num episódio, duas delas cobrindo 30s de vídeo sem fala
+        # nenhuma -- só desligar o condition_on_previous_text não bastou,
+        # porque cada trecho de silêncio ainda "inventava" texto sozinho.
         command = self.build()
-        self.assertNotIn("--hallucination_silence_threshold", command)
-
-    def test_hallucination_silence_threshold_entra_quando_informado(self):
-        command = self.build(hallucination_silence_threshold=2.0)
         posicao = command.index("--hallucination_silence_threshold")
         self.assertEqual(command[posicao + 1], "2.0")
+
+    def test_hallucination_silence_threshold_liga_marcacao_por_palavra(self):
+        # Sem word_timestamps, hallucination_silence_threshold é aceita
+        # pelo executável mas não faz nada -- um "desligado" disfarçado.
+        command = self.build()
+        posicao = command.index("--word_timestamps")
+        self.assertEqual(command[posicao + 1], "True")
+
+    def test_hallucination_silence_threshold_pode_ser_ajustado(self):
+        command = self.build(hallucination_silence_threshold=4.0)
+        posicao = command.index("--hallucination_silence_threshold")
+        self.assertEqual(command[posicao + 1], "4.0")
+
+    def test_hallucination_silence_threshold_none_nao_passa_nenhuma_flag(self):
+        command = self.build(hallucination_silence_threshold=None)
+        self.assertNotIn("--hallucination_silence_threshold", command)
+        self.assertNotIn("--word_timestamps", command)
 
 
 class TestIterLines(unittest.TestCase):

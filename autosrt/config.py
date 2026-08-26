@@ -42,8 +42,13 @@ EXAMPLE_CONFIG = {
     # seguintes (a legenda repetindo "Esse é o primeiro", "Esse é o
     # segundo"...). "true" restaura o padrão do Whisper.
     "condition_on_previous_text": "false",
-    # Opcional: segundos de silêncio que o Whisper pula quando desconfia de
-    # alucinação. Em branco não mexe nisso.
+    # Opcional: segundos de silêncio que o Whisper pula, em vez de tentar
+    # transcrever, quando desconfia de alucinação -- é o que evita um
+    # trecho de música/silêncio virar uma frase inventada tipo "And this
+    # is the second one." cobrindo 30 segundos de vídeo. Em branco usa o
+    # padrão do transcribe.py (2 segundos); precisa da marcação por
+    # palavra, que build_command já liga sozinha quando este valor é
+    # informado.
     "hallucination_silence_threshold": "2",
 }
 
@@ -273,8 +278,11 @@ def get_hallucination_silence_threshold():
     """Segundos de silêncio que o Whisper pula quando desconfia de
     alucinação, ou ``None`` se não configurado.
 
-    Ajuda especificamente com trechos de música/silêncio sem fala nenhuma,
-    que é onde o Whisper mais alucina.
+    ``None`` não é "desligado": quem chama não repassa nada e o padrão de
+    :mod:`autosrt.transcribe` (2 segundos) vale sozinho. Ajuda
+    especificamente com trechos de música/silêncio sem fala nenhuma, que é
+    onde o Whisper mais alucina -- inclusive inventando um trecho inteiro
+    (dezenas de segundos) coberto por uma única frase-clichê.
     """
     valor = get_setting("hallucination_silence_threshold",
                         "AUTOSRT_HALLUCINATION_SILENCE_THRESHOLD")

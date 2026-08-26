@@ -161,10 +161,11 @@ def build_parser():
                             "ao longo do áudio")
     grupo.add_argument("--limiar-silencio-alucinacao", type=float,
                        metavar="SEG", dest="hallucination_silence_threshold",
-                       help="segundos de silêncio que o Whisper pula quando "
-                            "desconfia de alucinação (ex: 2). Ajuda com "
-                            "trecho de música/silêncio sem fala. Padrão: "
-                            "desligado")
+                       help="segundos de silêncio que o Whisper pula, em "
+                            "vez de tentar transcrever, quando desconfia "
+                            "de alucinação. Evita um trecho de música/"
+                            "silêncio virar uma frase inventada cobrindo "
+                            "dezenas de segundos de vídeo. Padrão: 2")
     grupo.add_argument("--whisper-args", metavar="\"ARGS\"",
                        dest="whisper_extra_args",
                        help="argumentos extras repassados direto ao "

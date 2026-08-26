@@ -332,9 +332,16 @@ def process_media(media_path, output_path=None, *, engine=DEFAULT_ENGINE,
             alucinação em trecho de silêncio/trilha sonora se realimente
             nos trechos seguintes. ``True`` liga de volta o comportamento
             padrão do próprio Whisper.
-        hallucination_silence_threshold: segundos de silêncio que o Whisper
-            pula quando desconfia de alucinação. ``None`` (padrão) não mexe
-            nisso.
+        hallucination_silence_threshold: ``None`` (padrão) usa o padrão do
+            :mod:`autosrt.transcribe` (2 segundos -- ver
+            ``DEFAULT_HALLUCINATION_SILENCE_THRESHOLD``), que pula em vez
+            de transcrever um trecho de silêncio/trilha sonora quando
+            desconfia de alucinação. Não há um jeito de desligar por aqui
+            passando ``None`` explicitamente -- ``None`` sempre quer dizer
+            "não mexi nisso" e cai no padrão. Para desligar de vez, chame
+            :func:`autosrt.transcribe.transcribe` diretamente com
+            ``hallucination_silence_threshold=None``, ou informe um valor
+            bem alto (ex.: 60) para que nunca dispare na prática.
         transcribe_extra_args: argumentos extras repassados direto ao
             executável do Whisper local.
 

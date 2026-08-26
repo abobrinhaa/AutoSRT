@@ -1053,8 +1053,8 @@ PAGINA = """<!doctype html>
         <input type="text" id="vad_min_silence_ms" placeholder="ex: 300 -- evita cortar a &uacute;ltima palavra de falas r&aacute;pidas">
       </label>
       <label class="linha-checkbox"><input type="checkbox" id="condition_on_previous_text"> <span class="rotulo-com-ajuda">Condicionar no trecho anterior<span class="ajuda" tabindex="0" data-tip="O Whisper por padr&atilde;o usa o texto do trecho anterior para decodificar o pr&oacute;ximo, o que ajuda a manter nome pr&oacute;prio consistente -- mas tamb&eacute;m deixa uma alucina&ccedil;&atilde;o em sil&ecirc;ncio ou trilha sonora se realimentar nos trechos seguintes (a legenda repetindo frases parecidas, tipo 'Esse &eacute; o primeiro', 'Esse &eacute; o segundo'...). Desmarcado (padr&atilde;o aqui) quebra essa cadeia.">?</span></span></label>
-      <label><span class="rotulo-com-ajuda">Limiar de sil&ecirc;ncio p/ alucina&ccedil;&atilde;o (s)<span class="ajuda" tabindex="0" data-tip="Segundos de sil&ecirc;ncio que o Whisper pula quando desconfia de alucina&ccedil;&atilde;o, em vez de tentar transcrever. Ajuda especificamente com trechos de m&uacute;sica/sil&ecirc;ncio sem fala nenhuma. Em branco, n&atilde;o mexe nisso.">?</span></span>
-        <input type="text" id="hallucination_silence_threshold" placeholder="ex: 2 -- em branco = desligado">
+      <label><span class="rotulo-com-ajuda">Limiar de sil&ecirc;ncio p/ alucina&ccedil;&atilde;o (s)<span class="ajuda" tabindex="0" data-tip="Segundos de sil&ecirc;ncio que o Whisper pula, em vez de tentar transcrever, quando desconfia de alucina&ccedil;&atilde;o. Evita um trecho de m&uacute;sica/sil&ecirc;ncio virar uma frase inventada cobrindo dezenas de segundos de v&iacute;deo. Em branco usa o padr&atilde;o (2 segundos).">?</span></span>
+        <input type="text" id="hallucination_silence_threshold" placeholder="em branco = 2 (padrão)">
       </label>
       <div class="rodape">
         <span class="dica-config" id="mensagem-salvar-vad">Mudan&ccedil;as valem a partir do pr&oacute;ximo trabalho enviado &agrave; fila.</span>
