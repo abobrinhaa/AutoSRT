@@ -110,6 +110,12 @@ def build_parser():
     grupo.add_argument("--modelo", metavar="NOME",
                        default=transcribe.DEFAULT_MODEL,
                        help=f"modelo do Whisper (padrão: {transcribe.DEFAULT_MODEL})")
+    grupo.add_argument("--normalizar-audio", dest="normalize_audio",
+                       choices=["auto", "sempre", "nunca"], default="auto",
+                       help="corrige áudio baixo antes de transcrever, que "
+                            "senão faz o Whisper alucinar em vez de "
+                            "reconhecer a fala (padrão: auto, mede e só "
+                            "mexe no que está fraco)")
     grupo.add_argument("--vad-metodo", metavar="NOME", dest="vad_method",
                        help="detector de fala (silero_v5, silero_v4_fw, "
                             "pyannote_v3, webrtc...). Trocar o detector é "
@@ -250,6 +256,7 @@ def process_one(entrada, args, reporter) -> bool:
                 whisper_model=args.modelo, diarize=not args.sem_diarizacao,
                 translate=not args.so_transcrever,
                 transcribe_runner=transcribe_runner,
+                normalize_audio=args.normalize_audio,
                 vad_method=args.vad_method,
                 vad_threshold=args.vad_threshold,
                 vad_min_silence_ms=args.vad_min_silence_ms,

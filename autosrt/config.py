@@ -180,6 +180,19 @@ def get_llm_block_size():
         return None
 
 
+def get_normalize_audio():
+    """Como tratar o volume do áudio antes de transcrever.
+
+    Devolve ``"auto"`` (padrão), ``"sempre"`` ou ``"nunca"``. Valor
+    desconhecido vira ``"auto"``, que é o comportamento seguro: mede o
+    volume e só mexe no que está fraco demais para o Whisper reconhecer a
+    fala. Veja :mod:`autosrt.audio`.
+    """
+    valor = (get_setting("normalize_audio", "AUTOSRT_NORMALIZE_AUDIO")
+             or "").strip().lower()
+    return valor if valor in ("auto", "sempre", "nunca") else "auto"
+
+
 def get_whisper_language():
     """Idioma falado, ou ``None`` para o Whisper detectar sozinho.
 

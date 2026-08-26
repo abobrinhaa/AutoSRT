@@ -159,6 +159,7 @@ def _executar(job, engine):
             job.entrada, engine=engine, status=status, progress=progresso,
             cancel_event=job.cancelar, translate=(acao != "transcrever"),
             language=config.get_whisper_language(),
+            normalize_audio=config.get_normalize_audio(),
             vad_method=config.get_vad_method(),
             vad_threshold=config.get_vad_threshold(),
             vad_min_silence_ms=config.get_vad_min_silence_ms(),
@@ -412,6 +413,7 @@ def _register_routes(app, fila, media_dir, engine):
             "whisper_model": config.get_whisper_model(),
             "whisper_compute_type": config.get_whisper_compute_type(),
             "whisper_language": config.get_whisper_language(),
+            "normalize_audio": config.get_normalize_audio(),
             "vad_method": config.get_vad_method(),
             "vad_method_padrao": transcribe.DEFAULT_VAD,
             # Vazio quando não configurado -- não é "0", é "não mexi nisso,
@@ -449,6 +451,14 @@ def _register_routes(app, fila, media_dir, engine):
         # Texto livre de propósito: a lista de modelos e de compute types de
         # quem transcreve muda com a versão do Faster-Whisper, e uma lista
         # fixa aqui viraria mentira na próxima atualização dele.
+        if "normalize_audio" in dados:
+            valor = str(dados.get("normalize_audio") or "").strip().lower()
+            if valor and valor not in ("auto", "sempre", "nunca"):
+                return jsonify({
+                    "erro": "Normalização do áudio precisa ser auto, sempre "
+                            "ou nunca."}), 400
+            novos["normalize_audio"] = valor
+
         for campo in ("whisper_model", "whisper_compute_type", "vad_method",
                       "whisper_language"):
             if campo in dados:
@@ -987,6 +997,13 @@ PAGINA = """<!doctype html>
     <summary data-tip="Ajustes finos da detec&ccedil;&atilde;o de fala (VAD) usada pelo Whisper ao transcrever.">Configura&ccedil;&atilde;o da transcri&ccedil;&atilde;o <span id="estado-vad" class="selo"></span></summary>
     <div class="painel">
       <p class="dica-config">Vale para todo arquivo processado pela fila -- n&atilde;o &eacute; por v&iacute;deo. Deixe em branco para usar o padr&atilde;o do pr&oacute;prio Whisper, sem mexer em nada.</p>
+      <label><span class="rotulo-com-ajuda">Normalizar o &aacute;udio<span class="ajuda" tabindex="0" data-tip="&Aacute;udio muito baixo faz o Whisper trocar a fala por alucina&ccedil;&atilde;o (o cl&aacute;ssico 'Thank you.' em cima do ru&iacute;do) e deixar trechos inteiros sem legenda, sem dar erro nenhum. Em 'auto' o volume &eacute; medido e s&oacute; o &aacute;udio fraco &eacute; corrigido. Precisa do ffmpeg instalado.">?</span></span>
+        <select id="normalize_audio">
+          <option value="auto">Auto -- s&oacute; quando o &aacute;udio estiver fraco (recomendado)</option>
+          <option value="sempre">Sempre -- normaliza todo arquivo</option>
+          <option value="nunca">Nunca -- usa o &aacute;udio como veio</option>
+        </select>
+      </label>
       <label><span class="rotulo-com-ajuda">Idioma falado<span class="ajuda" tabindex="0" data-tip="C&oacute;digo do idioma do &aacute;udio (en, es, fr...). Em branco, o Whisper detecta sozinho analisando os primeiros segundos -- e um come&ccedil;o at&iacute;pico (trilha, sil&ecirc;ncio, vinheta) pode levar a uma detec&ccedil;&atilde;o errada que estraga justamente o in&iacute;cio da transcri&ccedil;&atilde;o. Informar o idioma elimina esse risco.">?</span></span>
         <input type="text" id="whisper_language" placeholder="em branco = detectar sozinho. Ex: en, es, fr">
       </label>
@@ -1501,6 +1518,7 @@ async function carregarConfig() {
   seloTmdb.textContent = c.tem_chave_tmdb ? 'ativo' : 'sem chave';
 
   // null (não configurado) vira campo vazio, não "null" escrito na tela.
+  $('normalize_audio').value = c.normalize_audio || 'auto';
   $('whisper_language').value = c.whisper_language ?? '';
   $('whisper_model').value = c.whisper_model ?? '';
   $('whisper_compute_type').value = c.whisper_compute_type ?? '';
@@ -1624,6 +1642,7 @@ $('salvar').onclick = async () => {
 
 $('salvar-vad').onclick = async () => {
   const corpo = {
+    normalize_audio: $('normalize_audio').value,
     whisper_language: $('whisper_language').value.trim(),
     whisper_model: $('whisper_model').value.trim(),
     whisper_compute_type: $('whisper_compute_type').value.trim(),

@@ -8,8 +8,11 @@ correção de gênero (etapa 4) entra entre a tradução e a gravação, lendo o
 dois textos.
 """
 
+import contextlib
+import logging
 import os
 import shutil
+import tempfile
 import threading
 from dataclasses import dataclass
 
@@ -17,6 +20,8 @@ from . import llm_translate, srt_io
 from .language import detect_language, language_name
 from .llm import LLMError
 from .translate import DEFAULT_TARGET, TranslationCancelled, translate_cues
+
+logger = logging.getLogger(__name__)
 
 #: Abaixo disto, uma legenda que falhou por inteiro não é motivo para
 #: interromper o trabalho -- um arquivo de teste com uma ou duas falas pode
@@ -141,6 +146,62 @@ def translate_file(input_path, output_path=None, *, target=DEFAULT_TARGET,
         engine=engine)
 
 
+#: Como decidir se o áudio é normalizado antes de transcrever.
+NORMALIZE_AUTO = "auto"
+NORMALIZE_SEMPRE = "sempre"
+NORMALIZE_NUNCA = "nunca"
+
+
+@contextlib.contextmanager
+def _audio_preparado(media_path, modo, *, announce=None):
+    """Entrega o caminho a transcrever, normalizado quando fizer sentido.
+
+    Devolve o próprio ``media_path`` quando não há o que fazer, ou um WAV
+    normalizado numa pasta temporária que é apagada ao sair do contexto.
+
+    ``auto`` (padrão) mede o volume e só normaliza o que está fraco: quem
+    tem áudio bom não paga a conversão, e quem tem áudio ruim não precisa
+    descobrir sozinho que precisava mexer nisso -- foi um caso que levou
+    horas de investigação para achar, justamente porque não dá erro
+    nenhum, só uma legenda com buracos.
+
+    Falha ao normalizar não interrompe o trabalho: transcrever com o áudio
+    original é pior que com ele normalizado, mas é muito melhor que não
+    transcrever.
+    """
+    from . import audio as audio_module
+
+    if modo == NORMALIZE_NUNCA or not modo:
+        yield media_path
+        return
+
+    if modo == NORMALIZE_AUTO:
+        if announce:
+            announce("Conferindo o volume do áudio...")
+        if not audio_module.volume_baixo(media_path):
+            yield media_path
+            return
+        if announce:
+            announce("Áudio fraco: normalizando antes de transcrever...")
+    elif announce:
+        announce("Normalizando o áudio...")
+
+    pasta = tempfile.mkdtemp(prefix="autosrt-audio-")
+    try:
+        destino = os.path.join(
+            pasta, os.path.splitext(os.path.basename(media_path))[0] + ".wav")
+        try:
+            yield audio_module.normalizar_para_wav(media_path, destino)
+        except audio_module.AudioError as exc:
+            logger.warning("normalização do áudio falhou (%s); "
+                           "seguindo com o áudio original", exc)
+            if announce:
+                announce("Não deu para normalizar o áudio; seguindo assim mesmo.")
+            yield media_path
+    finally:
+        shutil.rmtree(pasta, ignore_errors=True)
+
+
 def _translate_with_llm(cues, detected_lang, *, llm_client, speaker_genders,
                         progress, cancel_event):
     from . import config
@@ -217,6 +278,7 @@ def process_media(media_path, output_path=None, *, engine=DEFAULT_ENGINE,
                   transcribe_runner=None, translator_factory=None,
                   keep_original=True, vad_method=None, vad_threshold=None,
                   vad_min_silence_ms=None, whisper_compute_type=None,
+                  normalize_audio=NORMALIZE_AUTO,
                   transcribe_extra_args=None) -> PipelineResult:
     """Transcreve um arquivo de mídia e traduz o resultado.
 
@@ -243,6 +305,10 @@ def process_media(media_path, output_path=None, *, engine=DEFAULT_ENGINE,
         whisper_compute_type: ``auto`` (padrão), ``int8``, ``float16``...
             ``None`` deixa o CTranslate2 escolher. Idem quanto ao
             ``transcribe_runner``.
+        normalize_audio: ``"auto"`` (padrão) normaliza só quando o volume
+            está fraco o bastante para atrapalhar o Whisper; ``"sempre"``
+            normaliza sem medir; ``"nunca"`` desliga. Veja
+            :mod:`autosrt.audio` para o caso que motivou isso.
         transcribe_extra_args: argumentos extras repassados direto ao
             executável do Whisper local.
 
@@ -298,7 +364,21 @@ def process_media(media_path, output_path=None, *, engine=DEFAULT_ENGINE,
             kwargs["vad"] = vad_method
         if progress:
             kwargs["progress"] = lambda pct: progress(pct * peso_audio // 100, 100)
-        cues = transcribe_module.transcribe(media_path, **kwargs)
+
+        # Áudio fraco demais faz o Whisper trocar a fala por alucinação
+        # ("Thank you." em cima do ruído) e devolver trechos inteiros
+        # vazios, sem erro nenhum -- ver autosrt.audio. Normalizar antes
+        # resolve, e o WAV vai para o Whisper no lugar da mídia.
+        with _audio_preparado(media_path, normalize_audio,
+                              announce=announce) as entrada:
+            if entrada != media_path:
+                # O Whisper nomeia o .srt pelo arquivo de entrada. Com o WAV
+                # temporário no lugar da mídia, deixar o output_dir apontando
+                # para a pasta do usuário largaria lá um .srt com o nome do
+                # temporário; mandando para a mesma pasta descartável, ele
+                # sai junto.
+                kwargs["output_dir"] = os.path.dirname(entrada)
+            cues = transcribe_module.transcribe(entrada, **kwargs)
 
     if not cues:
         raise ValueError("O Whisper não encontrou fala nenhuma no arquivo.")
