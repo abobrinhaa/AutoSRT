@@ -158,6 +158,7 @@ def _executar(job, engine):
         resultado = pipeline.process_media(
             job.entrada, engine=engine, status=status, progress=progresso,
             cancel_event=job.cancelar, translate=(acao != "transcrever"),
+            language=config.get_whisper_language(),
             vad_method=config.get_vad_method(),
             vad_threshold=config.get_vad_threshold(),
             vad_min_silence_ms=config.get_vad_min_silence_ms(),
@@ -410,6 +411,7 @@ def _register_routes(app, fila, media_dir, engine):
             # padrão do transcribe.py" (turbo / auto).
             "whisper_model": config.get_whisper_model(),
             "whisper_compute_type": config.get_whisper_compute_type(),
+            "whisper_language": config.get_whisper_language(),
             "vad_method": config.get_vad_method(),
             "vad_method_padrao": transcribe.DEFAULT_VAD,
             # Vazio quando não configurado -- não é "0", é "não mexi nisso,
@@ -447,7 +449,8 @@ def _register_routes(app, fila, media_dir, engine):
         # Texto livre de propósito: a lista de modelos e de compute types de
         # quem transcreve muda com a versão do Faster-Whisper, e uma lista
         # fixa aqui viraria mentira na próxima atualização dele.
-        for campo in ("whisper_model", "whisper_compute_type", "vad_method"):
+        for campo in ("whisper_model", "whisper_compute_type", "vad_method",
+                      "whisper_language"):
             if campo in dados:
                 novos[campo] = str(dados.get(campo) or "").strip()
 
@@ -983,6 +986,9 @@ PAGINA = """<!doctype html>
     <summary data-tip="Ajustes finos da detec&ccedil;&atilde;o de fala (VAD) usada pelo Whisper ao transcrever.">Configura&ccedil;&atilde;o da transcri&ccedil;&atilde;o <span id="estado-vad" class="selo"></span></summary>
     <div class="painel">
       <p class="dica-config">Vale para todo arquivo processado pela fila -- n&atilde;o &eacute; por v&iacute;deo. Deixe em branco para usar o padr&atilde;o do pr&oacute;prio Whisper, sem mexer em nada.</p>
+      <label><span class="rotulo-com-ajuda">Idioma falado<span class="ajuda" tabindex="0" data-tip="C&oacute;digo do idioma do &aacute;udio (en, es, fr...). Em branco, o Whisper detecta sozinho analisando os primeiros segundos -- e um come&ccedil;o at&iacute;pico (trilha, sil&ecirc;ncio, vinheta) pode levar a uma detec&ccedil;&atilde;o errada que estraga justamente o in&iacute;cio da transcri&ccedil;&atilde;o. Informar o idioma elimina esse risco.">?</span></span>
+        <input type="text" id="whisper_language" placeholder="em branco = detectar sozinho. Ex: en, es, fr">
+      </label>
       <label><span class="rotulo-com-ajuda">Modelo do Whisper<span class="ajuda" tabindex="0" data-tip="Qual modelo transcreve o &aacute;udio. Em branco usa o 'turbo' (r&aacute;pido e leve). O 'large-v3' &eacute; mais preciso, por&eacute;m mais pesado e mais lento -- em placa de 5 GB ele s&oacute; cabe com folga em int8.">?</span></span>
         <input type="text" id="whisper_model" placeholder="em branco = turbo (padr&atilde;o). Ex: large-v3, medium, small">
       </label>
@@ -1463,6 +1469,7 @@ async function carregarConfig() {
   seloTmdb.textContent = c.tem_chave_tmdb ? 'ativo' : 'sem chave';
 
   // null (não configurado) vira campo vazio, não "null" escrito na tela.
+  $('whisper_language').value = c.whisper_language ?? '';
   $('whisper_model').value = c.whisper_model ?? '';
   $('whisper_compute_type').value = c.whisper_compute_type ?? '';
   $('vad_method').value = c.vad_method ?? '';
@@ -1472,7 +1479,8 @@ async function carregarConfig() {
   $('vad_min_silence_ms').value = c.vad_min_silence_ms ?? '';
   const seloVad = $('estado-vad');
   const vadAtiva = c.vad_threshold !== null || c.vad_min_silence_ms !== null
-    || !!c.whisper_model || !!c.whisper_compute_type || !!c.vad_method;
+    || !!c.whisper_model || !!c.whisper_compute_type || !!c.vad_method
+    || !!c.whisper_language;
   seloVad.className = 'selo ' + (vadAtiva ? 'ok' : '');
   seloVad.textContent = vadAtiva ? 'ajustada' : 'padrão do Whisper';
 
@@ -1584,6 +1592,7 @@ $('salvar').onclick = async () => {
 
 $('salvar-vad').onclick = async () => {
   const corpo = {
+    whisper_language: $('whisper_language').value.trim(),
     whisper_model: $('whisper_model').value.trim(),
     whisper_compute_type: $('whisper_compute_type').value.trim(),
     vad_method: $('vad_method').value.trim(),

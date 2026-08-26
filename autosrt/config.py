@@ -180,6 +180,18 @@ def get_llm_block_size():
         return None
 
 
+def get_whisper_language():
+    """Idioma falado, ou ``None`` para o Whisper detectar sozinho.
+
+    Vale fixar quando a transcrição falha logo no começo: o Whisper decide
+    o idioma analisando os primeiros segundos do áudio, e um trecho inicial
+    atípico (trilha, silêncio, vinheta) leva a uma detecção errada que
+    estraga a transcrição até ele se estabilizar. Informando o idioma, essa
+    etapa deixa de existir.
+    """
+    return get_setting("whisper_language", "WHISPER_LANGUAGE")
+
+
 def get_vad_method():
     """Detector de fala usado pelo Whisper, ou ``None`` para o padrão.
 
