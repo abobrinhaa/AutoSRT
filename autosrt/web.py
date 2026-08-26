@@ -29,8 +29,9 @@ DEFAULT_PORT = 8000
 EXTENSOES_ACEITAS = sorted(pipeline.MEDIA_EXTENSIONS | pipeline.SUBTITLE_EXTENSIONS)
 # Em rede local, enviar um filme pelo navegador é questão de um ou dois
 # minutos - irrelevante perto da meia hora que a transcrição leva depois.
-# O limite existe só para não encher o disco por acidente.
-DEFAULT_MAX_UPLOAD_GB = 8
+# Sem teto por padrão; quem quiser um limite para não encher o disco por
+# acidente define AUTOSRT_MAX_UPLOAD_GB.
+DEFAULT_MAX_UPLOAD_GB = None
 
 # /api/transcribe é síncrono de propósito (ver docstring da rota): quem
 # chama espera a legenda na mesma requisição, sem passar pela fila. Isso
@@ -45,9 +46,10 @@ def create_app(media_dir=None, engine=pipeline.ENGINE_LLM, max_upload_gb=None,
     app = Flask(__name__)
 
     if max_upload_gb is None:
-        max_upload_gb = float(os.environ.get("AUTOSRT_MAX_UPLOAD_GB",
-                                             DEFAULT_MAX_UPLOAD_GB))
-    app.config["MAX_CONTENT_LENGTH"] = int(max_upload_gb * 1024 ** 3)
+        env_val = os.environ.get("AUTOSRT_MAX_UPLOAD_GB")
+        max_upload_gb = float(env_val) if env_val is not None else DEFAULT_MAX_UPLOAD_GB
+    app.config["MAX_CONTENT_LENGTH"] = (
+        int(max_upload_gb * 1024 ** 3) if max_upload_gb is not None else None)
     app.config["MAX_UPLOAD_GB"] = max_upload_gb
 
     if transcribe_api_timeout is None:
