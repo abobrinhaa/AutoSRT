@@ -10,6 +10,7 @@ Legenda tem alguns quilobytes e pode ser enviada direto pela página.
 """
 
 import io
+import logging
 import os
 import tempfile
 
@@ -1706,7 +1707,18 @@ def main(argv=None):
     parser.add_argument("--motor", choices=[pipeline.ENGINE_LLM,
                                             pipeline.ENGINE_GOOGLE],
                         default=pipeline.ENGINE_LLM)
+    parser.add_argument("--verboso", action="store_true",
+                        help="mostra o comando montado para o Whisper e "
+                             "quantas legendas cada transcrição rendeu, "
+                             "útil para entender um resultado inesperado")
     args = parser.parse_args(argv)
+
+    # Sem isso os logger.info do pacote não saem em lugar nenhum, e um
+    # resultado estranho vira adivinhação: não dá para comparar o comando
+    # que o AutoSRT monta com um digitado à mão se ele nunca é mostrado.
+    logging.basicConfig(
+        level=logging.DEBUG if args.verboso else logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
     app = create_app(media_dir=args.pasta, engine=args.motor)
     print(f"AutoSRT em http://{args.host}:{args.porta}")

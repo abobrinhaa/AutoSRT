@@ -10,6 +10,7 @@ Uso típico::
 """
 
 import argparse
+import logging
 import os
 import shlex
 import sys
@@ -163,6 +164,10 @@ def build_parser():
 
     parser.add_argument("-q", "--quieto", action="store_true",
                         help="não mostra progresso")
+    parser.add_argument("-v", "--verboso", action="store_true",
+                        help="mostra o comando montado para o Whisper e "
+                             "quantas legendas a transcrição rendeu, útil "
+                             "para entender um resultado inesperado")
     return parser
 
 
@@ -341,6 +346,12 @@ def _apply_sync(entrada, args, reporter) -> bool:
 def main(argv=None) -> int:
     args = build_parser().parse_args(argv)
     reporter = Reporter(quiet=args.quieto)
+
+    # Só com -v, para não poluir a saída normal: o comando do Whisper é
+    # longo e só interessa quando o resultado saiu diferente do esperado.
+    logging.basicConfig(
+        level=logging.INFO if args.verboso else logging.WARNING,
+        format="%(levelname)s %(name)s: %(message)s")
 
     arquivos = expand_inputs(args.entradas)
     if not arquivos:

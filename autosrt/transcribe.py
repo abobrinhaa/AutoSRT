@@ -19,12 +19,16 @@ padrão aqui é ``auto``, que deixa o CTranslate2 escolher o tipo mais rápido
 que o hardware realmente suporta.
 """
 
+import logging
 import os
 import re
+import shlex
 import shutil
 import subprocess
 
 from .errors import UnsupportedSubtitleError
+
+logger = logging.getLogger(__name__)
 
 EXECUTABLE_NAMES = ("faster-whisper-xxl", "faster-whisper-xxl.exe",
                     "whisper-faster-xxl", "whisper-faster-xxl.exe")
@@ -198,10 +202,19 @@ def transcribe(media_path, *, output_dir=None, executable=None,
         vad_min_silence_ms=vad_min_silence_ms, max_speakers=max_speakers,
         extra_args=extra_args)
 
+    # O comando montado é a única forma de comparar o que o AutoSRT pede ao
+    # Whisper com o que sai de um comando digitado à mão. Sem isso, quando o
+    # resultado difere, não há como saber qual das opções acrescentadas aqui
+    # é a responsável -- só sobra testar uma a uma, às cegas.
+    logger.info("comando do Whisper: %s", shlex.join(command))
+
     run = runner or _run_process
     run(command, progress=progress, cancel_event=cancel_event, timeout=timeout)
 
-    return load_transcript(_expected_output(media_path, output_dir))
+    cues = load_transcript(_expected_output(media_path, output_dir))
+    logger.info("transcrição de %s: %d legenda(s)",
+                os.path.basename(media_path), len(cues))
+    return cues
 
 
 def _expected_output(media_path: str, output_dir: str) -> str:
