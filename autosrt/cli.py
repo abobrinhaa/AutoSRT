@@ -118,7 +118,7 @@ def build_parser():
                             "reconhecer a fala (padrão: auto, mede e só "
                             "mexe no que está fraco)")
     grupo.add_argument("--vad-metodo", metavar="NOME", dest="vad_method",
-                       help="detector de fala (silero_v5, silero_v4_fw, "
+                       help="detector de fala (silero_v4_fw, silero_v5, "
                             "pyannote_v3, webrtc...). Trocar o detector é "
                             "candidato a resolver legenda com buracos "
                             f"(padrão: {transcribe.DEFAULT_VAD})")

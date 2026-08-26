@@ -36,12 +36,20 @@ EXECUTABLE_NAMES = ("faster-whisper-xxl", "faster-whisper-xxl.exe",
 DEFAULT_MODEL = "turbo"
 DEFAULT_COMPUTE_TYPE = "auto"
 DEFAULT_DIARIZE_MODEL = "pyannote_v3.1"
-# Detector de fala. Não é o padrão do próprio executável (que usa
-# ``silero_v4_fw``): o v5 é mais recente, mas os dois calibram o limiar de
-# forma diferente, e um valor de ``vad_threshold`` afinado para um não vale
-# para o outro. Quando a transcrição sai com buracos, trocar o método é
-# tão candidato quanto mexer no limiar -- por isso é configurável.
-DEFAULT_VAD = "silero_v5"
+# Detector de fala: o mesmo padrão do próprio executável.
+#
+# Já foi ``silero_v5``, por ser mais recente. Custou caro: num filme com
+# áudio fraco (-34 dB), o v5 descartava o arquivo inteiro como se não
+# houvesse fala nenhuma e o .srt saía vazio, enquanto o mesmo Whisper,
+# mesmo modelo e mesmo arquivo transcreviam normalmente pela linha de
+# comando -- porque um comando digitado à mão não passa ``--vad_method`` e
+# cai no v4_fw. A diferença estava só nesta constante, e como ela não era
+# configurável, não havia como o usuário desconfiar dela.
+#
+# Novidade não é motivo suficiente para sair do padrão de quem faz o
+# trabalho: divergir aqui significa carregar sozinho os casos em que a
+# escolha se mostra pior.
+DEFAULT_VAD = "silero_v4_fw"
 
 # Modelos de diarização de uso pessoal e não comercial. Não entram como
 # padrão para não impor uma restrição de licença sem o usuário saber.

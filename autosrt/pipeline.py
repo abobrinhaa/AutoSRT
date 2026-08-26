@@ -311,7 +311,7 @@ def process_media(media_path, output_path=None, *, engine=DEFAULT_ENGINE,
         translate: sendo ``False``, para depois de transcrever.
         keep_original: grava também o ``<nome>.original.srt`` no idioma
             falado, útil para conferir a transcrição.
-        vad_method: detector de fala (``silero_v5``, ``silero_v4_fw``...).
+        vad_method: detector de fala (``silero_v4_fw``, ``silero_v5``...).
             ``None`` usa o :data:`autosrt.transcribe.DEFAULT_VAD`.
         vad_threshold: veja :func:`autosrt.transcribe.build_command`. Sem
             efeito quando ``transcribe_runner`` é usado (motor via API não

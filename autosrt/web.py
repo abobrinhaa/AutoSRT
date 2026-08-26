@@ -1015,7 +1015,7 @@ PAGINA = """<!doctype html>
         <input type="text" id="whisper_compute_type" placeholder="em branco = auto. Ex: int8, float16, float32">
       </label>
       <label><span class="rotulo-com-ajuda">Detector de fala (VAD)<span class="ajuda" tabindex="0" data-tip="Qual detector decide onde h&aacute; fala. Cada um calibra a sensibilidade de um jeito, ent&atilde;o trocar o detector &eacute; t&atilde;o candidato a resolver legenda com buracos quanto mexer na sensibilidade. O padr&atilde;o do pr&oacute;prio execut&aacute;vel &eacute; silero_v4_fw.">?</span></span>
-        <input type="text" id="vad_method" placeholder="em branco = silero_v5. Ex: silero_v4_fw, pyannote_v3, webrtc">
+        <input type="text" id="vad_method" placeholder="em branco = padr&atilde;o. Ex: silero_v5, pyannote_v3, webrtc">
       </label>
       <label><span class="rotulo-com-ajuda">Sensibilidade da VAD (0 a 1)<span class="ajuda" tabindex="0" data-tip="O quanto o Whisper precisa 'ouvir' pra considerar que h&aacute; fala. Um valor menor pega fala mais baixa, mas tamb&eacute;m mais ru&iacute;do.">?</span></span>
         <input type="text" id="vad_threshold" placeholder="ex: 0.2 -- menor pega fala mais baixa">
