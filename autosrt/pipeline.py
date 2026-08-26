@@ -215,7 +215,7 @@ def process_media(media_path, output_path=None, *, engine=DEFAULT_ENGINE,
                   whisper_path=None, llm_client=None, translate=True,
                   progress=None, status=None, cancel_event=None,
                   transcribe_runner=None, translator_factory=None,
-                  keep_original=True, vad_threshold=None,
+                  keep_original=True, vad_method=None, vad_threshold=None,
                   vad_min_silence_ms=None, whisper_compute_type=None,
                   transcribe_extra_args=None) -> PipelineResult:
     """Transcreve um arquivo de mídia e traduz o resultado.
@@ -234,6 +234,8 @@ def process_media(media_path, output_path=None, *, engine=DEFAULT_ENGINE,
         translate: sendo ``False``, para depois de transcrever.
         keep_original: grava também o ``<nome>.original.srt`` no idioma
             falado, útil para conferir a transcrição.
+        vad_method: detector de fala (``silero_v5``, ``silero_v4_fw``...).
+            ``None`` usa o :data:`autosrt.transcribe.DEFAULT_VAD`.
         vad_threshold: veja :func:`autosrt.transcribe.build_command`. Sem
             efeito quando ``transcribe_runner`` é usado (motor via API não
             passa pela VAD local).
@@ -292,6 +294,8 @@ def process_media(media_path, output_path=None, *, engine=DEFAULT_ENGINE,
             kwargs["model"] = whisper_model
         if whisper_compute_type:
             kwargs["compute_type"] = whisper_compute_type
+        if vad_method:
+            kwargs["vad"] = vad_method
         if progress:
             kwargs["progress"] = lambda pct: progress(pct * peso_audio // 100, 100)
         cues = transcribe_module.transcribe(media_path, **kwargs)

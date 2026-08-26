@@ -165,6 +165,40 @@ class TestModeloDoWhisper(unittest.TestCase):
         self.assertEqual(config.get_whisper_model(), "medium")
 
 
+class TestMetodoDaVAD(unittest.TestCase):
+    """O detector de fala estava fixo em silero_v5 no código -- nem o padrão
+    do próprio executável (silero_v4_fw) era alcançável. Trocar o método é
+    candidato a resolver transcrição com buracos, tanto quanto o limiar."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self._anterior = os.environ.get("AUTOSRT_CONFIG_DIR")
+        os.environ["AUTOSRT_CONFIG_DIR"] = self.tmp
+        self._env = os.environ.pop("AUTOSRT_VAD_METHOD", None)
+
+    def tearDown(self):
+        if self._anterior is None:
+            os.environ.pop("AUTOSRT_CONFIG_DIR", None)
+        else:
+            os.environ["AUTOSRT_CONFIG_DIR"] = self._anterior
+        if self._env is not None:
+            os.environ["AUTOSRT_VAD_METHOD"] = self._env
+        else:
+            os.environ.pop("AUTOSRT_VAD_METHOD", None)
+
+    def test_sem_configuracao_e_none(self):
+        self.assertIsNone(config.get_vad_method())
+
+    def test_le_do_arquivo(self):
+        config.save_config({"vad_method": "silero_v4_fw"})
+        self.assertEqual(config.get_vad_method(), "silero_v4_fw")
+
+    def test_ambiente_tem_prioridade(self):
+        config.save_config({"vad_method": "silero_v4_fw"})
+        os.environ["AUTOSRT_VAD_METHOD"] = "webrtc"
+        self.assertEqual(config.get_vad_method(), "webrtc")
+
+
 class TestTamanhoDeBlocoDoLLM(unittest.TestCase):
     """llm_block_size sobrepõe a detecção automática por endereço em
     translate_cues_llm -- necessário para quem serve um modelo local por um

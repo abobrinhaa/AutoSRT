@@ -32,6 +32,11 @@ EXECUTABLE_NAMES = ("faster-whisper-xxl", "faster-whisper-xxl.exe",
 DEFAULT_MODEL = "turbo"
 DEFAULT_COMPUTE_TYPE = "auto"
 DEFAULT_DIARIZE_MODEL = "pyannote_v3.1"
+# Detector de fala. Não é o padrão do próprio executável (que usa
+# ``silero_v4_fw``): o v5 é mais recente, mas os dois calibram o limiar de
+# forma diferente, e um valor de ``vad_threshold`` afinado para um não vale
+# para o outro. Quando a transcrição sai com buracos, trocar o método é
+# tão candidato quanto mexer no limiar -- por isso é configurável.
 DEFAULT_VAD = "silero_v5"
 
 # Modelos de diarização de uso pessoal e não comercial. Não entram como

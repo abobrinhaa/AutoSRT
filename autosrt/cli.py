@@ -110,6 +110,11 @@ def build_parser():
     grupo.add_argument("--modelo", metavar="NOME",
                        default=transcribe.DEFAULT_MODEL,
                        help=f"modelo do Whisper (padrão: {transcribe.DEFAULT_MODEL})")
+    grupo.add_argument("--vad-metodo", metavar="NOME", dest="vad_method",
+                       help="detector de fala (silero_v5, silero_v4_fw, "
+                            "pyannote_v3, webrtc...). Trocar o detector é "
+                            "candidato a resolver legenda com buracos "
+                            f"(padrão: {transcribe.DEFAULT_VAD})")
     grupo.add_argument("--compute-type", metavar="TIPO",
                        dest="whisper_compute_type",
                        help="precisão do cálculo na GPU (auto, int8, float16). "
@@ -245,6 +250,7 @@ def process_one(entrada, args, reporter) -> bool:
                 whisper_model=args.modelo, diarize=not args.sem_diarizacao,
                 translate=not args.so_transcrever,
                 transcribe_runner=transcribe_runner,
+                vad_method=args.vad_method,
                 vad_threshold=args.vad_threshold,
                 vad_min_silence_ms=args.vad_min_silence_ms,
                 whisper_compute_type=args.whisper_compute_type,

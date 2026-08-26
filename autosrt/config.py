@@ -180,6 +180,17 @@ def get_llm_block_size():
         return None
 
 
+def get_vad_method():
+    """Detector de fala usado pelo Whisper, ou ``None`` para o padrão.
+
+    ``None`` mantém o :data:`autosrt.transcribe.DEFAULT_VAD`. Vale trocar
+    quando a transcrição sai com buracos: cada método calibra o limiar de
+    forma diferente, então mudar o método é tão candidato a resolver quanto
+    mexer em :func:`get_vad_threshold`.
+    """
+    return get_setting("vad_method", "AUTOSRT_VAD_METHOD")
+
+
 def get_vad_threshold():
     """Sensibilidade da VAD (0 a 1), ou ``None`` se não configurada.
 

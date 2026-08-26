@@ -158,6 +158,7 @@ def _executar(job, engine):
         resultado = pipeline.process_media(
             job.entrada, engine=engine, status=status, progress=progresso,
             cancel_event=job.cancelar, translate=(acao != "transcrever"),
+            vad_method=config.get_vad_method(),
             vad_threshold=config.get_vad_threshold(),
             vad_min_silence_ms=config.get_vad_min_silence_ms(),
             whisper_model=config.get_whisper_model(),
@@ -409,6 +410,8 @@ def _register_routes(app, fila, media_dir, engine):
             # padrão do transcribe.py" (turbo / auto).
             "whisper_model": config.get_whisper_model(),
             "whisper_compute_type": config.get_whisper_compute_type(),
+            "vad_method": config.get_vad_method(),
+            "vad_method_padrao": transcribe.DEFAULT_VAD,
             # Vazio quando não configurado -- não é "0", é "não mexi nisso,
             # deixa o Whisper no próprio padrão dele".
             "vad_threshold": config.get_vad_threshold(),
@@ -444,7 +447,7 @@ def _register_routes(app, fila, media_dir, engine):
         # Texto livre de propósito: a lista de modelos e de compute types de
         # quem transcreve muda com a versão do Faster-Whisper, e uma lista
         # fixa aqui viraria mentira na próxima atualização dele.
-        for campo in ("whisper_model", "whisper_compute_type"):
+        for campo in ("whisper_model", "whisper_compute_type", "vad_method"):
             if campo in dados:
                 novos[campo] = str(dados.get(campo) or "").strip()
 
@@ -986,6 +989,9 @@ PAGINA = """<!doctype html>
       <label><span class="rotulo-com-ajuda">Tipo de c&aacute;lculo<span class="ajuda" tabindex="0" data-tip="Precis&atilde;o num&eacute;rica usada na GPU. Em branco ('auto') o pr&oacute;prio CTranslate2 escolhe. Em placas Pascal (s&eacute;rie P, sem tensor cores) o 'int8' costuma ser mais r&aacute;pido que 'float16' e ocupa metade da mem&oacute;ria.">?</span></span>
         <input type="text" id="whisper_compute_type" placeholder="em branco = auto. Ex: int8, float16, float32">
       </label>
+      <label><span class="rotulo-com-ajuda">Detector de fala (VAD)<span class="ajuda" tabindex="0" data-tip="Qual detector decide onde h&aacute; fala. Cada um calibra a sensibilidade de um jeito, ent&atilde;o trocar o detector &eacute; t&atilde;o candidato a resolver legenda com buracos quanto mexer na sensibilidade. O padr&atilde;o do pr&oacute;prio execut&aacute;vel &eacute; silero_v4_fw.">?</span></span>
+        <input type="text" id="vad_method" placeholder="em branco = silero_v5. Ex: silero_v4_fw, pyannote_v3, webrtc">
+      </label>
       <label><span class="rotulo-com-ajuda">Sensibilidade da VAD (0 a 1)<span class="ajuda" tabindex="0" data-tip="O quanto o Whisper precisa 'ouvir' pra considerar que h&aacute; fala. Um valor menor pega fala mais baixa, mas tamb&eacute;m mais ru&iacute;do.">?</span></span>
         <input type="text" id="vad_threshold" placeholder="ex: 0.2 -- menor pega fala mais baixa">
       </label>
@@ -1459,11 +1465,14 @@ async function carregarConfig() {
   // null (não configurado) vira campo vazio, não "null" escrito na tela.
   $('whisper_model').value = c.whisper_model ?? '';
   $('whisper_compute_type').value = c.whisper_compute_type ?? '';
+  $('vad_method').value = c.vad_method ?? '';
+  $('vad_method').placeholder =
+    'em branco = ' + c.vad_method_padrao + '. Ex: silero_v4_fw, pyannote_v3, webrtc';
   $('vad_threshold').value = c.vad_threshold ?? '';
   $('vad_min_silence_ms').value = c.vad_min_silence_ms ?? '';
   const seloVad = $('estado-vad');
   const vadAtiva = c.vad_threshold !== null || c.vad_min_silence_ms !== null
-    || !!c.whisper_model || !!c.whisper_compute_type;
+    || !!c.whisper_model || !!c.whisper_compute_type || !!c.vad_method;
   seloVad.className = 'selo ' + (vadAtiva ? 'ok' : '');
   seloVad.textContent = vadAtiva ? 'ajustada' : 'padrão do Whisper';
 
@@ -1577,6 +1586,7 @@ $('salvar-vad').onclick = async () => {
   const corpo = {
     whisper_model: $('whisper_model').value.trim(),
     whisper_compute_type: $('whisper_compute_type').value.trim(),
+    vad_method: $('vad_method').value.trim(),
     vad_threshold: $('vad_threshold').value.trim(),
     vad_min_silence_ms: $('vad_min_silence_ms').value.trim(),
   };
