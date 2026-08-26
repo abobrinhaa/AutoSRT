@@ -240,6 +240,27 @@ def get_vad_min_silence_ms():
         return None
 
 
+def get_whisper_extra_args():
+    """Argumentos extras repassados direto ao executável do Whisper local,
+    para opções que este programa ainda não conhece por nome, ou ``None``
+    se não configurado.
+
+    Existia só na linha de comando (``--whisper-args``) -- é o escape hatch
+    para uma opção do Faster-Whisper-XXL que não tem campo dedicado aqui,
+    como ``--condition_on_previous_text False`` ou ``--no_speech_threshold``
+    para alucinação que se repete pelo arquivo (uma alucinação vira contexto
+    da seguinte quando ``condition_on_previous_text`` está ligado, que é o
+    padrão do próprio Whisper).
+
+    Devolve a string como veio, uma linha só, no formato de linha de
+    comando (``--flag valor --outra-flag``). Quem chama é responsável por
+    separar em lista (``shlex.split``); aqui não, porque um erro de aspas
+    mal fechadas deve aparecer para quem gravou a configuração, não ser
+    engolido em silêncio nesta função.
+    """
+    return get_setting("whisper_extra_args", "AUTOSRT_WHISPER_EXTRA_ARGS")
+
+
 def get_diarize() -> bool:
     """Se a transcrição deve marcar quem fala cada linha. Padrão: sim.
 

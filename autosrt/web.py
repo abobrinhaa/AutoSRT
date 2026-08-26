@@ -12,6 +12,7 @@ Legenda tem alguns quilobytes e pode ser enviada direto pela página.
 import io
 import logging
 import os
+import shlex
 import tempfile
 
 from flask import (Flask, jsonify, request, send_file)
@@ -137,6 +138,18 @@ def acoes_para(caminho) -> list:
     return [{"id": i, "rotulo": r} for i, r in acoes]
 
 
+def _extra_args_configurados():
+    """Converte o texto gravado em lista de argumentos para o Whisper.
+
+    Aspas mal fechadas no que foi salvo (alguém editou o config.json à
+    mão, por exemplo) viram erro do trabalho -- ``/api/config`` já recusa
+    salvar um texto assim pela tela, então isto aqui é o cinto de
+    segurança para quem não passou por lá.
+    """
+    bruto = config.get_whisper_extra_args()
+    return shlex.split(bruto) if bruto else None
+
+
 def _executar(job, engine):
     """Roda um trabalho. Chamado pelo operário da fila."""
     def status(mensagem):
@@ -166,7 +179,8 @@ def _executar(job, engine):
             vad_threshold=config.get_vad_threshold(),
             vad_min_silence_ms=config.get_vad_min_silence_ms(),
             whisper_model=config.get_whisper_model(),
-            whisper_compute_type=config.get_whisper_compute_type())
+            whisper_compute_type=config.get_whisper_compute_type(),
+            transcribe_extra_args=_extra_args_configurados())
         job.resultado = os.path.splitext(job.entrada)[0] + ".srt"
     else:
         saida = srt_io.srt_output_path(job.entrada)
@@ -429,6 +443,7 @@ def _register_routes(app, fila, media_dir, engine):
             # deixa o Whisper no próprio padrão dele".
             "vad_threshold": config.get_vad_threshold(),
             "vad_min_silence_ms": config.get_vad_min_silence_ms(),
+            "whisper_extra_args": config.get_whisper_extra_args(),
         })
 
     @app.post("/api/config")
@@ -499,6 +514,19 @@ def _register_routes(app, fila, media_dir, engine):
                         "erro": "Silêncio mínimo precisa ser um número "
                                 "inteiro de milissegundos (ex: 300)."}), 400
             novos["vad_min_silence_ms"] = valor
+
+        if "whisper_extra_args" in dados:
+            valor = str(dados.get("whisper_extra_args") or "").strip()
+            if valor:
+                try:
+                    shlex.split(valor)
+                except ValueError as exc:
+                    # Aspas não fechadas etc -- pegar aqui é o que evita a
+                    # fila inteira falhando trabalho por trabalho com o
+                    # mesmo erro de digitação.
+                    return jsonify({
+                        "erro": f"Argumentos extras do Whisper: {exc}."}), 400
+            novos["whisper_extra_args"] = valor
 
         if not novos:
             return jsonify({"erro": "Nada para gravar."}), 400
@@ -1042,6 +1070,9 @@ PAGINA = """<!doctype html>
       <label><span class="rotulo-com-ajuda">Sil&ecirc;ncio m&iacute;nimo (ms)<span class="ajuda" tabindex="0" data-tip="Tempo m&iacute;nimo de sil&ecirc;ncio, em milissegundos, para separar duas falas. Evita cortar a &uacute;ltima palavra de falas r&aacute;pidas.">?</span></span>
         <input type="text" id="vad_min_silence_ms" placeholder="ex: 300 -- evita cortar a &uacute;ltima palavra de falas r&aacute;pidas">
       </label>
+      <label><span class="rotulo-com-ajuda">Argumentos extras do Whisper<span class="ajuda" tabindex="0" data-tip="Repassados direto ao execut&aacute;vel, para op&ccedil;&atilde;o que este programa ainda n&atilde;o tem campo pr&oacute;prio. &Uacute;til contra alucina&ccedil;&atilde;o que se repete pelo arquivo (uma fala inventada vira contexto da seguinte): --condition_on_previous_text False. Uma linha s&oacute;, como na linha de comando.">?</span></span>
+        <input type="text" id="whisper_extra_args" placeholder="ex: --condition_on_previous_text False">
+      </label>
       <div class="rodape">
         <span class="dica-config" id="mensagem-salvar-vad">Mudan&ccedil;as valem a partir do pr&oacute;ximo trabalho enviado &agrave; fila.</span>
         <button id="salvar-vad">Salvar</button>
@@ -1556,10 +1587,11 @@ async function carregarConfig() {
     'em branco = ' + c.vad_method_padrao + '. Ex: silero_v4_fw, pyannote_v3, webrtc';
   $('vad_threshold').value = c.vad_threshold ?? '';
   $('vad_min_silence_ms').value = c.vad_min_silence_ms ?? '';
+  $('whisper_extra_args').value = c.whisper_extra_args ?? '';
   const seloVad = $('estado-vad');
   const vadAtiva = c.vad_threshold !== null || c.vad_min_silence_ms !== null
     || !!c.whisper_model || !!c.whisper_compute_type || !!c.vad_method
-    || !!c.whisper_language || c.diarizar === false;
+    || !!c.whisper_language || c.diarizar === false || !!c.whisper_extra_args;
   seloVad.className = 'selo ' + (vadAtiva ? 'ok' : '');
   seloVad.textContent = vadAtiva ? 'ajustada' : 'padrão do Whisper';
 
@@ -1679,6 +1711,7 @@ $('salvar-vad').onclick = async () => {
     vad_method: $('vad_method').value.trim(),
     vad_threshold: $('vad_threshold').value.trim(),
     vad_min_silence_ms: $('vad_min_silence_ms').value.trim(),
+    whisper_extra_args: $('whisper_extra_args').value.trim(),
   };
 
   $('salvar-vad').disabled = true;

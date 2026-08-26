@@ -501,6 +501,60 @@ class TestSensibilidadeDaVadNaFila(BaseWeb):
         self.assertTrue(self.client.get("/api/config").get_json()["diarizar"])
 
 
+class TestArgumentosExtrasDoWhisperNaFila(BaseWeb):
+    """Escape hatch para opção do Whisper sem campo dedicado -- existia só
+    no --whisper-args do CLI, e alucinação que se repete pelo arquivo
+    (--condition_on_previous_text) é o motivo mais concreto de precisar
+    dele pela fila web."""
+
+    def setUp(self):
+        super().setUp()
+        from autosrt import config
+        self._app_dir = config.app_directory
+        config.app_directory = lambda: self.tmp
+        self.addCleanup(setattr, config, "app_directory", self._app_dir)
+
+    def test_repassa_os_argumentos_configurados(self):
+        self.client.post("/api/config", json={
+            "whisper_extra_args": "--condition_on_previous_text False"})
+        self.tocar("filme.mkv")
+
+        with mock.patch.object(pipeline, "process_media") as fake:
+            fake.return_value = pipeline.PipelineResult(
+                total=1, translated=1, failed=[], detected_lang="en")
+            job = self.client.post("/api/processar",
+                                   json={"arquivo": "filme.mkv"}).get_json()
+            self.esperar(job["id"])
+
+        self.assertEqual(fake.call_args.kwargs["transcribe_extra_args"],
+                         ["--condition_on_previous_text", "False"])
+
+    def test_sem_configuracao_nao_manda_nada(self):
+        self.tocar("filme.mkv")
+
+        with mock.patch.object(pipeline, "process_media") as fake:
+            fake.return_value = pipeline.PipelineResult(
+                total=1, translated=1, failed=[], detected_lang="en")
+            job = self.client.post("/api/processar",
+                                   json={"arquivo": "filme.mkv"}).get_json()
+            self.esperar(job["id"])
+
+        self.assertIsNone(fake.call_args.kwargs["transcribe_extra_args"])
+
+    def test_aspas_mal_fechadas_sao_recusadas_ao_salvar(self):
+        # Pegar aqui evita a fila inteira falhando trabalho por trabalho
+        # com o mesmo erro de digitação.
+        resposta = self.client.post("/api/config", json={
+            "whisper_extra_args": '--flag "sem fechar'})
+        self.assertEqual(resposta.status_code, 400)
+
+    def test_os_argumentos_voltam_pelo_mesmo_caminho(self):
+        self.client.post("/api/config", json={
+            "whisper_extra_args": "--no_speech_threshold 0.6"})
+        dados = self.client.get("/api/config").get_json()
+        self.assertEqual(dados["whisper_extra_args"], "--no_speech_threshold 0.6")
+
+
 class TestAvisoDeCoberturaNaFila(BaseWeb):
     """Trabalho concluído com a legenda acabando no meio do filme não é
     erro, mas não pode passar como sucesso calado."""
