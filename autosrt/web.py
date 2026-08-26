@@ -942,6 +942,7 @@ PAGINA = """<!doctype html>
     <label class="tudo"><input type="checkbox" id="tudo"> Selecionar todos</label>
     <span class="conta" id="conta"></span>
     <button id="lote" disabled>Processar selecionados</button>
+    <button id="apagar-lote" class="apagar" disabled>Apagar selecionados</button>
   </div>
   <div class="lista" id="lista"><div class="vazio">Carregando...</div></div>
 
@@ -1206,6 +1207,7 @@ function contar() {
   $('conta').textContent = marcados.length
     ? `${marcados.length} selecionado(s)` : '';
   $('lote').disabled = !marcados.length;
+  $('apagar-lote').disabled = !marcados.length;
   const todos = document.querySelectorAll('.item').length;
   $('tudo').checked = todos > 0 && marcados.length === todos;
 }
@@ -1236,6 +1238,36 @@ $('lote').onclick = async () => {
   document.querySelectorAll('.marca').forEach((c) => { c.checked = false; });
   contar();
   atualizar();
+};
+
+$('apagar-lote').onclick = async () => {
+  const alvos = selecionados().map((div) => div.dataset.arquivo).filter(Boolean);
+  if (!alvos.length) return;
+
+  // Confirmação lista os nomes: "apagar 12 arquivos" sem dizer quais é o
+  // tipo de clique que se lamenta depois. Acima de 10 a lista viraria um
+  // paredão, então corta e diz quantos ficaram de fora.
+  const amostra = alvos.slice(0, 10).join('\\n');
+  const resto = alvos.length > 10 ? `\\n...e mais ${alvos.length - 10}` : '';
+  if (!confirm(`Apagar ${alvos.length} arquivo(s) do servidor?\\n\\n`
+      + amostra + resto + '\\n\\nNão dá para desfazer.')) return;
+
+  $('apagar-lote').disabled = true;
+  // Um DELETE por arquivo, reusando a rota que já recusa o que está sendo
+  // processado agora -- apagar debaixo de um trabalho em andamento deixaria
+  // o Whisper lendo um arquivo que sumiu.
+  const falhas = [];
+  for (const nome of alvos) {
+    const r = await fetch('/api/arquivo/' + caminhoUrl(nome), {method: 'DELETE'});
+    if (!r.ok) {
+      const dados = await r.json().catch(() => ({}));
+      falhas.push(`${nome}: ${dados.erro || 'não consegui apagar'}`);
+    }
+  }
+
+  if (falhas.length) alert(falhas.join('\\n'));
+  contar();
+  carregarArquivos();
 };
 
 $('drop').onclick = (e) => {
