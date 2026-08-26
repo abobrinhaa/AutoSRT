@@ -501,6 +501,36 @@ class TestSensibilidadeDaVadNaFila(BaseWeb):
         self.assertTrue(self.client.get("/api/config").get_json()["diarizar"])
 
 
+class TestAvisoDeCoberturaNaFila(BaseWeb):
+    """Trabalho concluído com a legenda acabando no meio do filme não é
+    erro, mas não pode passar como sucesso calado."""
+
+    def test_o_aviso_chega_aos_detalhes_do_trabalho(self):
+        self.tocar("filme.mkv")
+
+        with mock.patch.object(pipeline, "process_media") as fake:
+            fake.return_value = pipeline.PipelineResult(
+                total=424, translated=424, failed=[], detected_lang="en",
+                aviso="A transcrição acaba em 0:19:50, mas o arquivo tem 1:52:33.")
+            job = self.client.post("/api/processar",
+                                   json={"arquivo": "filme.mkv"}).get_json()
+            job = self.esperar(job["id"])
+
+        self.assertIn("0:19:50", job["detalhes"]["aviso"])
+
+    def test_trabalho_sem_aviso_nao_ganha_o_campo(self):
+        self.tocar("filme.mkv")
+
+        with mock.patch.object(pipeline, "process_media") as fake:
+            fake.return_value = pipeline.PipelineResult(
+                total=900, translated=900, failed=[], detected_lang="en")
+            job = self.client.post("/api/processar",
+                                   json={"arquivo": "filme.mkv"}).get_json()
+            job = self.esperar(job["id"])
+
+        self.assertNotIn("aviso", job["detalhes"])
+
+
 class TestAcoesDisponiveis(unittest.TestCase):
     def ids(self, caminho):
         return [a["id"] for a in web.acoes_para(caminho)]

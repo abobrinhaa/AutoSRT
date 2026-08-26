@@ -47,6 +47,13 @@ DEFAULT_ENGINE = ENGINE_LLM
 # tempo bater: errar o peso não trava nada, só torce a estimativa.
 PESO_TRANSCRICAO = 70
 
+#: Quanto da duração do arquivo a transcrição precisa alcançar para não
+#: virar aviso. Legenda não cobre 100% de nada -- filme termina em música,
+#: em créditos, em silêncio -- então o corte é generoso de propósito: o que
+#: se quer pegar é a transcrição que morre no meio, não a que acaba antes
+#: dos créditos.
+COBERTURA_MINIMA_DA_FALA = 0.80
+
 
 @dataclass
 class PipelineResult:
@@ -58,6 +65,10 @@ class PipelineResult:
     detected_lang: str
     backup_path: str = None
     engine: str = DEFAULT_ENGINE
+    #: Frase curta sobre algo que passou mas não parece certo -- hoje, a
+    #: transcrição que cobre só parte do arquivo. Não é erro: o trabalho
+    #: terminou e a legenda existe.
+    aviso: str = None
 
     @property
     def language_label(self) -> str:
@@ -211,7 +222,10 @@ def _audio_preparado(media_path, modo, *, announce=None):
             logger.warning("normalização do áudio falhou (%s); "
                            "seguindo com o áudio original", exc)
             if announce:
-                announce("Não deu para normalizar o áudio; seguindo assim mesmo.")
+                # O motivo importa: "o ffmpeg parou de ler em 19:50" é a
+                # única pista que o usuário tem de que o arquivo é que está
+                # com defeito, e some se isto virar uma frase genérica.
+                announce(f"Não deu para normalizar o áudio: {exc}")
             yield media_path
     finally:
         shutil.rmtree(pasta, ignore_errors=True)
@@ -398,6 +412,11 @@ def process_media(media_path, output_path=None, *, engine=DEFAULT_ENGINE,
     if not cues:
         raise ValueError("O Whisper não encontrou fala nenhuma no arquivo.")
 
+    aviso = _aviso_de_cobertura(media_path, cues)
+    if aviso:
+        logger.warning("%s: %s", os.path.basename(media_path), aviso)
+        announce(aviso)
+
     detected_lang = language or _safe_detect(cues)
 
     if keep_original:
@@ -406,7 +425,8 @@ def process_media(media_path, output_path=None, *, engine=DEFAULT_ENGINE,
     if not translate:
         srt_io.save_cues(cues, output_path)
         return PipelineResult(total=len(cues), translated=0, failed=[],
-                              detected_lang=detected_lang, engine="nenhum")
+                              detected_lang=detected_lang, engine="nenhum",
+                              aviso=aviso)
 
     speakers = transcribe_module.speakers_in(cues)
     if speakers:
@@ -429,7 +449,45 @@ def process_media(media_path, output_path=None, *, engine=DEFAULT_ENGINE,
     srt_io.save_cues(cues, output_path)
 
     return PipelineResult(total=len(cues), translated=translated, failed=failed,
-                          detected_lang=detected_lang, engine=engine)
+                          detected_lang=detected_lang, engine=engine,
+                          aviso=aviso)
+
+
+def _aviso_de_cobertura(media_path, cues):
+    """Avisa quando a legenda acaba muito antes do arquivo.
+
+    Transcrição que para no meio é o defeito mais caro deste programa:
+    nada falha, o trabalho termina marcado como concluído, e a legenda
+    parece boa -- ela *é* boa, até o ponto em que acaba. Quem assiste
+    descobre no minuto 19:50, e não tem como saber se o culpado é o
+    Whisper, a VAD, o modelo ou o arquivo. Comparar o fim da última
+    legenda com a duração do arquivo custa uma chamada ao ffprobe e
+    transforma isso numa frase.
+
+    Returns:
+        A frase de aviso, ou ``None`` quando a cobertura está de bom tamanho
+        (ou quando não deu para medir a duração, que não é motivo para
+        inventar um aviso).
+    """
+    from . import audio as audio_module
+
+    if not cues:
+        return None
+    duracao = audio_module.duracao_segundos(media_path)
+    if not duracao:
+        return None
+
+    fim = max(cue.end for cue in cues) / 1000.0
+    if fim >= duracao * COBERTURA_MINIMA_DA_FALA:
+        return None
+
+    return (f"A transcrição acaba em {audio_module.formatar_tempo(fim)}, mas "
+            f"o arquivo tem {audio_module.formatar_tempo(duracao)} -- o resto "
+            "ficou sem legenda. Isso costuma ser defeito no arquivo de mídia "
+            "a partir desse ponto (tente remuxá-lo: ffmpeg -i entrada.mkv "
+            "-c copy saida.mkv), e não ajuste de transcrição: trocar modelo, "
+            "VAD ou diarização não faz o Whisper ler o que o arquivo não "
+            "entrega.")
 
 
 def _safe_detect(cues) -> str:

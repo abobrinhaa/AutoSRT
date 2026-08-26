@@ -181,6 +181,12 @@ def _executar(job, engine):
         "falhas": resultado.failure_count,
         "idioma": resultado.language_label,
     })
+    # Trabalho que termina com a legenda acabando no meio do filme não é
+    # erro -- a legenda existe e está certa até ali. Mas também não pode
+    # passar como sucesso calado: sem isto, o único jeito de descobrir é
+    # assistindo até o ponto onde acaba.
+    if getattr(resultado, "aviso", None):
+        job.detalhes["aviso"] = resultado.aviso
 
 
 def _traduzir_existente(job, engine, status, progresso):
@@ -836,6 +842,7 @@ PAGINA = """<!doctype html>
   .etapa { color: var(--text-muted); font-size: 14px; margin-top: 6px; }
   .erro { color: var(--danger); }
   .ok { color: var(--success); }
+  .atencao { color: var(--warning); }
   .vazio { color: var(--text-muted); padding: 20px; text-align: center; }
   a.baixar { color: var(--accent); text-decoration: none; font-weight: 600; }
   a.baixar:hover { text-decoration: underline; }
@@ -1401,10 +1408,18 @@ function cartao(job) {
     etapa.textContent = job.erro || 'Falhou.';
   } else if (job.estado === 'concluido') {
     const d = job.detalhes || {};
-    etapa.className = 'etapa ok';
+    // Concluído com aviso não é erro -- a legenda existe e está certa até
+    // onde vai --, mas também não merece o verde de "deu tudo certo".
+    etapa.className = 'etapa ' + (d.aviso ? 'atencao' : 'ok');
     etapa.textContent = `${d.total || 0} legendas` +
       (d.idioma ? ` · ${d.idioma}` : '') +
       (d.falhas ? ` · ${d.falhas} não traduzida(s)` : '');
+    if (d.aviso) {
+      const nota = document.createElement('div');
+      nota.className = 'etapa atencao';
+      nota.textContent = d.aviso;
+      etapa.after(nota);
+    }
   } else {
     etapa.textContent = job.etapa + faltam(job.restante_seg);
   }

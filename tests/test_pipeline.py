@@ -1,10 +1,11 @@
 import os
+import shutil
 import tempfile
 import threading
 import unittest
 from unittest import mock
 
-from autosrt import llm_translate, srt_io
+from autosrt import audio, llm_translate, srt_io
 from autosrt.cue import Cue
 from autosrt.llm import LLMError
 from autosrt.pipeline import ENGINE_GOOGLE, ENGINE_LLM, process_media, translate_file
@@ -205,6 +206,53 @@ class TestMotorDeTranscricaoAlternativo(unittest.TestCase):
                       transcribe_runner=self.fake_runner,
                       progress=lambda done, total: vistos.append((done, total)))
         self.assertIn((100, 100), vistos)
+
+
+class TestAvisoDeCobertura(unittest.TestCase):
+    """Transcrição que acaba no meio do filme termina sem erro nenhum: o
+    trabalho é dado como concluído e a legenda parece boa até o ponto onde
+    simplesmente para. Comparar o fim da última legenda com a duração do
+    arquivo é o que transforma isso num aviso em vez de uma descoberta
+    feita assistindo."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        self.midia = os.path.join(self.tmp, "filme.mkv")
+        open(self.midia, "wb").close()
+        self.destino = os.path.join(self.tmp, "saida.srt")
+
+    def runner(self, media_path, **kwargs):
+        # Última legenda termina em 19:50 (1190 s).
+        return [Cue.from_source(index=1, start=1_180_000, end=1_190_000,
+                                source_text="Last line before the file dies.")]
+
+    def processar(self, duracao):
+        with mock.patch.object(audio, "duracao_segundos", return_value=duracao):
+            return process_media(self.midia, self.destino, translate=False,
+                                 transcribe_runner=self.runner)
+
+    def test_avisa_quando_a_legenda_acaba_no_meio_do_filme(self):
+        resultado = self.processar(6753.0)
+        self.assertIsNotNone(resultado.aviso)
+        self.assertIn("0:19:50", resultado.aviso)
+        self.assertIn("1:52:33", resultado.aviso)
+
+    def test_a_legenda_continua_sendo_gravada(self):
+        # O aviso não é erro: o que foi transcrito vale e tem de sair.
+        self.processar(6753.0)
+        self.assertEqual(len(srt_io.load_cues(self.destino)), 1)
+
+    def test_arquivo_coberto_ate_o_fim_nao_recebe_aviso(self):
+        self.assertIsNone(self.processar(1200.0).aviso)
+
+    def test_creditos_e_silencio_no_fim_nao_viram_aviso(self):
+        # Filme que acaba em música não é transcrição truncada; o corte é
+        # generoso de propósito.
+        self.assertIsNone(self.processar(1400.0).aviso)
+
+    def test_sem_conseguir_medir_a_duracao_nao_inventa_aviso(self):
+        self.assertIsNone(self.processar(None).aviso)
 
 
 class QuebradoLLM:
