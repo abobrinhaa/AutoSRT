@@ -294,6 +294,8 @@ def process_media(media_path, output_path=None, *, engine=DEFAULT_ENGINE,
                   keep_original=True, vad_method=None, vad_threshold=None,
                   vad_min_silence_ms=None, whisper_compute_type=None,
                   normalize_audio=NORMALIZE_AUTO,
+                  condition_on_previous_text=None,
+                  hallucination_silence_threshold=None,
                   transcribe_extra_args=None) -> PipelineResult:
     """Transcreve um arquivo de mídia e traduz o resultado.
 
@@ -324,6 +326,15 @@ def process_media(media_path, output_path=None, *, engine=DEFAULT_ENGINE,
             está fraco o bastante para atrapalhar o Whisper; ``"sempre"``
             normaliza sem medir; ``"nunca"`` desliga. Veja
             :mod:`autosrt.audio` para o caso que motivou isso.
+        condition_on_previous_text: ``None`` (padrão) usa o padrão do
+            :mod:`autosrt.transcribe` (desligado -- ver
+            ``DEFAULT_CONDITION_ON_PREVIOUS_TEXT``), que evita que uma
+            alucinação em trecho de silêncio/trilha sonora se realimente
+            nos trechos seguintes. ``True`` liga de volta o comportamento
+            padrão do próprio Whisper.
+        hallucination_silence_threshold: segundos de silêncio que o Whisper
+            pula quando desconfia de alucinação. ``None`` (padrão) não mexe
+            nisso.
         transcribe_extra_args: argumentos extras repassados direto ao
             executável do Whisper local.
 
@@ -371,6 +382,13 @@ def process_media(media_path, output_path=None, *, engine=DEFAULT_ENGINE,
             "vad_min_silence_ms": vad_min_silence_ms,
             "extra_args": transcribe_extra_args,
         }
+        # Só entra no kwargs quando informado -- sem isso, o padrão de
+        # transcribe.transcribe() (desligado) vale sozinho, sem precisar
+        # ser repetido aqui.
+        if condition_on_previous_text is not None:
+            kwargs["condition_on_previous_text"] = condition_on_previous_text
+        if hallucination_silence_threshold is not None:
+            kwargs["hallucination_silence_threshold"] = hallucination_silence_threshold
         if whisper_model:
             kwargs["model"] = whisper_model
         if whisper_compute_type:

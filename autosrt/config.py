@@ -35,6 +35,16 @@ EXAMPLE_CONFIG = {
     # só para aquela execução). Sem isso, usa o padrão do próprio Whisper.
     "vad_threshold": "0.2",
     "vad_min_silence_ms": "300",
+    # Opcional: religa o comportamento padrão do Whisper de condicionar
+    # cada trecho no texto do anterior. Em branco (ou "false") fica
+    # desligado, que é o padrão do transcribe.py -- evita que uma
+    # alucinação em silêncio/trilha sonora se realimente nos trechos
+    # seguintes (a legenda repetindo "Esse é o primeiro", "Esse é o
+    # segundo"...). "true" restaura o padrão do Whisper.
+    "condition_on_previous_text": "false",
+    # Opcional: segundos de silêncio que o Whisper pula quando desconfia de
+    # alucinação. Em branco não mexe nisso.
+    "hallucination_silence_threshold": "2",
 }
 
 
@@ -236,5 +246,39 @@ def get_vad_min_silence_ms():
     valor = get_setting("vad_min_silence_ms", "AUTOSRT_VAD_MIN_SILENCE_MS")
     try:
         return int(valor) if valor is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def get_condition_on_previous_text():
+    """Se o Whisper deve condicionar cada trecho no texto do anterior.
+
+    ``None`` quando não configurado -- nesse caso quem chama não repassa
+    nada e o padrão de :mod:`autosrt.transcribe` (desligado) vale sozinho.
+    Ligar isso de volta (``"true"``) restaura o comportamento padrão do
+    próprio Whisper, útil para manter nome próprio consistente ao longo do
+    áudio, ao custo de arriscar que uma alucinação em silêncio/trilha
+    sonora se realimente nos trechos seguintes.
+    """
+    valor = (get_setting("condition_on_previous_text",
+                         "AUTOSRT_CONDITION_ON_PREVIOUS_TEXT") or "").strip().lower()
+    if valor in ("true", "1", "sim"):
+        return True
+    if valor in ("false", "0", "nao", "não"):
+        return False
+    return None
+
+
+def get_hallucination_silence_threshold():
+    """Segundos de silêncio que o Whisper pula quando desconfia de
+    alucinação, ou ``None`` se não configurado.
+
+    Ajuda especificamente com trechos de música/silêncio sem fala nenhuma,
+    que é onde o Whisper mais alucina.
+    """
+    valor = get_setting("hallucination_silence_threshold",
+                        "AUTOSRT_HALLUCINATION_SILENCE_THRESHOLD")
+    try:
+        return float(valor) if valor is not None else None
     except (TypeError, ValueError):
         return None

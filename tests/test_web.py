@@ -182,6 +182,11 @@ class TestPagina(BaseWeb):
         self.assertIn('id="estado-vad"', html)
         self.assertIn("mostrarSucesso('mensagem-salvar-vad')", html)
 
+    def test_painel_de_transcricao_tem_campos_de_anti_alucinacao(self):
+        html = self.client.get("/").get_data(as_text=True)
+        self.assertIn('id="condition_on_previous_text"', html)
+        self.assertIn('id="hallucination_silence_threshold"', html)
+
 
 class TestListagem(BaseWeb):
     def test_lista_videos_e_legendas(self):
@@ -473,6 +478,48 @@ class TestSensibilidadeDaVadNaFila(BaseWeb):
 
         self.assertIsNone(fake.call_args.kwargs["vad_threshold"])
         self.assertIsNone(fake.call_args.kwargs["vad_min_silence_ms"])
+
+
+class TestAntiAlucinacaoNaFila(BaseWeb):
+    """condition_on_previous_text e hallucination_silence_threshold
+    configurados no painel valem para todo trabalho de mídia da fila."""
+
+    def setUp(self):
+        super().setUp()
+        from autosrt import config
+        self._app_dir = config.app_directory
+        config.app_directory = lambda: self.tmp
+        self.addCleanup(setattr, config, "app_directory", self._app_dir)
+
+    def test_repassa_a_configuracao(self):
+        self.client.post("/api/config", json={
+            "condition_on_previous_text": "true",
+            "hallucination_silence_threshold": "2"})
+        video = self.tocar("filme.mkv")
+
+        with mock.patch.object(pipeline, "process_media") as fake:
+            fake.return_value = pipeline.PipelineResult(
+                total=1, translated=1, failed=[], detected_lang="en")
+            job = self.client.post("/api/processar",
+                                   json={"arquivo": "filme.mkv"}).get_json()
+            self.esperar(job["id"])
+
+        self.assertTrue(fake.call_args.kwargs["condition_on_previous_text"])
+        self.assertEqual(
+            fake.call_args.kwargs["hallucination_silence_threshold"], 2.0)
+
+    def test_sem_configuracao_nao_manda_nada(self):
+        video = self.tocar("filme.mkv")
+
+        with mock.patch.object(pipeline, "process_media") as fake:
+            fake.return_value = pipeline.PipelineResult(
+                total=1, translated=1, failed=[], detected_lang="en")
+            job = self.client.post("/api/processar",
+                                   json={"arquivo": "filme.mkv"}).get_json()
+            self.esperar(job["id"])
+
+        self.assertIsNone(fake.call_args.kwargs["condition_on_previous_text"])
+        self.assertIsNone(fake.call_args.kwargs["hallucination_silence_threshold"])
 
 
 class TestAcoesDisponiveis(unittest.TestCase):
@@ -828,6 +875,31 @@ class TestConfiguracao(BaseWeb):
         self.client.post("/api/config", json={"vad_threshold": "0.2"})
         self.client.post("/api/config", json={"vad_threshold": ""})
         self.assertIsNone(self.client.get("/api/config").get_json()["vad_threshold"])
+
+    def test_anti_alucinacao_comeca_vazia(self):
+        dados = self.client.get("/api/config").get_json()
+        self.assertIsNone(dados["condition_on_previous_text"])
+        self.assertIsNone(dados["hallucination_silence_threshold"])
+
+    def test_grava_anti_alucinacao(self):
+        resposta = self.client.post("/api/config", json={
+            "condition_on_previous_text": "true",
+            "hallucination_silence_threshold": "2"})
+        self.assertEqual(resposta.status_code, 200)
+        dados = self.client.get("/api/config").get_json()
+        self.assertTrue(dados["condition_on_previous_text"])
+        self.assertEqual(dados["hallucination_silence_threshold"], 2.0)
+
+    def test_condition_on_previous_text_invalido_e_recusado(self):
+        resposta = self.client.post(
+            "/api/config", json={"condition_on_previous_text": "talvez"})
+        self.assertEqual(resposta.status_code, 400)
+
+    def test_hallucination_silence_threshold_invalido_e_recusado(self):
+        resposta = self.client.post(
+            "/api/config",
+            json={"hallucination_silence_threshold": "nao-e-numero"})
+        self.assertEqual(resposta.status_code, 400)
 
 
 class TestModelos(BaseWeb):

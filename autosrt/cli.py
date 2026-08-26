@@ -148,6 +148,23 @@ def build_parser():
                        help="silêncio mínimo (ms) para a VAD considerar que "
                             "uma fala terminou. Baixar evita cortar a "
                             "palavra final de uma fala rápida")
+    grupo.add_argument("--manter-contexto-anterior", action="store_true",
+                       dest="condition_on_previous_text", default=None,
+                       help="liga de volta o padrão do Whisper de condicionar "
+                            "cada trecho no texto do anterior. Por padrão "
+                            "aqui isso fica desligado, porque é o que faz "
+                            "uma alucinação em silêncio/trilha sonora se "
+                            "realimentar nos trechos seguintes (legenda "
+                            "repetindo frases parecidas, tipo \"Esse é o "
+                            "primeiro\", \"Esse é o segundo\"...). Ligar de "
+                            "volta ajuda a manter nome próprio consistente "
+                            "ao longo do áudio")
+    grupo.add_argument("--limiar-silencio-alucinacao", type=float,
+                       metavar="SEG", dest="hallucination_silence_threshold",
+                       help="segundos de silêncio que o Whisper pula quando "
+                            "desconfia de alucinação (ex: 2). Ajuda com "
+                            "trecho de música/silêncio sem fala. Padrão: "
+                            "desligado")
     grupo.add_argument("--whisper-args", metavar="\"ARGS\"",
                        dest="whisper_extra_args",
                        help="argumentos extras repassados direto ao "
@@ -266,6 +283,8 @@ def process_one(entrada, args, reporter) -> bool:
                 vad_threshold=args.vad_threshold,
                 vad_min_silence_ms=args.vad_min_silence_ms,
                 whisper_compute_type=args.whisper_compute_type,
+                condition_on_previous_text=args.condition_on_previous_text,
+                hallucination_silence_threshold=args.hallucination_silence_threshold,
                 transcribe_extra_args=extra_args,
                 progress=reporter.progress, status=reporter.status)
         elif pipeline.is_media(entrada):

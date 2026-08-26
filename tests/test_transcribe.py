@@ -126,6 +126,33 @@ class TestBuildCommand(unittest.TestCase):
         command = self.build(extra_args=["--no_speech_threshold", "0.3"])
         self.assertEqual(command[-2:], ["--no_speech_threshold", "0.3"])
 
+    def test_condition_on_previous_text_desligado_por_padrao(self):
+        # A causa clássica de alucinação em cadeia (legenda repetindo
+        # "Esse é o primeiro", "Esse é o segundo"... em cima de silêncio ou
+        # trilha sonora): sem pedir nada, o comando já sai com isso
+        # desligado, diferente do padrão do próprio Whisper (ligado).
+        command = self.build()
+        posicao = command.index("--condition_on_previous_text")
+        self.assertEqual(command[posicao + 1], "False")
+
+    def test_condition_on_previous_text_pode_ser_religado(self):
+        command = self.build(condition_on_previous_text=True)
+        posicao = command.index("--condition_on_previous_text")
+        self.assertEqual(command[posicao + 1], "True")
+
+    def test_condition_on_previous_text_none_nao_passa_a_flag(self):
+        command = self.build(condition_on_previous_text=None)
+        self.assertNotIn("--condition_on_previous_text", command)
+
+    def test_hallucination_silence_threshold_fica_de_fora_por_padrao(self):
+        command = self.build()
+        self.assertNotIn("--hallucination_silence_threshold", command)
+
+    def test_hallucination_silence_threshold_entra_quando_informado(self):
+        command = self.build(hallucination_silence_threshold=2.0)
+        posicao = command.index("--hallucination_silence_threshold")
+        self.assertEqual(command[posicao + 1], "2.0")
+
 
 class TestIterLines(unittest.TestCase):
     """Regressão: a barra do Whisper reescreve a mesma linha terminando cada
@@ -271,6 +298,27 @@ class TestTranscribe(unittest.TestCase):
         self.assertEqual(
             command[command.index("--vad_min_silence_duration_ms") + 1], "300")
         self.assertIn("--no_speech_threshold", command)
+
+    def test_anti_alucinacao_chega_ate_o_comando(self):
+        comandos = []
+
+        def runner(command, **kwargs):
+            comandos.append(command)
+            output_dir = command[command.index("--output_dir") + 1]
+            with open(os.path.join(output_dir, "filme.srt"), "w",
+                     encoding="utf-8") as handle:
+                handle.write(SRT_COM_LOCUTOR)
+
+        transcribe.transcribe(
+            self.media, output_dir=self.tmp, executable=self.fake_exe,
+            runner=runner, condition_on_previous_text=True,
+            hallucination_silence_threshold=2.5)
+
+        command = comandos[0]
+        self.assertEqual(
+            command[command.index("--condition_on_previous_text") + 1], "True")
+        self.assertEqual(
+            command[command.index("--hallucination_silence_threshold") + 1], "2.5")
 
     def test_whisper_que_nao_gera_saida_levanta_erro(self):
         def runner_vazio(command, **kwargs):

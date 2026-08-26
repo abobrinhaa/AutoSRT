@@ -126,6 +126,52 @@ class TestSensibilidadeDaVAD(unittest.TestCase):
         self.assertIsNone(config.get_vad_threshold())
 
 
+class TestAntiAlucinacao(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self._anterior = os.environ.get("AUTOSRT_CONFIG_DIR")
+        os.environ["AUTOSRT_CONFIG_DIR"] = self.tmp
+        self._env = {k: os.environ.pop(k, None) for k in
+                     ("AUTOSRT_CONDITION_ON_PREVIOUS_TEXT",
+                      "AUTOSRT_HALLUCINATION_SILENCE_THRESHOLD")}
+
+    def tearDown(self):
+        if self._anterior is None:
+            os.environ.pop("AUTOSRT_CONFIG_DIR", None)
+        else:
+            os.environ["AUTOSRT_CONFIG_DIR"] = self._anterior
+        for chave, valor in self._env.items():
+            if valor is not None:
+                os.environ[chave] = valor
+            else:
+                os.environ.pop(chave, None)
+
+    def test_sem_configuracao_e_none(self):
+        # None, não False: quem chama não deve repassar nada, deixando o
+        # padrão (desligado) de transcribe.py valer sozinho.
+        self.assertIsNone(config.get_condition_on_previous_text())
+        self.assertIsNone(config.get_hallucination_silence_threshold())
+
+    def test_le_do_arquivo(self):
+        config.save_config({"condition_on_previous_text": "true",
+                            "hallucination_silence_threshold": "2"})
+        self.assertTrue(config.get_condition_on_previous_text())
+        self.assertEqual(config.get_hallucination_silence_threshold(), 2.0)
+
+    def test_false_explicito_e_diferente_de_nao_configurado(self):
+        config.save_config({"condition_on_previous_text": "false"})
+        self.assertFalse(config.get_condition_on_previous_text())
+
+    def test_ambiente_tem_prioridade(self):
+        config.save_config({"hallucination_silence_threshold": "2"})
+        os.environ["AUTOSRT_HALLUCINATION_SILENCE_THRESHOLD"] = "4"
+        self.assertEqual(config.get_hallucination_silence_threshold(), 4.0)
+
+    def test_valor_invalido_nao_derruba(self):
+        config.save_config({"hallucination_silence_threshold": "nao-e-numero"})
+        self.assertIsNone(config.get_hallucination_silence_threshold())
+
+
 class TestModeloDoWhisper(unittest.TestCase):
     """A fila web usava o padrão fixo do transcribe.py e não tinha como
     trocar -- o ajuste só existia no --modelo do CLI, justamente na

@@ -330,6 +330,40 @@ class TestSensibilidadeDaVAD(unittest.TestCase):
         self.assertIsNone(fake.call_args.kwargs["extra_args"])
 
 
+class TestAntiAlucinacao(unittest.TestCase):
+    """process_media repassa condition_on_previous_text e
+    hallucination_silence_threshold para o Whisper local -- e sem pedir
+    nada, o padrão de transcribe.transcribe() (desligado) fica valendo
+    sozinho, sem process_media repetir esse padrão."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.midia = os.path.join(self.tmp, "filme.mkv")
+        open(self.midia, "wb").close()
+
+    def _transcrever(self, **kwargs):
+        destino = os.path.join(self.tmp, "saida.srt")
+        with mock.patch("autosrt.transcribe.transcribe") as fake:
+            fake.return_value = [
+                Cue.from_source(index=1, start=0, end=1000, source_text="Oi."),
+            ]
+            process_media(self.midia, destino, translate=False, **kwargs)
+        return fake.call_args.kwargs
+
+    def test_sem_pedir_nada_nao_sobrescreve_o_padrao(self):
+        kwargs = self._transcrever()
+        self.assertNotIn("condition_on_previous_text", kwargs)
+        self.assertNotIn("hallucination_silence_threshold", kwargs)
+
+    def test_condition_on_previous_text_chega_ao_whisper_local(self):
+        kwargs = self._transcrever(condition_on_previous_text=True)
+        self.assertTrue(kwargs["condition_on_previous_text"])
+
+    def test_hallucination_silence_threshold_chega_ao_whisper_local(self):
+        kwargs = self._transcrever(hallucination_silence_threshold=2.0)
+        self.assertEqual(kwargs["hallucination_silence_threshold"], 2.0)
+
+
 class TestPastaDeOriginais(unittest.TestCase):
     """A transcrição no idioma falado não pode ficar ao lado do vídeo.
 

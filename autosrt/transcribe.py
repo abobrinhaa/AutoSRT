@@ -51,6 +51,18 @@ DEFAULT_DIARIZE_MODEL = "pyannote_v3.1"
 # escolha se mostra pior.
 DEFAULT_VAD = "silero_v4_fw"
 
+# Evita que uma alucinação vire alucinação em cadeia. Por padrão o Whisper
+# condiciona a decodificação de cada trecho no texto do trecho anterior --
+# útil para manter nome próprio e jargão consistentes ao longo do áudio,
+# mas quer dizer também que um trecho de silêncio ou só com trilha sonora
+# (sem fala nenhuma) que "alucinou" algum texto contamina os trechos
+# seguintes, que tendem a continuar no mesmo estilo. É a causa clássica de
+# legenda repetindo frases parecidas em música/silêncio, como "Esse é o
+# primeiro", "Esse é o segundo"... Desligar isso faz cada trecho ser
+# decodificado sozinho, sem herdar o que veio antes -- quebra a cadeia, ao
+# custo de eventual inconsistência de nome próprio entre falas distantes.
+DEFAULT_CONDITION_ON_PREVIOUS_TEXT = False
+
 # Modelos de diarização de uso pessoal e não comercial. Não entram como
 # padrão para não impor uma restrição de licença sem o usuário saber.
 RESTRICTED_DIARIZE_MODELS = {"reverb_v1", "reverb_v2"}
@@ -95,6 +107,8 @@ def build_command(media_path, output_dir, *, executable, model=DEFAULT_MODEL,
                   language=None, diarize=DEFAULT_DIARIZE_MODEL,
                   compute_type=DEFAULT_COMPUTE_TYPE, vad=DEFAULT_VAD,
                   vad_threshold=None, vad_min_silence_ms=None,
+                  condition_on_previous_text=DEFAULT_CONDITION_ON_PREVIOUS_TEXT,
+                  hallucination_silence_threshold=None,
                   max_speakers=None, extra_args=None) -> list:
     """Monta a linha de comando do Faster-Whisper-XXL.
 
@@ -111,6 +125,13 @@ def build_command(media_path, output_dir, *, executable, model=DEFAULT_MODEL,
             considerar que uma fala terminou. Baixar isso evita que duas
             falas rápidas e coladas sejam tratadas como uma só (ou que a
             palavra final de uma fala seja cortada por engano).
+        condition_on_previous_text: veja :data:`DEFAULT_CONDITION_ON_PREVIOUS_TEXT`.
+            ``None`` não passa a flag (fica no padrão do próprio Whisper,
+            que é ligado).
+        hallucination_silence_threshold: segundos de silêncio, quando o
+            Whisper desconfia de alucinação, que ele pula em vez de
+            transcrever. ``None`` (padrão) não passa a flag. Ajuda
+            especificamente com trechos de música/silêncio sem fala.
     """
     command = [
         executable, media_path,
@@ -129,6 +150,12 @@ def build_command(media_path, output_dir, *, executable, model=DEFAULT_MODEL,
         command += ["--vad_threshold", str(vad_threshold)]
     if vad_min_silence_ms is not None:
         command += ["--vad_min_silence_duration_ms", str(vad_min_silence_ms)]
+    if condition_on_previous_text is not None:
+        command += ["--condition_on_previous_text",
+                    "True" if condition_on_previous_text else "False"]
+    if hallucination_silence_threshold is not None:
+        command += ["--hallucination_silence_threshold",
+                    str(hallucination_silence_threshold)]
     if diarize:
         command += ["--diarize", diarize]
         if max_speakers:
@@ -162,6 +189,8 @@ def transcribe(media_path, *, output_dir=None, executable=None,
                model=DEFAULT_MODEL, language=None, diarize=DEFAULT_DIARIZE_MODEL,
                compute_type=DEFAULT_COMPUTE_TYPE, vad=DEFAULT_VAD,
                vad_threshold=None, vad_min_silence_ms=None,
+               condition_on_previous_text=DEFAULT_CONDITION_ON_PREVIOUS_TEXT,
+               hallucination_silence_threshold=None,
                max_speakers=None, progress=None, cancel_event=None,
                timeout=None, runner=None, extra_args=None) -> list:
     """Transcreve um arquivo de mídia e devolve a lista de :class:`Cue`.
@@ -176,6 +205,8 @@ def transcribe(media_path, *, output_dir=None, executable=None,
         vad_threshold: veja :func:`build_command`. ``None`` (padrão) deixa o
             Whisper usar o próprio valor padrão, sem mexer em nada.
         vad_min_silence_ms: veja :func:`build_command`.
+        condition_on_previous_text: veja :data:`DEFAULT_CONDITION_ON_PREVIOUS_TEXT`.
+        hallucination_silence_threshold: veja :func:`build_command`.
         progress: chamada como ``progress(percentual)`` conforme o Whisper
             reporta o andamento.
         runner: injeção usada pelos testes, no lugar da execução real.
@@ -207,8 +238,10 @@ def transcribe(media_path, *, output_dir=None, executable=None,
         media_path, output_dir, executable=resolved, model=model,
         language=language, diarize=diarize, compute_type=compute_type,
         vad=vad, vad_threshold=vad_threshold,
-        vad_min_silence_ms=vad_min_silence_ms, max_speakers=max_speakers,
-        extra_args=extra_args)
+        vad_min_silence_ms=vad_min_silence_ms,
+        condition_on_previous_text=condition_on_previous_text,
+        hallucination_silence_threshold=hallucination_silence_threshold,
+        max_speakers=max_speakers, extra_args=extra_args)
 
     # O comando montado é a única forma de comparar o que o AutoSRT pede ao
     # Whisper com o que sai de um comando digitado à mão. Sem isso, quando o

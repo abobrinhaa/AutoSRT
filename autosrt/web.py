@@ -165,7 +165,9 @@ def _executar(job, engine):
             vad_threshold=config.get_vad_threshold(),
             vad_min_silence_ms=config.get_vad_min_silence_ms(),
             whisper_model=config.get_whisper_model(),
-            whisper_compute_type=config.get_whisper_compute_type())
+            whisper_compute_type=config.get_whisper_compute_type(),
+            condition_on_previous_text=config.get_condition_on_previous_text(),
+            hallucination_silence_threshold=config.get_hallucination_silence_threshold())
         job.resultado = os.path.splitext(job.entrada)[0] + ".srt"
     else:
         saida = srt_io.srt_output_path(job.entrada)
@@ -421,6 +423,11 @@ def _register_routes(app, fila, media_dir, engine):
             # deixa o Whisper no próprio padrão dele".
             "vad_threshold": config.get_vad_threshold(),
             "vad_min_silence_ms": config.get_vad_min_silence_ms(),
+            # None quando não configurado -- usa o padrão do transcribe.py
+            # (desligado), sem precisar repetir esse padrão aqui.
+            "condition_on_previous_text": config.get_condition_on_previous_text(),
+            "hallucination_silence_threshold":
+                config.get_hallucination_silence_threshold(),
         })
 
     @app.post("/api/config")
@@ -486,6 +493,25 @@ def _register_routes(app, fila, media_dir, engine):
                         "erro": "Silêncio mínimo precisa ser um número "
                                 "inteiro de milissegundos (ex: 300)."}), 400
             novos["vad_min_silence_ms"] = valor
+
+        if "condition_on_previous_text" in dados:
+            valor = str(dados.get("condition_on_previous_text") or "").strip().lower()
+            if valor and valor not in ("true", "false"):
+                return jsonify({
+                    "erro": "Contexto do trecho anterior precisa ser "
+                            "verdadeiro ou falso."}), 400
+            novos["condition_on_previous_text"] = valor
+
+        if "hallucination_silence_threshold" in dados:
+            valor = str(dados.get("hallucination_silence_threshold") or "").strip()
+            if valor:
+                try:
+                    float(valor)
+                except ValueError:
+                    return jsonify({
+                        "erro": "Limiar de silêncio para alucinação precisa "
+                                "ser um número, em segundos (ex: 2)."}), 400
+            novos["hallucination_silence_threshold"] = valor
 
         if not novos:
             return jsonify({"erro": "Nada para gravar."}), 400
@@ -859,6 +885,9 @@ PAGINA = """<!doctype html>
   details#config input, details#config-transcricao input {
     font: inherit; background: var(--surface-2); color: var(--text);
     border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 8px 10px; }
+  /* Checkbox fica ao lado do texto, não empilhado como os outros campos. */
+  details#config-transcricao label.linha-checkbox {
+    display: flex; align-items: center; gap: 8px; }
   details#config-transcricao p.dica-config { margin: 0; }
   .rodape { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
   .dica-config { flex: 1; font-size: 13px; color: var(--text-muted); }
@@ -1022,6 +1051,10 @@ PAGINA = """<!doctype html>
       </label>
       <label><span class="rotulo-com-ajuda">Sil&ecirc;ncio m&iacute;nimo (ms)<span class="ajuda" tabindex="0" data-tip="Tempo m&iacute;nimo de sil&ecirc;ncio, em milissegundos, para separar duas falas. Evita cortar a &uacute;ltima palavra de falas r&aacute;pidas.">?</span></span>
         <input type="text" id="vad_min_silence_ms" placeholder="ex: 300 -- evita cortar a &uacute;ltima palavra de falas r&aacute;pidas">
+      </label>
+      <label class="linha-checkbox"><input type="checkbox" id="condition_on_previous_text"> <span class="rotulo-com-ajuda">Condicionar no trecho anterior<span class="ajuda" tabindex="0" data-tip="O Whisper por padr&atilde;o usa o texto do trecho anterior para decodificar o pr&oacute;ximo, o que ajuda a manter nome pr&oacute;prio consistente -- mas tamb&eacute;m deixa uma alucina&ccedil;&atilde;o em sil&ecirc;ncio ou trilha sonora se realimentar nos trechos seguintes (a legenda repetindo frases parecidas, tipo 'Esse &eacute; o primeiro', 'Esse &eacute; o segundo'...). Desmarcado (padr&atilde;o aqui) quebra essa cadeia.">?</span></span></label>
+      <label><span class="rotulo-com-ajuda">Limiar de sil&ecirc;ncio p/ alucina&ccedil;&atilde;o (s)<span class="ajuda" tabindex="0" data-tip="Segundos de sil&ecirc;ncio que o Whisper pula quando desconfia de alucina&ccedil;&atilde;o, em vez de tentar transcrever. Ajuda especificamente com trechos de m&uacute;sica/sil&ecirc;ncio sem fala nenhuma. Em branco, n&atilde;o mexe nisso.">?</span></span>
+        <input type="text" id="hallucination_silence_threshold" placeholder="ex: 2 -- em branco = desligado">
       </label>
       <div class="rodape">
         <span class="dica-config" id="mensagem-salvar-vad">Mudan&ccedil;as valem a partir do pr&oacute;ximo trabalho enviado &agrave; fila.</span>
@@ -1528,10 +1561,15 @@ async function carregarConfig() {
     'em branco = ' + c.vad_method_padrao + '. Ex: silero_v4_fw, pyannote_v3, webrtc';
   $('vad_threshold').value = c.vad_threshold ?? '';
   $('vad_min_silence_ms').value = c.vad_min_silence_ms ?? '';
+  // null (não configurado) vira desmarcado -- mesmo padrão desligado do
+  // transcribe.py, sem repetir esse valor aqui.
+  $('condition_on_previous_text').checked = c.condition_on_previous_text === true;
+  $('hallucination_silence_threshold').value = c.hallucination_silence_threshold ?? '';
   const seloVad = $('estado-vad');
   const vadAtiva = c.vad_threshold !== null || c.vad_min_silence_ms !== null
     || !!c.whisper_model || !!c.whisper_compute_type || !!c.vad_method
-    || !!c.whisper_language;
+    || !!c.whisper_language || c.condition_on_previous_text === true
+    || c.hallucination_silence_threshold !== null;
   seloVad.className = 'selo ' + (vadAtiva ? 'ok' : '');
   seloVad.textContent = vadAtiva ? 'ajustada' : 'padrão do Whisper';
 
@@ -1650,6 +1688,8 @@ $('salvar-vad').onclick = async () => {
     vad_method: $('vad_method').value.trim(),
     vad_threshold: $('vad_threshold').value.trim(),
     vad_min_silence_ms: $('vad_min_silence_ms').value.trim(),
+    condition_on_previous_text: $('condition_on_previous_text').checked ? 'true' : 'false',
+    hallucination_silence_threshold: $('hallucination_silence_threshold').value.trim(),
   };
 
   $('salvar-vad').disabled = true;
