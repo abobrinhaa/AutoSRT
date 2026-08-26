@@ -127,6 +127,47 @@ class TestBuildCommand(unittest.TestCase):
         self.assertEqual(command[-2:], ["--no_speech_threshold", "0.3"])
 
 
+class TestIterLines(unittest.TestCase):
+    """Regressão: a barra do Whisper reescreve a mesma linha terminando cada
+    atualização em \\r, e só manda \\n no fim. Iterando o stream direto (que
+    quebra só em \\n) o progresso inteiro chegava de uma vez, quando a
+    transcrição já tinha acabado -- barra parada em 0% e sem previsão de
+    tempo, porque Job.segundos_restantes() precisa de progresso para
+    estimar."""
+
+    def iterar(self, texto):
+        import io
+        return list(transcribe._iter_lines(io.StringIO(texto)))
+
+    def test_quebra_em_carriage_return(self):
+        self.assertEqual(self.iterar("10%\r20%\r30%\r"),
+                         ["10%", "20%", "30%"])
+
+    def test_quebra_em_nova_linha_como_antes(self):
+        self.assertEqual(self.iterar("uma\noutra\n"), ["uma", "outra"])
+
+    def test_mistura_dos_dois(self):
+        self.assertEqual(self.iterar("Carregando\n10%\r99%\rPronto\n"),
+                         ["Carregando", "10%", "99%", "Pronto"])
+
+    def test_ultimo_pedaco_sem_terminador_nao_se_perde(self):
+        self.assertEqual(self.iterar("50%"), ["50%"])
+
+    def test_terminadores_seguidos_nao_geram_vazio(self):
+        self.assertEqual(self.iterar("a\r\n\r\nb"), ["a", "b"])
+
+    def test_stream_vazio(self):
+        self.assertEqual(self.iterar(""), [])
+
+    def test_progresso_e_lido_de_cada_atualizacao(self):
+        # O ponto do conserto: cada "N%" vira um evento de progresso, em vez
+        # de todos chegarem juntos no fim.
+        vistos = [int(m.group(1))
+                  for linha in self.iterar("5%\r40%\r100%\r")
+                  for m in [transcribe.PROGRESS_RE.search(linha)] if m]
+        self.assertEqual(vistos, [5, 40, 100])
+
+
 class TestLoadTranscript(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp()

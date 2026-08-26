@@ -230,6 +230,32 @@ def load_transcript(srt_path: str) -> list:
     return cues
 
 
+def _iter_lines(stream):
+    """Percorre a saída quebrando em ``\\r`` além de ``\\n``.
+
+    Barra de progresso reescreve sempre a mesma linha do terminal: ela
+    termina cada atualização com ``\\r``, e só manda ``\\n`` quando acaba.
+    Iterando o stream direto (que quebra só em ``\\n``), o laço fica parado
+    até a transcrição inteira terminar -- o progresso é impresso, mas
+    chega tarde demais para servir de progresso. Daí a barra travada em 0%
+    e sem previsão de tempo: :meth:`autosrt.jobs.Job.segundos_restantes` só
+    arrisca uma estimativa depois que o trabalho andou um pouco.
+    """
+    pedaco = []
+    while True:
+        char = stream.read(1)
+        if not char:
+            break
+        if char in ("\r", "\n"):
+            if pedaco:
+                yield "".join(pedaco)
+                pedaco = []
+        else:
+            pedaco.append(char)
+    if pedaco:
+        yield "".join(pedaco)
+
+
 def _run_process(command, *, progress=None, cancel_event=None, timeout=None):
     """Executa o Whisper, repassando o progresso conforme ele é impresso."""
     try:
@@ -241,7 +267,7 @@ def _run_process(command, *, progress=None, cancel_event=None, timeout=None):
 
     output_tail = []
     try:
-        for line in process.stdout:
+        for line in _iter_lines(process.stdout):
             output_tail.append(line)
             del output_tail[:-40]
             if progress:
@@ -260,7 +286,10 @@ def _run_process(command, *, progress=None, cancel_event=None, timeout=None):
             process.stdout.close()
 
     if process.returncode != 0:
-        detail = "".join(output_tail).strip()[-800:]
+        # As linhas já vêm sem o terminador (_iter_lines o consome), então
+        # o que junta de volta é o "\n" daqui -- sem ele o traceback do
+        # Whisper chegaria numa linha só, ilegível.
+        detail = "\n".join(output_tail).strip()[-800:]
         raise TranscriptionError(_explicar_falha(detail))
 
 
