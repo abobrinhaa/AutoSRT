@@ -1048,6 +1048,41 @@ PAGINA = """<!doctype html>
                  border-top: 1px solid var(--border); padding-top: 10px; }
   .dock-estado.ligado { color: var(--success); }
   .dock-estado.recado { color: var(--accent); font-weight: 600; }
+  /* Botao que abre a configuracao. Fica aqui, colado no toggle, porque as
+     duas abas antes moravam no fim da pagina: quem nao rolasse ate la nao
+     descobria que existiam. */
+  .dock-acoes { margin-top: 10px; border-top: 1px solid var(--border); padding-top: 10px; }
+  .botao-config { display: flex; align-items: center; justify-content: center; gap: 8px;
+                  width: 100%; background: var(--surface-2); color: var(--text);
+                  border: 1px solid var(--border); font-size: 14px; }
+  .botao-config:hover:enabled { background: var(--surface-hover); }
+  .botao-config svg { width: 17px; height: 17px; flex-shrink: 0; }
+  /* Sem chave a traducao nao roda. Antes o painel se abria sozinho no fim da
+     pagina para avisar; dentro do dialogo isso ficaria invisivel, entao a
+     falta vira uma marca no proprio botao que leva ate la. */
+  .ponto-aviso { width: 8px; height: 8px; border-radius: 50%;
+                 background: var(--warning); flex-shrink: 0; }
+
+  /* Dialogo da configuracao. <dialog> nativo em vez de div: ele ja da foco
+     preso dentro do painel, Esc para sair e camada acima do dock fixo. */
+  .modal-config { width: min(720px, 92vw); max-height: 86vh; padding: 0;
+                  border: 1px solid var(--border); border-radius: var(--radius);
+                  background: var(--surface); color: var(--text);
+                  box-shadow: var(--shadow-md); overflow: auto; }
+  .modal-config::backdrop { background: rgba(10, 11, 15, .55); }
+  .topo-modal { display: flex; align-items: center; gap: 12px; padding: 14px 16px;
+                border-bottom: 1px solid var(--border); position: sticky; top: 0;
+                background: var(--surface); z-index: 3; }
+  .topo-modal h2 { margin: 0; flex: 1; }
+  .corpo-modal { padding: 0 16px 16px; }
+  /* Dentro do dialogo as abas ja tem o respiro do proprio painel; a margem
+     de 20px pensada para o fim da pagina abriria um vao no topo. */
+  .modal-config details#config, .modal-config details#config-transcricao {
+    margin-top: 12px; }
+  #fechar-config { width: 32px; height: 32px; padding: 0; flex-shrink: 0;
+                   font-size: 20px; line-height: 1; background: var(--surface-2);
+                   color: var(--text-muted); border: 1px solid var(--border); }
+  #fechar-config:hover:enabled { background: var(--surface-hover); color: var(--text); }
   /* 1280px e onde a coluna de 820px + o painel de 200px cabem sem se
      tocarem; abaixo disso o painel cobriria o conteudo, entao fica no fluxo. */
   @media (min-width: 1280px) {
@@ -1096,6 +1131,17 @@ PAGINA = """<!doctype html>
          voc&ecirc; na lista (processo antigo).</p>
     </div>
     <p class="dock-estado" id="auto-estado" role="status" aria-live="polite"></p>
+    <div class="dock-acoes">
+      <button type="button" id="abrir-config" class="botao-config"
+              aria-haspopup="dialog" aria-controls="painel-config">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+             stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <circle cx="12" cy="12" r="3"></circle>
+          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1.08-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1.08 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V10a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z"></path></svg>
+        <span>Configura&ccedil;&otilde;es</span>
+        <span id="aviso-config" class="ponto-aviso" hidden></span>
+      </button>
+    </div>
   </aside>
 
   <div class="drop" id="drop">
@@ -1123,6 +1169,13 @@ PAGINA = """<!doctype html>
   <h2>Trabalhos <button id="limpar" class="fantasma" hidden>Limpar terminados</button></h2>
   <div id="trabalhos"><div class="vazio">Nada ainda.</div></div>
 
+  <dialog id="painel-config" class="modal-config" aria-labelledby="titulo-painel-config">
+  <div class="topo-modal">
+    <h2 id="titulo-painel-config">Configura&ccedil;&otilde;es</h2>
+    <button type="button" id="fechar-config" class="fantasma"
+            title="Fechar (Esc)" aria-label="Fechar configura&ccedil;&otilde;es">&times;</button>
+  </div>
+  <div class="corpo-modal">
   <details id="config">
     <summary data-tip="Endere&ccedil;o, chave e modelo do servi&ccedil;o usado para traduzir as legendas para portugu&ecirc;s.">Configura&ccedil;&atilde;o da tradu&ccedil;&atilde;o <span id="estado-chave"></span></summary>
     <div class="painel">
@@ -1196,6 +1249,8 @@ PAGINA = """<!doctype html>
       </div>
     </div>
   </details>
+  </div>
+  </dialog>
 </main>
 
 <script>
@@ -1524,6 +1579,31 @@ autoProcessar.onchange = async () => {
   refletirAutomatico();
 };
 
+// A configuracao mora num dialogo aberto pelo botao do painel lateral, e nao
+// mais em duas abas soltas no fim da pagina. O <dialog> nativo ja cuida do
+// foco preso e do Esc; sobra abrir, fechar e o clique no fundo.
+const dialogoConfig = $('painel-config');
+
+$('abrir-config').onclick = () => dialogoConfig.showModal();
+$('fechar-config').onclick = () => dialogoConfig.close();
+
+// Clique no fundo escuro chega no proprio <dialog>; clique no conteudo chega
+// num filho. So o primeiro conta como pedido de sair.
+dialogoConfig.addEventListener('click', (e) => {
+  if (e.target === dialogoConfig) dialogoConfig.close();
+});
+
+// Sem chave a traducao nao roda -- e o painel que diz isso agora esta
+// escondido atras do botao. O aviso sai para fora, junto de quem abre.
+function avisarChaveFaltando(faltando) {
+  const botao = $('abrir-config');
+  $('aviso-config').hidden = !faltando;
+  botao.title = faltando
+    ? 'Falta a chave da tradução' : 'Tradução e transcrição';
+  botao.setAttribute('aria-label', faltando
+    ? 'Configurações — falta a chave da tradução' : 'Configurações');
+}
+
 let recemChegados = [];
 
 function enviar(listaDeArquivos) {
@@ -1777,12 +1857,14 @@ async function carregarConfig() {
 
   marcarModoAtivo();
 
-  // Sem chave, a tradução não funciona: abre o painel para não deixar o
+  // Sem chave, a tradução não funciona: o botão avisa, para não deixar o
   // usuário descobrir isso só quando o primeiro trabalho falhar. Não vale
   // para o modo local, que não costuma precisar de chave nenhuma.
-  if (!c.tem_chave && $('base_url').value !== c.local_base_url) {
-    $('config').open = true;
-  }
+  const semChave = !c.tem_chave && $('base_url').value !== c.local_base_url;
+  avisarChaveFaltando(semChave);
+  // E ao abrir o diálogo a aba da tradução já vem expandida: o aviso trouxe
+  // o usuário até aqui, não faz sentido cobrar mais um clique.
+  if (semChave) $('config').open = true;
 }
 
 // Só troca o endereço; o usuário continua podendo digitar por cima, para um

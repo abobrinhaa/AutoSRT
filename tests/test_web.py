@@ -188,6 +188,43 @@ class TestPagina(BaseWeb):
         self.assertIn('id="condition_on_previous_text"', html)
         self.assertIn('id="hallucination_silence_threshold"', html)
 
+    def test_botao_de_configuracao_fica_junto_do_toggle(self):
+        # As duas abas de configuração moravam no fim da página: quem não
+        # rolasse até lá não descobria que existiam. O botão que as abre
+        # fica agora no painel do automático, ao lado do toggle.
+        html = self.client.get("/").get_data(as_text=True)
+        self.assertIn('id="abrir-config"', html)
+        self.assertIn('aria-haspopup="dialog"', html)
+        self.assertIn('aria-controls="painel-config"', html)
+        dock = html.index('id="dock-auto"')
+        botao = html.index('id="abrir-config"')
+        fim_do_dock = html.index("</aside>")
+        self.assertTrue(dock < botao < fim_do_dock,
+                        "o botão de configuração saiu do painel do toggle")
+
+    def test_abas_de_configuracao_moram_dentro_do_dialogo(self):
+        html = self.client.get("/").get_data(as_text=True)
+        abre = html.index('<dialog id="painel-config"')
+        fecha = html.index("</dialog>")
+        for painel in ('id="config"', 'id="config-transcricao"'):
+            self.assertTrue(abre < html.index(painel) < fecha,
+                            f"{painel} ficou fora do diálogo")
+
+    def test_dialogo_de_configuracao_da_saida(self):
+        # Heurística 3 (controle e liberdade): botão de fechar explícito,
+        # além do Esc que o <dialog> nativo já dá, e clique no fundo.
+        html = self.client.get("/").get_data(as_text=True)
+        self.assertIn('id="fechar-config"', html)
+        self.assertIn("dialogoConfig.close()", html)
+        self.assertIn("showModal()", html)
+
+    def test_falta_de_chave_avisa_no_botao_que_abre_a_configuracao(self):
+        # Antes o painel sem chave se abria sozinho no fim da página. Dentro
+        # do diálogo isso ficaria invisível -- o aviso migra para o botão.
+        html = self.client.get("/").get_data(as_text=True)
+        self.assertIn('id="aviso-config"', html)
+        self.assertIn("function avisarChaveFaltando", html)
+
 
 class TestListagem(BaseWeb):
     def test_lista_videos_e_legendas(self):
