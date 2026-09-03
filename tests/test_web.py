@@ -247,6 +247,35 @@ class TestPagina(BaseWeb):
         self.assertIn("dialogoConfig.close()", html)
         self.assertIn("showModal()", html)
 
+    def test_dialogo_fechado_some_de_verdade_da_pagina(self):
+        # Regressão: ".modal-config { display: flex }" é declaração de autor e
+        # vence o "dialog:not([open]) { display: none }" do navegador -- o
+        # mesmo tropeço já visto no campo-chave e na barra de ações. Sem esta
+        # regra o diálogo nascia aberto no fim da tela inicial (a "aba antiga"
+        # de configuração) e o botão de fechar não tinha efeito nenhum.
+        html = self.client.get("/").get_data(as_text=True)
+        self.assertIn("dialog.modal-config:not([open]) { display: none; }", html)
+
+    def test_configuracao_so_aparece_pelo_botao(self):
+        # A única entrada para a configuração é o botão do cabeçalho. Nada de
+        # painel solto na tela inicial: o <dialog> não pode vir com "open".
+        html = self.client.get("/").get_data(as_text=True)
+        abre = html.index("<dialog id=\"painel-config\"")
+        tag = html[abre:html.index(">", abre)]
+        self.assertNotIn(" open", tag,
+                         "o diálogo de configuração nasce aberto na página")
+
+    def test_fundo_fica_parado_e_de_uma_cor_so(self):
+        # Duas queixas com a mesma origem: o gradiente era pintado sobre a
+        # caixa do body. Página longa -> ele estica e "anda" ao rolar; página
+        # curta -> o repeat padrão emenda o fim claro com o começo, e o fundo
+        # aparece com duas cores. Preso à viewport, cobre a tela inteira e
+        # fica parado; a cor sólida cobre o que sobrar.
+        html = self.client.get("/").get_data(as_text=True)
+        self.assertIn("background-attachment: fixed;", html)
+        self.assertIn("--bg-solid:", html)
+        self.assertIn("background-color: var(--bg-solid);", html)
+
     def test_falta_de_chave_avisa_no_botao_que_abre_a_configuracao(self):
         # Antes o painel sem chave se abria sozinho no fim da página. Dentro
         # do diálogo isso ficaria invisível -- o aviso migra para o botão.

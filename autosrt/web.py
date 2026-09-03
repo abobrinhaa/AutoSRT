@@ -778,6 +778,7 @@ PAGINA = """<!doctype html>
   :root {
     color-scheme: light dark;
     --bg-grad: linear-gradient(180deg, #f8f9fb 0%, #eef0f4 100%);
+    --bg-solid: #eef0f4;
     --surface: #ffffff;
     --surface-2: #eef0f4;
     --surface-hover: #e6e9ef;
@@ -802,6 +803,7 @@ PAGINA = """<!doctype html>
   @media (prefers-color-scheme: dark) {
     :root:not([data-tema="claro"]) {
       --bg-grad: linear-gradient(180deg, #1b1b1f 0%, #17171b 100%);
+      --bg-solid: #17171b;
       --surface: #212129; --surface-2: #26262f; --surface-hover: #2c2c36;
       --border: #313139; --text: #ecedf1; --text-muted: #9a9aa2;
       --accent-hover: #5c9bfc; --accent-soft: #1e2c47;
@@ -814,6 +816,7 @@ PAGINA = """<!doctype html>
   /* Escolha manual (botão no topo) sempre vence a preferência do sistema. */
   :root[data-tema="escuro"] {
     --bg-grad: linear-gradient(180deg, #1b1b1f 0%, #17171b 100%);
+    --bg-solid: #17171b;
     --surface: #212129; --surface-2: #26262f; --surface-hover: #2c2c36;
     --border: #313139; --text: #ecedf1; --text-muted: #9a9aa2;
     --accent-hover: #5c9bfc; --accent-soft: #1e2c47;
@@ -823,8 +826,18 @@ PAGINA = """<!doctype html>
     --shadow-md: 0 10px 30px rgba(0, 0, 0, .45);
   }
   * { box-sizing: border-box; }
+  /* O gradiente e pintado sobre a caixa do body, entao sem "fixed" ele
+     acompanha a altura da pagina: pagina longa faz o fundo andar junto
+     com a rolagem, e pagina curta faz o repeat padrao emendar o fim
+     claro com o comeco -- o fundo aparecendo com duas cores. Preso a
+     viewport ele cobre a tela inteira, uma vez so, e fica parado. A cor
+     solida por baixo cobre o que sobrar (overscroll do celular). */
   body { margin: 0; font: 16px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif;
-         background: var(--bg-grad); color: var(--text);
+         min-height: 100vh; color: var(--text);
+         background-color: var(--bg-solid);
+         background-image: var(--bg-grad);
+         background-attachment: fixed;
+         background-repeat: no-repeat;
          transition: background-color .2s ease, color .2s ease; }
   main { max-width: 820px; margin: 0 auto; padding: 24px 16px 64px; }
   .cabecalho { display: flex; align-items: flex-start; justify-content: space-between;
@@ -1067,6 +1080,12 @@ PAGINA = """<!doctype html>
                   border: 1px solid var(--border); border-radius: var(--radius);
                   background: var(--surface); color: var(--text);
                   box-shadow: var(--shadow-md); overflow: hidden; }
+  /* Mesmo tropeco do campo-chave e da barra de acoes, agora no dialogo:
+     o "display: flex" acima e declaracao de autor e vence o
+     "dialog:not([open]) { display: none }" da folha do navegador. Sem
+     esta regra o painel nascia aberto no fim da tela inicial e o botao
+     de fechar removia o "open" sem esconder nada. */
+  dialog.modal-config:not([open]) { display: none; }
   .modal-config::backdrop { background: rgba(10, 11, 15, .55); }
   .topo-modal { flex-shrink: 0; border-bottom: 1px solid var(--border); }
   .titulo-modal { display: flex; align-items: center; gap: 12px; padding: 14px 20px 0; }
