@@ -172,6 +172,49 @@ class TestAntiAlucinacao(unittest.TestCase):
         self.assertIsNone(config.get_hallucination_silence_threshold())
 
 
+class TestProcessarAoEnviar(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self._anterior = os.environ.get("AUTOSRT_CONFIG_DIR")
+        os.environ["AUTOSRT_CONFIG_DIR"] = self.tmp
+        self._env = os.environ.pop("AUTOSRT_AUTO_PROCESSAR", None)
+
+    def tearDown(self):
+        if self._anterior is None:
+            os.environ.pop("AUTOSRT_CONFIG_DIR", None)
+        else:
+            os.environ["AUTOSRT_CONFIG_DIR"] = self._anterior
+        # Repor só quando havia valor esconderia o que os testes daqui
+        # escrevem: a variável vazaria ligada para os módulos seguintes.
+        if self._env is None:
+            os.environ.pop("AUTOSRT_AUTO_PROCESSAR", None)
+        else:
+            os.environ["AUTOSRT_AUTO_PROCESSAR"] = self._env
+
+    def test_sem_configuracao_e_desligado(self):
+        # Uma transcrição custa meia hora de GPU: ligar por omissão gastaria
+        # a placa de quem só quis guardar um arquivo na pasta.
+        self.assertFalse(config.get_auto_processar())
+
+    def test_le_do_arquivo(self):
+        config.save_config({"auto_processar": "true"})
+        self.assertTrue(config.get_auto_processar())
+
+    def test_false_desliga(self):
+        config.save_config({"auto_processar": "false"})
+        self.assertFalse(config.get_auto_processar())
+
+    def test_ambiente_tem_prioridade(self):
+        config.save_config({"auto_processar": "false"})
+        os.environ["AUTOSRT_AUTO_PROCESSAR"] = "true"
+        self.assertTrue(config.get_auto_processar())
+
+    def test_valor_invalido_nao_liga(self):
+        # Na dúvida, não gasta GPU.
+        config.save_config({"auto_processar": "talvez"})
+        self.assertFalse(config.get_auto_processar())
+
+
 class TestModeloDoWhisper(unittest.TestCase):
     """A fila web usava o padrão fixo do transcribe.py e não tinha como
     trocar -- o ajuste só existia no --modelo do CLI, justamente na

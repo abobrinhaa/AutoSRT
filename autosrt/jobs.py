@@ -156,9 +156,30 @@ class JobQueue:
             return self._jobs.get(job_id)
 
     def listar(self, limite=20) -> list:
+        """Os trabalhos que valem a tela agora, na ordem em que importam.
+
+        Primeiro o que roda, depois a fila na ordem em que será atendida,
+        depois os terminados do mais novo para o mais velho.
+
+        Cortar pela ordem de chegada, como antes, escondia justamente o
+        trabalho em andamento assim que a fila passava do limite: com 50
+        filmes enviados de uma vez, a página mostrava 20 cartões "na fila"
+        parados e nenhuma barra andando -- o único que andava era o mais
+        antigo, o primeiro a ser cortado.
+
+        As vagas são disputadas: metade fica reservada aos terminados
+        quando a fila é maior que a lista, senão os botões de baixar
+        sumiriam atrás de uma parede de "na fila".
+        """
         with self._lock:
-            ids = self._ordem[-limite:]
-            return [self._jobs[i] for i in reversed(ids)]
+            todos = [self._jobs[i] for i in self._ordem]
+
+        ativos = ([j for j in todos if j.estado == RODANDO]
+                  + [j for j in todos if j.estado == PENDENTE])
+        recentes = [j for j in reversed(todos) if j.estado in FINAIS]
+
+        vagas = min(len(recentes), max(limite - len(ativos), limite // 2))
+        return ativos[:limite - vagas] + recentes[:vagas]
 
     def remover(self, job_id) -> bool:
         """Tira um trabalho já terminado da lista. Devolve se removeu.

@@ -4,6 +4,7 @@ import os
 import re
 import shutil
 import tempfile
+import threading
 import time
 import unittest
 from unittest import mock
@@ -386,6 +387,149 @@ class TestEnvio(BaseWeb):
     def test_nome_com_caminho_e_reduzido(self):
         self.enviar("../../fora.srt")
         self.assertTrue(os.path.exists(os.path.join(self.tmp, "fora.srt")))
+
+
+class TestAutomatico(BaseWeb):
+    """O "processar ao enviar": filme entra na fila sozinho, legenda não.
+
+    Roda contra o config.json de verdade (redirecionado para a pasta do
+    teste), porque metade do valor está justamente em o estado sobreviver e
+    valer para todo mundo na rede -- não é uma caixinha do navegador.
+    """
+
+    def setUp(self):
+        super().setUp()
+        from autosrt import config
+        self.config = config
+        self._app_dir = config.app_directory
+        config.app_directory = lambda: self.tmp
+        self._env = os.environ.pop("AUTOSRT_AUTO_PROCESSAR", None)
+        # O operário pega o trabalho de verdade; sem isto ele tentaria
+        # chamar o Whisper num .mkv de um byte e o teste dependeria de GPU.
+        self._patch = mock.patch.object(
+            pipeline, "process_media", side_effect=RuntimeError("sem whisper"))
+        self._patch.start()
+
+    def tearDown(self):
+        self._patch.stop()
+        self.config.app_directory = self._app_dir
+        if self._env is None:
+            os.environ.pop("AUTOSRT_AUTO_PROCESSAR", None)
+        else:
+            os.environ["AUTOSRT_AUTO_PROCESSAR"] = self._env
+
+    def ligar(self, ligado=True):
+        resposta = self.client.post(
+            "/api/config", json={"auto_processar": "true" if ligado else "false"})
+        self.assertEqual(resposta.status_code, 200)
+
+    def enviar(self, *pares):
+        return self.client.post(
+            "/api/enviar",
+            data={"arquivo": [(io.BytesIO(c.encode("utf-8")), n)
+                              for n, c in pares]},
+            content_type="multipart/form-data")
+
+    def trabalhos(self):
+        return self.client.get("/api/trabalhos").get_json()
+
+    def test_filme_enviado_entra_na_fila_sozinho(self):
+        self.ligar()
+        resposta = self.enviar(("filme.mkv", "video"))
+        self.assertEqual(resposta.status_code, 201)
+        self.assertTrue(resposta.get_json()["automatico"])
+        self.assertEqual(len(resposta.get_json()["enfileirados"]), 1)
+
+        trabalhos = self.trabalhos()
+        self.assertEqual(len(trabalhos), 1)
+        self.assertEqual(trabalhos[0]["nome"], "filme.mkv")
+
+    def test_o_filme_vai_para_a_corrente_inteira(self):
+        # "Processar ao enviar" quer dizer transcrever E traduzir: parar na
+        # transcrição deixaria o segundo passo que o botão veio eliminar.
+        self.ligar()
+        self.enviar(("filme.mkv", "video"))
+        self.assertEqual(self.trabalhos()[0]["detalhes"]["acao"], "completo")
+
+    def test_legenda_sozinha_fica_fora_da_regra(self):
+        self.ligar()
+        resposta = self.enviar(("filme.srt", SRT))
+        self.assertEqual(resposta.get_json()["enfileirados"], [])
+        self.assertEqual(self.trabalhos(), [])
+        # Guardada, sim: ela só não vira trabalho sem alguém pedir.
+        self.assertTrue(os.path.exists(os.path.join(self.tmp, "filme.srt")))
+
+    def test_legenda_junto_do_filme_nao_vira_trabalho(self):
+        self.ligar()
+        self.enviar(("filme.mkv", "video"), ("filme.srt", SRT))
+        trabalhos = self.trabalhos()
+        self.assertEqual([t["nome"] for t in trabalhos], ["filme.mkv"])
+
+    def test_legenda_do_lado_nao_desvia_o_filme(self):
+        # A legenda irmã é ignorada de propósito: o filme chega sem legenda
+        # boa, e o pedido é transcrever de novo, não reaproveitar.
+        self.escrever("filme.srt")
+        self.ligar()
+        self.enviar(("filme.mkv", "video"))
+        self.assertEqual(self.trabalhos()[0]["detalhes"]["acao"], "completo")
+
+    def test_lote_inteiro_entra_de_uma_vez(self):
+        # O caso que o botão existe para atender: descarregar a pasta de
+        # filmes num arrastar só e sair de perto.
+        self.ligar()
+        resposta = self.enviar(*[(f"filme{i}.mkv", "video") for i in range(5)])
+        self.assertEqual(len(resposta.get_json()["enfileirados"]), 5)
+        self.assertEqual(len(self.trabalhos()), 5)
+
+    def test_o_que_roda_nao_some_atras_do_lote(self):
+        # Enfileirar 30 de uma vez não pode empurrar para fora da lista
+        # justamente o que está sendo transcrito agora.
+        self.ligar()
+        self.enviar(*[(f"filme{i:02d}.mkv", "video") for i in range(30)])
+        nomes = [t["nome"] for t in self.trabalhos()]
+        self.assertIn("filme00.mkv", nomes)
+
+    def test_desligado_nao_enfileira_nada(self):
+        self.ligar(False)
+        resposta = self.enviar(("filme.mkv", "video"))
+        self.assertFalse(resposta.get_json()["automatico"])
+        self.assertEqual(self.trabalhos(), [])
+
+    def test_padrao_e_desligado(self):
+        # Uma transcrição custa meia hora de GPU; ligar isso por omissão
+        # gastaria a placa de quem só quis guardar um arquivo.
+        self.assertFalse(self.client.get("/api/config").get_json()["auto_processar"])
+        self.enviar(("filme.mkv", "video"))
+        self.assertEqual(self.trabalhos(), [])
+
+    def test_estado_sobrevive_e_volta_na_config(self):
+        self.ligar()
+        self.assertTrue(self.client.get("/api/config").get_json()["auto_processar"])
+        self.ligar(False)
+        self.assertFalse(self.client.get("/api/config").get_json()["auto_processar"])
+
+    def test_reenvio_nao_duplica_o_trabalho_em_andamento(self):
+        self.ligar()
+        self.enviar(("filme.mkv", "video"))
+        self.enviar(("filme.mkv", "video"))
+        self.assertEqual(len(self.trabalhos()), 1)
+
+    def test_valor_invalido_e_recusado(self):
+        resposta = self.client.post("/api/config", json={"auto_processar": "talvez"})
+        self.assertEqual(resposta.status_code, 400)
+        self.assertIn("verdadeiro ou falso", resposta.get_json()["erro"])
+
+
+class TestAcaoAutomatica(unittest.TestCase):
+    """A regra em si, sem HTTP no meio."""
+
+    def test_midia_transcreve_e_traduz(self):
+        for nome in ("filme.mkv", "filme.mp4", "audio.mp3"):
+            self.assertEqual(web.acao_automatica(nome), "completo", nome)
+
+    def test_legenda_nao_tem_acao_automatica(self):
+        for nome in ("filme.srt", "filme.ssa", "filme.ass"):
+            self.assertIsNone(web.acao_automatica(nome), nome)
 
 
 class TestProcessamento(BaseWeb):
@@ -955,6 +1099,69 @@ class TestModelos(BaseWeb):
 
         self.assertNotIn("sk-or-v1-segredo", resposta.get_data(as_text=True))
         self.assertEqual(fake.call_args.kwargs["api_key"], "sk-or-v1-segredo")
+
+
+class TestListaDeTrabalhos(unittest.TestCase):
+    """O corte da lista tem que preservar o que a pessoa foi olhar."""
+
+    def fila_parada(self, quantos):
+        """Fila com `quantos` trabalhos, nenhum deles andando."""
+        travar = threading.Event()
+        fila = jobs.JobQueue(lambda job: travar.wait(5))
+        enviados = [fila.enviar(f"j{i}", f"/tmp/{i}") for i in range(quantos)]
+        # Espera o operário pegar o primeiro, senão o teste corre antes de
+        # existir qualquer trabalho em andamento para procurar.
+        fim = time.time() + 5
+        while time.time() < fim and enviados[0].estado != jobs.RODANDO:
+            time.sleep(0.01)
+        self.addCleanup(travar.set)
+        return fila, enviados
+
+    def test_o_que_roda_aparece_mesmo_com_a_fila_cheia(self):
+        # Regressão: cortando pela ordem de chegada, mandar 50 filmes de uma
+        # vez deixava na tela 20 cartões "na fila" parados -- o único que
+        # andava era o mais antigo, e era o primeiro a ser cortado.
+        fila, enviados = self.fila_parada(50)
+        listados = fila.listar()
+        self.assertEqual(listados[0].id, enviados[0].id)
+        self.assertEqual(len(listados), 20)
+
+    def test_a_fila_aparece_na_ordem_em_que_sera_atendida(self):
+        fila, enviados = self.fila_parada(50)
+        listados = fila.listar()
+        self.assertEqual([j.id for j in listados],
+                         [j.id for j in enviados[:20]])
+
+    def test_terminados_nao_somem_atras_da_fila(self):
+        # Sem vaga reservada, uma fila longa engoliria os botões de baixar.
+        fila = jobs.JobQueue(lambda job: None)
+        prontos = [fila.enviar(f"pronto{i}", f"/tmp/p{i}") for i in range(5)]
+        fim = time.time() + 5
+        while time.time() < fim and any(j.estado not in jobs.FINAIS for j in prontos):
+            time.sleep(0.02)
+
+        travar = threading.Event()
+        self.addCleanup(travar.set)
+        fila._worker = lambda job: travar.wait(5)
+        for i in range(50):
+            fila.enviar(f"espera{i}", f"/tmp/e{i}")
+
+        listados = fila.listar()
+        self.assertEqual(len(listados), 20)
+        terminados = [j for j in listados if j.estado in jobs.FINAIS]
+        self.assertEqual(len(terminados), 5)
+        # Do mais novo para o mais velho, que é a ordem em que se procura
+        # o que acabou de sair.
+        self.assertEqual([j.id for j in terminados],
+                         [j.id for j in reversed(prontos)])
+
+    def test_lista_curta_cabe_inteira(self):
+        fila = jobs.JobQueue(lambda job: None)
+        enviados = [fila.enviar(f"j{i}", f"/tmp/{i}") for i in range(3)]
+        fim = time.time() + 5
+        while time.time() < fim and any(j.estado not in jobs.FINAIS for j in enviados):
+            time.sleep(0.02)
+        self.assertEqual({j.id for j in fila.listar()}, {j.id for j in enviados})
 
 
 class TestFila(unittest.TestCase):

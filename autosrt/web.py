@@ -139,6 +139,23 @@ def acoes_para(caminho) -> list:
     return [{"id": i, "rotulo": r} for i, r in acoes]
 
 
+def acao_automatica(caminho):
+    """Ação que o "processar ao enviar" escolhe para um arquivo que chegou.
+
+    Filme e áudio vão para a corrente inteira -- transcrever e traduzir --
+    porque é para isso que o botão existe: o filme chega sem legenda
+    nenhuma, e o que se quer dele é sempre a mesma coisa.
+
+    ``None`` para legenda, que fica de fora da regra de propósito. Quem
+    manda o filme junto com a legenda espera que os dois sejam considerados
+    em conjunto; traduzir a legenda na chegada a consumiria antes de o
+    vídeo terminar de subir. Legenda continua esperando uma escolha na
+    lista, onde as outras ações dela (converter, ajustar o tempo) também
+    estão.
+    """
+    return "completo" if pipeline.is_media(caminho) else None
+
+
 def _executar(job, engine):
     """Roda um trabalho. Chamado pelo operário da fila."""
     def status(mensagem):
@@ -354,15 +371,41 @@ def _register_routes(app, fila, media_dir, engine):
         return jsonify({"enfileirados": enfileirados,
                         "recusados": recusados}), 202
 
+    def _auto_enfileirar(guardados):
+        """Manda para a fila os filmes que acabaram de chegar.
+
+        Roda depois que o envio inteiro está gravado, nunca a cada arquivo:
+        o operário começa a trabalhar no instante em que recebe o primeiro
+        trabalho, e ele não deve disputar disco com o que ainda está subindo.
+
+        Legenda fica fora (:func:`acao_automatica` devolve ``None``), e
+        arquivo que já tem trabalho aberto também: reenviar por cima de uma
+        transcrição em andamento não é pedido de uma segunda transcrição.
+        """
+        enfileirados = []
+        for nome in guardados:
+            caminho = os.path.join(media_dir, nome)
+            acao = acao_automatica(caminho)
+            if not acao or fila.em_uso(caminho):
+                continue
+            job = fila.enviar(os.path.basename(nome), caminho, acao=acao)
+            enfileirados.append(job.para_json())
+        return enfileirados
+
     @app.post("/api/enviar")
     def enviar():
-        """Recebe um ou mais arquivos e os guarda, sem processar.
+        """Recebe um ou mais arquivos e os guarda.
 
-        Guardar e processar são passos separados de propósito. Quem envia o
+        Guardar e processar são passos separados por padrão. Quem envia o
         filme junto com a legenda espera que os dois sejam considerados em
         conjunto; enfileirar cada arquivo assim que chega faria a legenda ser
         traduzida sozinha antes de o vídeo terminar de subir, desperdiçando
         justamente o pareamento.
+
+        Com o "processar ao enviar" ligado (:func:`autosrt.config.get_auto_processar`),
+        os filmes deste envio vão para a fila assim que todos os arquivos
+        estiverem gravados -- o segundo passo some sem que o pareamento se
+        perca. A resposta diz o que entrou, em ``enfileirados``.
         """
         arquivos = request.files.getlist("arquivo")
         arquivos = [a for a in arquivos if a and a.filename]
@@ -386,7 +429,16 @@ def _register_routes(app, fila, media_dir, engine):
             return jsonify({"erro": recusados[0]["erro"],
                             "recusados": recusados}), 400
 
-        return jsonify({"guardados": guardados, "recusados": recusados}), 201
+        automatico = config.get_auto_processar()
+        return jsonify({
+            "guardados": guardados,
+            "recusados": recusados,
+            # Ecoado para a página poder explicar o que aconteceu com os
+            # arquivos sem ter que adivinhar o estado do botão -- quem
+            # ligou o automático em outra aba veria a explicação errada.
+            "automatico": automatico,
+            "enfileirados": _auto_enfileirar(guardados) if automatico else [],
+        }), 201
 
     @app.get("/api/config")
     def ler_config():
@@ -406,6 +458,10 @@ def _register_routes(app, fila, media_dir, engine):
             "modelo": modelo,
             "base_url": base_url,
             "tem_chave_tmdb": bool(config.get_tmdb_api_key()),
+            # Booleano, não string: aqui "não configurado" e "desligado"
+            # são a mesma coisa -- ninguém enfileira meia hora de GPU por
+            # omissão, então não há um terceiro estado a distinguir.
+            "auto_processar": config.get_auto_processar(),
             # Endereços padrão dos dois modos, para o botão de alternar na
             # página não precisar adivinhar nem duplicar essas constantes.
             "openrouter_base_url": llm.DEFAULT_BASE_URL,
@@ -495,6 +551,14 @@ def _register_routes(app, fila, media_dir, engine):
                         "erro": "Silêncio mínimo precisa ser um número "
                                 "inteiro de milissegundos (ex: 300)."}), 400
             novos["vad_min_silence_ms"] = valor
+
+        if "auto_processar" in dados:
+            valor = str(dados.get("auto_processar") or "").strip().lower()
+            if valor and valor not in ("true", "false"):
+                return jsonify({
+                    "erro": "Processar ao enviar precisa ser verdadeiro ou "
+                            "falso."}), 400
+            novos["auto_processar"] = valor
 
         if "condition_on_previous_text" in dados:
             valor = str(dados.get("condition_on_previous_text") or "").strip().lower()
@@ -941,6 +1005,58 @@ PAGINA = """<!doctype html>
   summary[data-tip]::after { left: 0; transform: translateX(0) translateY(4px); }
   summary[data-tip]:hover::after, summary[data-tip]:focus-visible::after {
     transform: translateX(0) translateY(0); }
+  /* Painel lateral do automatico. Em tela larga ele fica encostado na
+     lateral da coluna, sempre visivel enquanto a pagina rola -- e um
+     automatico que gasta GPU sozinho precisa mesmo estar sempre a vista,
+     nao escondido num acordeao de configuracao. Sem margem sobrando, volta
+     para o fluxo, acima da area de envio que ele governa. */
+  .dock { border: 1px solid var(--border); border-radius: var(--radius);
+          background: var(--surface); box-shadow: var(--shadow-sm);
+          padding: 14px; margin: 0 0 16px; }
+  .dock-titulo { font-size: 12px; text-transform: uppercase; letter-spacing: .07em;
+                 color: var(--text-muted); margin: 0 0 10px; }
+  .chave { position: relative; display: flex; align-items: center; gap: 10px;
+           cursor: pointer; font-size: 15px; font-weight: 600; color: var(--text); }
+  /* A caixa nativa fica invisivel por cima do trilho, e nao escondida com
+     display:none: e ela que continua recebendo o foco, o teclado e o
+     leitor de tela -- o trilho desenhado e so a aparencia. */
+  /* z-index poe a caixa acima do trilho desenhado. Sem isso o trilho
+     recebia o clique e so o <label> fazia a chave virar -- o que funciona
+     no mouse, mas erra quem mira o controle em si. */
+  .chave input[type=checkbox] { position: absolute; left: 0; top: 50%; z-index: 1;
+                                transform: translateY(-50%); width: 42px; height: 24px;
+                                margin: 0; opacity: 0; cursor: pointer; }
+  .chave .trilho { position: relative; flex-shrink: 0; width: 42px; height: 24px;
+                   border-radius: 999px; background: var(--surface-hover);
+                   border: 1px solid var(--border);
+                   transition: background .15s ease, border-color .15s ease; }
+  .chave .trilho::after { content: ""; position: absolute; top: 2px; left: 2px;
+                          width: 18px; height: 18px; border-radius: 50%;
+                          background: var(--surface); box-shadow: var(--shadow-sm);
+                          transition: transform .15s ease; }
+  .chave input:checked + .trilho { background: var(--accent); border-color: var(--accent); }
+  .chave input:checked + .trilho::after { transform: translateX(18px); background: #fff; }
+  .chave input:focus-visible + .trilho { outline: 2px solid var(--accent);
+                                         outline-offset: 2px; }
+  .chave input:disabled + .trilho { opacity: .5; }
+  .dock-ajuda { margin: 10px 0 0; font-size: 13px; line-height: 1.5;
+                color: var(--text-muted); }
+  .dock-ajuda strong { color: var(--text); font-weight: 600; }
+  .dock-ajuda p { margin: 0 0 8px; }
+  .dock-ajuda p:last-child { margin-bottom: 0; }
+  .dock-ajuda ul { margin: 0 0 8px; padding-left: 18px; }
+  .dock-ajuda li { margin-bottom: 4px; }
+  .dock-estado { margin: 10px 0 0; font-size: 13px; color: var(--text-muted);
+                 border-top: 1px solid var(--border); padding-top: 10px; }
+  .dock-estado.ligado { color: var(--success); }
+  .dock-estado.recado { color: var(--accent); font-weight: 600; }
+  /* 1280px e onde a coluna de 820px + o painel de 200px cabem sem se
+     tocarem; abaixo disso o painel cobriria o conteudo, entao fica no fluxo. */
+  @media (min-width: 1280px) {
+    .dock { position: fixed; top: 104px; right: max(12px, calc(50vw - 626px));
+            width: 200px; margin: 0; max-height: calc(100vh - 128px);
+            overflow-y: auto; }
+  }
   @media (max-width: 560px) {
     .item .acao { max-width: none; flex: 1 1 100%; }
     .barra-acoes { flex-direction: column; align-items: stretch; }
@@ -965,6 +1081,29 @@ PAGINA = """<!doctype html>
         <path d="M20.4 14.7A8.5 8.5 0 1 1 9.3 3.6a7 7 0 0 0 11.1 11.1Z"></path></svg>
     </button>
   </div>
+
+  <aside class="dock" id="dock-auto" aria-labelledby="dock-auto-titulo">
+    <h2 class="dock-titulo" id="dock-auto-titulo">Automa&ccedil;&atilde;o</h2>
+    <label class="chave" for="auto-processar">
+      <input type="checkbox" id="auto-processar" role="switch"
+             aria-describedby="auto-processar-ajuda">
+      <span class="trilho" aria-hidden="true"></span>
+      <span>Processar ao enviar</span>
+    </label>
+    <div class="dock-ajuda" id="auto-processar-ajuda">
+      <p>Ligado, todo <strong>filme ou &aacute;udio</strong> que voc&ecirc; envia
+         entra na fila na hora &mdash; sem escolher a a&ccedil;&atilde;o e clicar
+         em Processar depois.</p>
+      <ul>
+        <li><strong>Filme ou &aacute;udio:</strong> transcreve e traduz, direto.</li>
+        <li><strong>Legenda:</strong> fica fora da regra. &Eacute; guardada e espera
+            voc&ecirc; escolher o que fazer com ela.</li>
+      </ul>
+      <p>Vale para o que chega por esta p&aacute;gina, valendo para todo mundo na
+         rede. A fila continua atendendo um de cada vez.</p>
+    </div>
+    <p class="dock-estado" id="auto-estado" role="status" aria-live="polite"></p>
+  </aside>
 
   <div class="drop" id="drop">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
@@ -1338,7 +1477,60 @@ $('drop').ondrop = (e) => {
   if (e.dataTransfer.files.length) enviar(e.dataTransfer.files);
 };
 
+// O "processar ao enviar" mora no servidor, nao no navegador: e o servidor
+// que enfileira, e a regra precisa valer igual para quem envia do celular e
+// para quem envia do desktop. O botao aqui so reflete e muda esse estado.
+const autoProcessar = $('auto-processar');
+
 const DICA_PADRAO = 'pode mandar os dois juntos — vídeo, áudio ou legenda';
+const DICA_AUTO = 'automático ligado — filme vai direto para a fila; legenda espera você';
+const dicaAtual = () => autoProcessar.checked ? DICA_AUTO : DICA_PADRAO;
+
+// Uma linha so, com dois papeis: o estado que vale agora e, por alguns
+// segundos depois de um envio, o que acabou de acontecer. Sem o segundo,
+// ligar o botao e mandar um filme nao daria sinal nenhum de que a fila
+// andou -- o arquivo apareceria na lista igual a quando nada acontece.
+function estadoAuto(recado) {
+  const alvo = $('auto-estado');
+  clearTimeout(Number(alvo.dataset.timeoutId) || undefined);
+  alvo.className = 'dock-estado' +
+    (recado ? ' recado' : (autoProcessar.checked ? ' ligado' : ''));
+  alvo.textContent = recado || (autoProcessar.checked
+    ? 'Ligado: filme novo entra na fila sozinho.'
+    : 'Desligado: cada arquivo espera você escolher a ação.');
+  if (recado) alvo.dataset.timeoutId = setTimeout(() => estadoAuto(), 8000);
+}
+
+function refletirAutomatico() {
+  estadoAuto();
+  $('dica').textContent = dicaAtual();
+}
+
+autoProcessar.onchange = async () => {
+  const ligado = autoProcessar.checked;
+  autoProcessar.disabled = true;
+  const r = await fetch('/api/config', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({auto_processar: ligado ? 'true' : 'false'})
+  }).catch(() => null);
+  autoProcessar.disabled = false;
+
+  // Botao ligado na tela e desligado no servidor e pior que nao ter botao:
+  // o proximo filme nao entraria na fila e ninguem saberia por que. Diante
+  // da falha, volta para o estado que o servidor de fato tem.
+  if (!r || !r.ok) {
+    autoProcessar.checked = !ligado;
+    refletirAutomatico();
+    const dados = r ? await r.json().catch(() => ({})) : {};
+    alert(dados.erro || 'Não consegui salvar. Verifique a conexão com o servidor.');
+    return;
+  }
+
+  configAtual.auto_processar = ligado;
+  refletirAutomatico();
+};
+
 let recemChegados = [];
 
 function enviar(listaDeArquivos) {
@@ -1370,7 +1562,7 @@ function enviar(listaDeArquivos) {
 
   xhr.onload = () => {
     barra.hidden = true;
-    dica.textContent = DICA_PADRAO;
+    dica.textContent = dicaAtual();
     let resposta = {};
     try { resposta = JSON.parse(xhr.responseText); } catch (e) {}
 
@@ -1380,15 +1572,25 @@ function enviar(listaDeArquivos) {
       alert(resposta.recusados.map((x) => x.erro).join('\\n'));
     }
 
-    // Os arquivos ficam guardados, não processados: quem manda o filme com a
-    // legenda precisa que os dois estejam no lugar antes de decidir a ação.
+    // Guardar e processar sao passos separados por padrao: quem manda o
+    // filme com a legenda precisa que os dois estejam no lugar antes de
+    // decidir a acao. Com o automatico ligado o servidor ja enfileirou os
+    // filmes, e o que ele fez precisa aparecer aqui -- senao o envio
+    // termina igual ao de sempre e a fila so aparece na proxima varredura.
     recemChegados = resposta.guardados || [];
+    if (resposta.automatico) {
+      const quantos = (resposta.enfileirados || []).length;
+      estadoAuto(quantos === 1 ? '1 filme foi para a fila.'
+        : quantos ? `${quantos} filmes foram para a fila.`
+        : 'Nada novo para a fila desta vez.');
+      atualizar();
+    }
     carregarArquivos();
   };
 
   xhr.onerror = () => {
     barra.hidden = true;
-    dica.textContent = DICA_PADRAO;
+    dica.textContent = dicaAtual();
     alert('Falha no envio. Verifique a conexão com o servidor.');
   };
 
@@ -1548,6 +1750,11 @@ async function carregarConfig() {
   $('base_url').value = c.base_url || '';
   // null (não configurado) vira campo vazio -- decide sozinho pelo endereço.
   $('block_size').value = c.llm_block_size ?? '';
+
+  // Ausente (servidor antigo) conta como desligado: nunca ligado por
+  // omissao, que gastaria GPU sem ninguem ter pedido.
+  autoProcessar.checked = c.auto_processar === true;
+  refletirAutomatico();
 
   const seloTmdb = $('estado-chave-tmdb');
   seloTmdb.className = 'selo ' + (c.tem_chave_tmdb ? 'ok' : 'falta');

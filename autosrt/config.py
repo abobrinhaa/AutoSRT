@@ -27,6 +27,12 @@ EXAMPLE_CONFIG = {
     # Em branco usa turbo/auto, os padrões do transcribe.py.
     "whisper_model": "large-v3",
     "whisper_compute_type": "int8",
+    # Opcional: liga o "processar ao enviar" da página. Com "true", todo
+    # filme que chega pelo navegador vai direto para a fila (transcrever e
+    # traduzir, ou aproveitar a legenda irmã quando ela já está na pasta).
+    # Legenda enviada nunca entra sozinha: ela é matéria-prima do
+    # pareamento, e traduzi-la na chegada desperdiçaria justamente isso.
+    "auto_processar": "false",
     # Opcional: reconhece o filme pelo nome do arquivo na lista do servidor.
     # Chave gratuita em https://www.themoviedb.org/settings/api
     "tmdb_api_key": "...",
@@ -206,6 +212,23 @@ def get_normalize_audio():
     valor = (get_setting("normalize_audio", "AUTOSRT_NORMALIZE_AUDIO")
              or "").strip().lower()
     return valor if valor in ("auto", "sempre", "nunca") else "auto"
+
+
+def get_auto_processar() -> bool:
+    """Se todo filme recém-enviado deve ir sozinho para a fila.
+
+    ``False`` quando não configurado, e de propósito: uma transcrição custa
+    meia hora de GPU, e um padrão que gasta isso sem ninguém ter pedido é
+    um padrão errado. Quem liga o botão está dizendo que aceita a conta.
+
+    Vale só para mídia. Legenda enviada continua esperando uma escolha --
+    quem manda o filme junto com a legenda espera que os dois sejam
+    considerados em conjunto, e traduzir a legenda na chegada jogaria fora
+    exatamente o atalho que ela representa.
+    """
+    valor = (get_setting("auto_processar", "AUTOSRT_AUTO_PROCESSAR")
+             or "").strip().lower()
+    return valor in ("true", "1", "sim")
 
 
 def get_whisper_language():
