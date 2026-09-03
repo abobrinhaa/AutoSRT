@@ -1,10 +1,11 @@
+import contextlib
 import os
 import tempfile
 import threading
 import unittest
 from unittest import mock
 
-from autosrt import llm_translate, srt_io
+from autosrt import llm_translate, pipeline, srt_io, transcribe
 from autosrt.cue import Cue
 from autosrt.llm import LLMError
 from autosrt.pipeline import ENGINE_GOOGLE, ENGINE_LLM, process_media, translate_file
@@ -205,6 +206,72 @@ class TestMotorDeTranscricaoAlternativo(unittest.TestCase):
                       transcribe_runner=self.fake_runner,
                       progress=lambda done, total: vistos.append((done, total)))
         self.assertIn((100, 100), vistos)
+
+
+class TestEtapaDuranteATranscricao(unittest.TestCase):
+    """A etapa mostrada tem que ser a que esta acontecendo.
+
+    O preparo do audio fala por ultimo -- medir o volume, normalizar, ou
+    explicar que nao deu. Como a transcricao era anunciada antes dele e
+    nada a repetia, a tela passava a fase mais longa do trabalho exibindo
+    uma etapa ja terminada, com a barra parada em zero. Travado e
+    exatamente com o que isso se parece.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.midia = os.path.join(self.tmp, "filme.mkv")
+        open(self.midia, "wb").close()
+        self.etapas = []
+        self.etapa_no_momento = None
+
+    def espiar(self, *args, **kwargs):
+        """Guarda a etapa que estava na tela no instante da transcricao."""
+        self.etapa_no_momento = self.etapas[-1] if self.etapas else None
+        return [Cue.from_source(index=1, start=0, end=2000,
+                                source_text="Hello there.")]
+
+    @contextlib.contextmanager
+    def preparo_falante(self, caminho, modo, announce=None):
+        """Preparo de audio que fala logo antes de entregar o arquivo.
+
+        E o caso relatado: "Audio fraco (-28,8 dB): normalizando antes de
+        transcrever...", a ultima mensagem antes da espera longa.
+        """
+        if announce:
+            announce("Áudio fraco (-28.8 dB): normalizando antes de transcrever...")
+        yield caminho
+
+    def rodar(self, **extras):
+        process_media(self.midia, os.path.join(self.tmp, "saida.srt"),
+                      translate=False, status=self.etapas.append, **extras)
+
+    def test_whisper_local_anuncia_depois_do_preparo_do_audio(self):
+        # O ramo onde o defeito apareceu: Whisper local, audio normalizado.
+        with mock.patch.object(pipeline, "_audio_preparado",
+                               self.preparo_falante), \
+             mock.patch.object(transcribe, "transcribe", self.espiar):
+            self.rodar()
+        self.assertEqual(self.etapa_no_momento, pipeline.ETAPA_TRANSCREVENDO)
+
+    def test_motor_alternativo_tambem_anuncia(self):
+        with mock.patch.object(pipeline, "_audio_preparado", self.preparo_falante):
+            self.rodar(transcribe_runner=lambda caminho, **kw: self.espiar())
+        self.assertEqual(self.etapa_no_momento, pipeline.ETAPA_TRANSCREVENDO)
+
+    def test_sem_normalizacao_a_etapa_continua_certa(self):
+        with mock.patch.object(transcribe, "transcribe", self.espiar):
+            self.rodar(normalize_audio=pipeline.NORMALIZE_NUNCA)
+        self.assertEqual(self.etapa_no_momento, pipeline.ETAPA_TRANSCREVENDO)
+
+    def test_a_mensagem_do_preparo_nao_e_a_ultima(self):
+        # A forma generica do bug: qualquer coisa que o preparo do audio
+        # resolva dizer nao pode sobrar na tela durante o Whisper.
+        with mock.patch.object(pipeline, "_audio_preparado",
+                               self.preparo_falante), \
+             mock.patch.object(transcribe, "transcribe", self.espiar):
+            self.rodar()
+        self.assertNotIn("normalizando", self.etapa_no_momento)
 
 
 class QuebradoLLM:

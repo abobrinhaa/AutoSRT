@@ -934,6 +934,20 @@ PAGINA = """<!doctype html>
            overflow: hidden; margin-top: 8px; }
   .barra > div { height: 100%; background: var(--accent); width: 0;
                  transition: width .3s; }
+  /* O Whisper so comeca a imprimir porcentagem depois de carregar o modelo,
+     e com modelo grande isso leva minutos. Barra parada em zero nesse
+     intervalo parece trabalho travado; a listra andando diz o que e
+     verdade -- esta rodando, ainda sem numero para mostrar. */
+  .barra.indefinida > div { transition: none; background: linear-gradient(
+      90deg, var(--surface-2) 0%, var(--accent) 50%, var(--surface-2) 100%);
+      background-size: 250% 100%; animation: desliza 1.6s linear infinite; }
+  @keyframes desliza { from { background-position: 250% 0; }
+                       to { background-position: 0 0; } }
+  /* Movimento continuo incomoda quem pediu para reduzi-lo; a barra cheia e
+     apagada diz "sem numero" sem piscar nada. */
+  @media (prefers-reduced-motion: reduce) {
+    .barra.indefinida > div { animation: none; background: var(--surface-hover); }
+  }
   .trabalho { border: 1px solid var(--border); border-radius: var(--radius);
               padding: 14px; margin-bottom: 10px; background: var(--surface);
               box-shadow: var(--shadow-sm); }
@@ -1775,8 +1789,12 @@ function cartao(job) {
     etapa.textContent = job.etapa + faltam(job.restante_seg);
   }
 
-  div.querySelector('.barra > div').style.width =
-    (job.estado === 'concluido' ? 100 : job.progresso) + '%';
+  // Sem porcentagem ainda (o Whisper carregando o modelo): a barra passa a
+  // indicar atividade em vez de quantidade, cheia por baixo da listra.
+  const semNumero = job.estado === 'rodando' && !job.progresso;
+  div.querySelector('.barra').classList.toggle('indefinida', semNumero);
+  div.querySelector('.barra > div').style.width = semNumero ? '100%'
+    : (job.estado === 'concluido' ? 100 : job.progresso) + '%';
 
   const acao = div.querySelector('.acao');
   if (job.baixavel) {

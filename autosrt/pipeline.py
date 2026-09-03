@@ -47,6 +47,13 @@ DEFAULT_ENGINE = ENGINE_LLM
 # tempo bater: errar o peso não trava nada, só torce a estimativa.
 PESO_TRANSCRICAO = 70
 
+#: Etapa mais longa do trabalho, e a unica que o usuario vai encarar por
+#: dezenas de minutos. Constante porque os dois motores (Whisper local e
+#: runner alternativo) precisam anuncia-la, cada um no seu ramo, sempre
+#: imediatamente antes da chamada -- qualquer distancia daqui ate la abre
+#: espaco para outra mensagem sobrescrever esta e a tela mentir a etapa.
+ETAPA_TRANSCREVENDO = "Transcrevendo o áudio... esta é a parte demorada."
+
 
 @dataclass
 class PipelineResult:
@@ -357,8 +364,6 @@ def process_media(media_path, output_path=None, *, engine=DEFAULT_ENGINE,
     if output_path is None:
         output_path = os.path.splitext(media_path)[0] + ".srt"
 
-    announce("Transcrevendo o áudio... esta é a parte demorada.")
-
     # As duas fases dividem uma barra só. Antes cada uma contava de 0 a 100 na
     # sua vez, então a barra enchia, voltava para trás e enchia de novo -- e
     # ninguém conseguia ver quanto faltava para o fim de verdade.
@@ -374,6 +379,7 @@ def process_media(media_path, output_path=None, *, engine=DEFAULT_ENGINE,
         # Whisper local por inteiro. A interface é a mesma -- devolve
         # list[Cue] -- mas é uma única chamada bloqueante, sem progresso
         # incremental nem diarização.
+        announce(ETAPA_TRANSCREVENDO)
         cues = transcribe_runner(media_path, language=language,
                                  cancel_event=cancel_event)
         if progress:
@@ -418,6 +424,15 @@ def process_media(media_path, output_path=None, *, engine=DEFAULT_ENGINE,
                 # temporário; mandando para a mesma pasta descartável, ele
                 # sai junto.
                 kwargs["output_dir"] = os.path.dirname(entrada)
+
+            # Anunciado aqui, depois do preparo do audio, e nao antes dele.
+            # _audio_preparado fala por ultimo ("Audio fraco (-28,8 dB):
+            # normalizando antes de transcrever...", entre outras quatro
+            # mensagens) e sobrescrevia esta etapa. Como nada a repetia, a
+            # tela passava a meia hora do Whisper exibindo uma fase que
+            # havia terminado, com a barra em zero -- e travado e
+            # exatamente com o que isso se parece.
+            announce(ETAPA_TRANSCREVENDO)
             cues = transcribe_module.transcribe(entrada, **kwargs)
 
     if not cues:
