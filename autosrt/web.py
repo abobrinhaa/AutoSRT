@@ -1092,10 +1092,6 @@ PAGINA = """<!doctype html>
       <p><strong>Ligado:</strong> todo filme ou &aacute;udio que voc&ecirc; envia
          entra na fila na hora, para transcrever e traduzir &mdash; sem escolher
          a a&ccedil;&atilde;o e clicar em Processar depois.</p>
-      <p><strong>Desligado:</strong> o arquivo s&oacute; fica guardado e espera
-         voc&ecirc; na lista.</p>
-      <p>Vale para quem enviar por esta p&aacute;gina, de qualquer m&aacute;quina
-         da rede. A fila atende um de cada vez, na ordem de chegada.</p>
     </div>
     <p class="dock-estado" id="auto-estado" role="status" aria-live="polite"></p>
   </aside>
