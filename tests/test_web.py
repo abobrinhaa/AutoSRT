@@ -116,12 +116,12 @@ class TestPagina(BaseWeb):
         # Regressão: o campo "Chave" continuava visível (só com rótulo
         # diferente) no modo Local, onde normalmente não faz sentido nenhum
         # -- e um "hidden" via JS não bastava, porque a regra
-        # "details#config label { display: grid }" vencia o hidden sem um
+        # "#config label { display: grid }" vencia o hidden sem um
         # override explícito (verificado num navegador de verdade).
         html = self.client.get("/").get_data(as_text=True)
         self.assertIn('id="campo-chave"', html)
         self.assertIn("campo-chave').hidden = local", html)
-        self.assertIn("details#config label[hidden] { display: none; }", html)
+        self.assertIn("#config label[hidden] { display: none; }", html)
 
     def test_selo_de_chave_diferencia_o_modo(self):
         # Regressão: o selo "chave configurada"/"sem chave" do topo era o
@@ -188,19 +188,48 @@ class TestPagina(BaseWeb):
         self.assertIn('id="condition_on_previous_text"', html)
         self.assertIn('id="hallucination_silence_threshold"', html)
 
-    def test_botao_de_configuracao_fica_junto_do_toggle(self):
-        # As duas abas de configuração moravam no fim da página: quem não
-        # rolasse até lá não descobria que existiam. O botão que as abre
-        # fica agora no painel do automático, ao lado do toggle.
+    def test_botao_de_configuracao_nao_mora_no_painel_da_automacao(self):
+        # Configuração de tradução e transcrição não tem nada a ver com o
+        # "processar ao enviar": o botão fica no cabeçalho, ao lado do tema,
+        # e não dentro do painel do toggle.
         html = self.client.get("/").get_data(as_text=True)
         self.assertIn('id="abrir-config"', html)
         self.assertIn('aria-haspopup="dialog"', html)
         self.assertIn('aria-controls="painel-config"', html)
-        dock = html.index('id="dock-auto"')
         botao = html.index('id="abrir-config"')
-        fim_do_dock = html.index("</aside>")
-        self.assertTrue(dock < botao < fim_do_dock,
-                        "o botão de configuração saiu do painel do toggle")
+        dock = html.index('id="dock-auto"')
+        self.assertLess(botao, dock,
+                        "o botão de configuração voltou para dentro do toggle")
+        self.assertLess(html.index('class="cabecalho"'), botao)
+
+    def test_cada_secao_de_configuracao_tem_a_sua_aba(self):
+        # Regressão: as duas seções foram empilhadas numa tela só dentro do
+        # diálogo -- viravam uma rolagem sem fim. Cada uma é uma aba.
+        html = self.client.get("/").get_data(as_text=True)
+        self.assertIn('role="tablist"', html)
+        self.assertIn('id="aba-traducao"', html)
+        self.assertIn('id="aba-transcricao"', html)
+        self.assertEqual(html.count('role="tab"'), 2)
+        self.assertEqual(html.count('role="tabpanel"'), 2)
+        self.assertIn('aria-controls="config"', html)
+        self.assertIn('aria-controls="config-transcricao"', html)
+
+    def test_so_uma_aba_aparece_por_vez(self):
+        # A seção escondida precisa sumir de verdade: "display: grid" de autor
+        # vence o hidden do navegador -- mesmo bug já visto no campo-chave.
+        html = self.client.get("/").get_data(as_text=True)
+        self.assertIn("[role=tabpanel][hidden] { display: none; }", html)
+        self.assertIn("function mostrarAba", html)
+        painel = html.index('id="config-transcricao"')
+        self.assertIn("hidden", html[painel:painel + 200],
+                      "a segunda aba começa aberta junto com a primeira")
+
+    def test_abas_andam_com_as_setas_do_teclado(self):
+        # Padrão APG para abas: seta anda entre elas, só a ativa fica no Tab.
+        html = self.client.get("/").get_data(as_text=True)
+        self.assertIn("ArrowRight", html)
+        self.assertIn("ArrowLeft", html)
+        self.assertIn("tabIndex", html)
 
     def test_abas_de_configuracao_moram_dentro_do_dialogo(self):
         html = self.client.get("/").get_data(as_text=True)

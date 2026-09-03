@@ -833,13 +833,20 @@ PAGINA = """<!doctype html>
   p.sub { color: var(--text-muted); margin: 0 0 28px; }
   h2 { font-size: 14px; text-transform: uppercase; letter-spacing: .07em;
        color: var(--text-muted); margin: 32px 0 12px; }
-  .alternar-tema { flex-shrink: 0; width: 40px; height: 40px; padding: 0; margin-top: 4px;
-                    border-radius: 999px; background: var(--surface);
-                    border: 1px solid var(--border); color: var(--text);
-                    display: flex; align-items: center; justify-content: center;
-                    box-shadow: var(--shadow-sm); transition: transform .15s ease, background .15s ease; }
-  .alternar-tema:hover { background: var(--surface-hover); transform: translateY(-1px); }
-  .alternar-tema svg { width: 19px; height: 19px; }
+  .acoes-cabecalho { display: flex; gap: 8px; margin-top: 4px; }
+  .botao-icone { position: relative; flex-shrink: 0; width: 40px; height: 40px; padding: 0;
+                 border-radius: 999px; background: var(--surface);
+                 border: 1px solid var(--border); color: var(--text);
+                 display: flex; align-items: center; justify-content: center;
+                 box-shadow: var(--shadow-sm); transition: transform .15s ease, background .15s ease; }
+  .botao-icone:hover { background: var(--surface-hover); transform: translateY(-1px); }
+  .botao-icone svg { width: 19px; height: 19px; }
+  /* Sem chave a traducao nao roda. Antes o painel se abria sozinho no fim da
+     pagina para avisar; agora ele mora atras do botao, entao a falta vira
+     uma marca no proprio botao -- e o motivo vai no aria-label, nao so na cor. */
+  .ponto-aviso { position: absolute; top: 5px; right: 5px; width: 10px; height: 10px;
+                 border-radius: 50%; background: var(--warning);
+                 border: 2px solid var(--surface); }
   .alternar-tema .icone-lua { display: none; }
   :root[data-tema="escuro"] .alternar-tema .icone-sol { display: none; }
   :root[data-tema="escuro"] .alternar-tema .icone-lua { display: block; }
@@ -908,7 +915,7 @@ PAGINA = """<!doctype html>
   button.fantasma:hover:enabled { background: var(--surface-hover); }
   button:disabled { opacity: .5; cursor: default; transform: none; }
   button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible,
-  summary:focus-visible, [tabindex]:focus-visible {
+  [tabindex]:focus-visible {
     outline: 2px solid var(--accent); outline-offset: 2px; }
   .barra { height: 6px; background: var(--surface-2); border-radius: 999px;
            overflow: hidden; margin-top: 8px; }
@@ -931,30 +938,34 @@ PAGINA = """<!doctype html>
   .dispensar { font-size: 18px; line-height: 1; padding: 2px 8px; }
   h2 #limpar { float: right; text-transform: none; letter-spacing: 0;
                font-size: 13px; }
-  details#config, details#config-transcricao {
-    margin-top: 20px; border: 1px solid var(--border); border-radius: var(--radius);
-    background: var(--surface); box-shadow: var(--shadow-sm); }
-  details#config summary, details#config-transcricao summary {
-    padding: 14px; cursor: pointer; color: var(--text-muted); font-size: 14px;
-    display: flex; align-items: center; gap: 8px; }
-  details#config summary::marker, details#config-transcricao summary::marker {
-    color: var(--accent); }
-  details#config .painel, details#config-transcricao .painel {
-    padding: 0 14px 14px; display: grid; gap: 12px; }
-  details#config label, details#config-transcricao label {
+  /* A aba escondida some de verdade: "display: grid" de autor vence o
+     hidden do navegador -- o mesmo tropeco ja documentado no campo-chave. */
+  [role=tabpanel][hidden] { display: none; }
+  #config, #config-transcricao { padding: 16px 0 4px; }
+  #config > p.dica-config, #config-transcricao > p.dica-config { margin: 0 0 16px; }
+  #config .painel, #config-transcricao .painel { display: grid; gap: 12px 20px; }
+  #config label, #config-transcricao label {
     display: grid; gap: 6px; font-size: 14px; color: var(--text-muted); }
   /* Sem isto, o atributo "hidden" perde para a regra acima: display:grid é
      de autor e sempre vence o display:none da folha de estilo do navegador,
      não importa a especificidade -- então esconder via JS não escondia
      nada de verdade. */
-  details#config label[hidden] { display: none; }
-  details#config input, details#config-transcricao input {
+  #config label[hidden] { display: none; }
+  #config input, #config-transcricao input {
     font: inherit; background: var(--surface-2); color: var(--text);
     border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 8px 10px; }
   /* Checkbox fica ao lado do texto, não empilhado como os outros campos. */
-  details#config-transcricao label.linha-checkbox {
+  #config-transcricao label.linha-checkbox {
     display: flex; align-items: center; gap: 8px; }
-  details#config-transcricao p.dica-config { margin: 0; }
+  /* Duas colunas quando ha largura para elas. So a transcricao tem nove
+     campos: em coluna unica a aba virava uma tela de rolagem pura, que foi
+     justamente a queixa do dimensionamento. */
+  @media (min-width: 760px) {
+    #config .painel, #config-transcricao .painel {
+      grid-template-columns: 1fr 1fr; align-items: start; }
+    .painel > .campo-largo, .painel > .rodape, .painel > .modo-provedor,
+    .painel > .lista-modelos, .painel > .dica-config { grid-column: 1 / -1; }
+  }
   .rodape { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
   .dica-config { flex: 1; font-size: 13px; color: var(--text-muted); }
   .selo { font-size: 12px; padding: 2px 8px; border-radius: 999px;
@@ -985,8 +996,8 @@ PAGINA = """<!doctype html>
   .lista-modelos button:hover { background: var(--surface-2); }
   .lista-modelos .preco { display: block; color: var(--text-muted); font-size: 12px;
                           margin-top: 2px; }
-  /* Tooltips: ficam nas abas de configuração (summary) e em campos que
-     merecem uma explicação curta -- o "?" ao lado do rótulo. */
+  /* Tooltip curta no "?" ao lado do rótulo, para o campo que precisa de
+     uma explicação mais longa do que o rótulo comporta. */
   .rotulo-com-ajuda { display: inline-flex; align-items: center; gap: 6px; }
   .ajuda { display: inline-flex; align-items: center; justify-content: center;
            width: 16px; height: 16px; border-radius: 999px; background: var(--surface-2);
@@ -1002,9 +1013,6 @@ PAGINA = """<!doctype html>
     z-index: 30; white-space: normal; text-align: left; font-weight: 400; }
   [data-tip]:hover::after, [data-tip]:focus-visible::after {
     opacity: 1; transform: translateX(-50%) translateY(0); }
-  summary[data-tip]::after { left: 0; transform: translateX(0) translateY(4px); }
-  summary[data-tip]:hover::after, summary[data-tip]:focus-visible::after {
-    transform: translateX(0) translateY(0); }
   /* Painel lateral do automatico. Em tela larga ele fica encostado na
      lateral da coluna, sempre visivel enquanto a pagina rola -- e um
      automatico que gasta GPU sozinho precisa mesmo estar sempre a vista,
@@ -1048,41 +1056,45 @@ PAGINA = """<!doctype html>
                  border-top: 1px solid var(--border); padding-top: 10px; }
   .dock-estado.ligado { color: var(--success); }
   .dock-estado.recado { color: var(--accent); font-weight: 600; }
-  /* Botao que abre a configuracao. Fica aqui, colado no toggle, porque as
-     duas abas antes moravam no fim da pagina: quem nao rolasse ate la nao
-     descobria que existiam. */
-  .dock-acoes { margin-top: 10px; border-top: 1px solid var(--border); padding-top: 10px; }
-  .botao-config { display: flex; align-items: center; justify-content: center; gap: 8px;
-                  width: 100%; background: var(--surface-2); color: var(--text);
-                  border: 1px solid var(--border); font-size: 14px; }
-  .botao-config:hover:enabled { background: var(--surface-hover); }
-  .botao-config svg { width: 17px; height: 17px; flex-shrink: 0; }
-  /* Sem chave a traducao nao roda. Antes o painel se abria sozinho no fim da
-     pagina para avisar; dentro do dialogo isso ficaria invisivel, entao a
-     falta vira uma marca no proprio botao que leva ate la. */
-  .ponto-aviso { width: 8px; height: 8px; border-radius: 50%;
-                 background: var(--warning); flex-shrink: 0; }
-
   /* Dialogo da configuracao. <dialog> nativo em vez de div: ele ja da foco
-     preso dentro do painel, Esc para sair e camada acima do dock fixo. */
-  .modal-config { width: min(720px, 92vw); max-height: 86vh; padding: 0;
+     preso dentro do painel, Esc para sair e camada acima do dock fixo.
+     A altura acompanha o conteudo entre um piso e um teto: fixa deixaria um
+     vao morto embaixo da aba curta, e livre faria a aba longa virar rolagem.
+     Cabecalho e abas ficam parados; so o corpo rola, quando precisa. */
+  .modal-config { display: flex; flex-direction: column; padding: 0;
+                  width: min(860px, 94vw);
+                  min-height: min(520px, 78vh); max-height: min(720px, 88vh);
                   border: 1px solid var(--border); border-radius: var(--radius);
                   background: var(--surface); color: var(--text);
-                  box-shadow: var(--shadow-md); overflow: auto; }
+                  box-shadow: var(--shadow-md); overflow: hidden; }
   .modal-config::backdrop { background: rgba(10, 11, 15, .55); }
-  .topo-modal { display: flex; align-items: center; gap: 12px; padding: 14px 16px;
-                border-bottom: 1px solid var(--border); position: sticky; top: 0;
-                background: var(--surface); z-index: 3; }
-  .topo-modal h2 { margin: 0; flex: 1; }
-  .corpo-modal { padding: 0 16px 16px; }
-  /* Dentro do dialogo as abas ja tem o respiro do proprio painel; a margem
-     de 20px pensada para o fim da pagina abriria um vao no topo. */
-  .modal-config details#config, .modal-config details#config-transcricao {
-    margin-top: 12px; }
+  .topo-modal { flex-shrink: 0; border-bottom: 1px solid var(--border); }
+  .titulo-modal { display: flex; align-items: center; gap: 12px; padding: 14px 20px 0; }
+  .titulo-modal h2 { margin: 0; flex: 1; }
   #fechar-config { width: 32px; height: 32px; padding: 0; flex-shrink: 0;
                    font-size: 20px; line-height: 1; background: var(--surface-2);
                    color: var(--text-muted); border: 1px solid var(--border); }
   #fechar-config:hover:enabled { background: var(--surface-hover); color: var(--text); }
+  /* Uma aba por secao: traducao e transcricao sao assuntos diferentes e nao
+     dividem tela. O selo de cada uma ("sem chave", "ajustada") fica no proprio
+     rotulo, para o estado aparecer sem precisar entrar na aba. */
+  .abas { display: flex; gap: 20px; padding: 0 20px; }
+  .aba { display: flex; align-items: center; gap: 8px; padding: 12px 2px; margin: 0;
+         background: none; border: 0; border-radius: 0; color: var(--text-muted);
+         border-bottom: 2px solid transparent; font-size: 14px; }
+  .aba:hover:enabled { background: none; color: var(--text); transform: none; }
+  .aba[aria-selected="true"] { color: var(--text); font-weight: 600;
+                               border-bottom-color: var(--accent); }
+  .aba:focus-visible { outline-offset: -2px; }
+  /* No celular o rotulo e o selo nao cabem lado a lado: em vez de deixar o
+     selo quebrar no meio da palavra, cada aba ocupa metade da linha e empilha
+     rotulo em cima, selo embaixo. */
+  @media (max-width: 560px) {
+    .abas { gap: 8px; }
+    .aba { flex: 1; flex-direction: column; gap: 4px; justify-content: center;
+           text-align: center; white-space: nowrap; }
+  }
+  .corpo-modal { flex: 1; overflow-y: auto; padding: 0 20px 20px; }
   /* 1280px e onde a coluna de 820px + o painel de 200px cabem sem se
      tocarem; abaixo disso o painel cobriria o conteudo, entao fica no fluxo. */
   @media (min-width: 1280px) {
@@ -1105,7 +1117,17 @@ PAGINA = """<!doctype html>
       <h1>AutoSRT</h1>
       <p class="sub">Transcreve o áudio do filme e traduz a legenda para português.</p>
     </div>
-    <button type="button" id="alternar-tema" class="alternar-tema" aria-pressed="false"
+    <div class="acoes-cabecalho">
+    <button type="button" id="abrir-config" class="botao-icone"
+            aria-haspopup="dialog" aria-controls="painel-config"
+            title="Tradu&ccedil;&atilde;o e transcri&ccedil;&atilde;o" aria-label="Configura&ccedil;&otilde;es">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+             stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <circle cx="12" cy="12" r="3"></circle>
+          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1.08-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1.08 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V10a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z"></path></svg>
+      <span id="aviso-config" class="ponto-aviso" hidden></span>
+    </button>
+    <button type="button" id="alternar-tema" class="botao-icone alternar-tema" aria-pressed="false"
             title="Alternar entre tema claro e escuro" aria-label="Alternar entre tema claro e escuro">
       <svg class="icone-sol" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
            stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4"></circle>
@@ -1113,6 +1135,7 @@ PAGINA = """<!doctype html>
       <svg class="icone-lua" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
         <path d="M20.4 14.7A8.5 8.5 0 1 1 9.3 3.6a7 7 0 0 0 11.1 11.1Z"></path></svg>
     </button>
+    </div>
   </div>
 
   <aside class="dock" id="dock-auto" aria-labelledby="dock-auto-titulo">
@@ -1131,17 +1154,6 @@ PAGINA = """<!doctype html>
          voc&ecirc; na lista (processo antigo).</p>
     </div>
     <p class="dock-estado" id="auto-estado" role="status" aria-live="polite"></p>
-    <div class="dock-acoes">
-      <button type="button" id="abrir-config" class="botao-config"
-              aria-haspopup="dialog" aria-controls="painel-config">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
-             stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <circle cx="12" cy="12" r="3"></circle>
-          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1.08-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1.08 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V10a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z"></path></svg>
-        <span>Configura&ccedil;&otilde;es</span>
-        <span id="aviso-config" class="ponto-aviso" hidden></span>
-      </button>
-    </div>
   </aside>
 
   <div class="drop" id="drop">
@@ -1171,13 +1183,25 @@ PAGINA = """<!doctype html>
 
   <dialog id="painel-config" class="modal-config" aria-labelledby="titulo-painel-config">
   <div class="topo-modal">
-    <h2 id="titulo-painel-config">Configura&ccedil;&otilde;es</h2>
-    <button type="button" id="fechar-config" class="fantasma"
-            title="Fechar (Esc)" aria-label="Fechar configura&ccedil;&otilde;es">&times;</button>
+    <div class="titulo-modal">
+      <h2 id="titulo-painel-config">Configura&ccedil;&otilde;es</h2>
+      <button type="button" id="fechar-config" class="fantasma"
+              title="Fechar (Esc)" aria-label="Fechar configura&ccedil;&otilde;es">&times;</button>
+    </div>
+    <div class="abas" role="tablist" aria-label="Se&ccedil;&otilde;es da configura&ccedil;&atilde;o">
+      <button type="button" class="aba" id="aba-traducao" role="tab"
+              aria-controls="config" aria-selected="true">
+        Tradu&ccedil;&atilde;o <span id="estado-chave"></span>
+      </button>
+      <button type="button" class="aba" id="aba-transcricao" role="tab"
+              aria-controls="config-transcricao" aria-selected="false" tabindex="-1">
+        Transcri&ccedil;&atilde;o <span id="estado-vad" class="selo"></span>
+      </button>
+    </div>
   </div>
   <div class="corpo-modal">
-  <details id="config">
-    <summary data-tip="Endere&ccedil;o, chave e modelo do servi&ccedil;o usado para traduzir as legendas para portugu&ecirc;s.">Configura&ccedil;&atilde;o da tradu&ccedil;&atilde;o <span id="estado-chave"></span></summary>
+  <section id="config" role="tabpanel" aria-labelledby="aba-traducao" tabindex="0">
+    <p class="dica-config">Endere&ccedil;o, chave e modelo do servi&ccedil;o usado para traduzir as legendas para portugu&ecirc;s.</p>
     <div class="painel">
       <label><span class="rotulo-com-ajuda"><span id="rotulo-endereco">Endere&ccedil;o da API</span><span class="ajuda" tabindex="0" data-tip="Para onde mandar o texto a traduzir: o endere&ccedil;o da API do OpenRouter, ou de um servidor compat&iacute;vel na sua rede, como o Ollama.">?</span></span>
         <input type="text" id="base_url" placeholder="https://openrouter.ai/api/v1">
@@ -1185,7 +1209,7 @@ PAGINA = """<!doctype html>
       <label id="campo-chave"><span class="rotulo-com-ajuda">Chave do OpenRouter<span class="ajuda" tabindex="0" data-tip="Sua chave de API do OpenRouter. Fica guardada s&oacute; no servidor e nunca volta para esta p&aacute;gina.">?</span></span>
         <input type="password" id="chave" placeholder="sk-or-v1-..." autocomplete="off">
       </label>
-      <label><span class="rotulo-com-ajuda">Modelo<span class="ajuda" tabindex="0" data-tip="Qual modelo de linguagem usar na tradu&ccedil;&atilde;o. Clique em 'Buscar modelos' para ver os dispon&iacute;veis nesse endere&ccedil;o.">?</span></span>
+      <label class="campo-largo"><span class="rotulo-com-ajuda">Modelo<span class="ajuda" tabindex="0" data-tip="Qual modelo de linguagem usar na tradu&ccedil;&atilde;o. Clique em 'Buscar modelos' para ver os dispon&iacute;veis nesse endere&ccedil;o.">?</span></span>
         <div class="linha-modelo">
           <input type="text" id="modelo" placeholder="deepseek/deepseek-chat" data-exemplo-openrouter="deepseek/deepseek-chat" data-exemplo-local="llama3.1">
           <button type="button" id="buscar-modelos" class="fantasma">Buscar modelos</button>
@@ -1208,12 +1232,11 @@ PAGINA = """<!doctype html>
         <button id="salvar">Salvar</button>
       </div>
     </div>
-  </details>
+  </section>
 
-  <details id="config-transcricao">
-    <summary data-tip="Ajustes finos da detec&ccedil;&atilde;o de fala (VAD) usada pelo Whisper ao transcrever.">Configura&ccedil;&atilde;o da transcri&ccedil;&atilde;o <span id="estado-vad" class="selo"></span></summary>
+  <section id="config-transcricao" role="tabpanel" aria-labelledby="aba-transcricao" tabindex="0" hidden>
+    <p class="dica-config">Ajustes finos da detec&ccedil;&atilde;o de fala (VAD) usada pelo Whisper ao transcrever. Vale para todo arquivo processado pela fila -- n&atilde;o &eacute; por v&iacute;deo. Deixe em branco para usar o padr&atilde;o do pr&oacute;prio Whisper, sem mexer em nada.</p>
     <div class="painel">
-      <p class="dica-config">Vale para todo arquivo processado pela fila -- n&atilde;o &eacute; por v&iacute;deo. Deixe em branco para usar o padr&atilde;o do pr&oacute;prio Whisper, sem mexer em nada.</p>
       <label><span class="rotulo-com-ajuda">Normalizar o &aacute;udio<span class="ajuda" tabindex="0" data-tip="&Aacute;udio muito baixo faz o Whisper trocar a fala por alucina&ccedil;&atilde;o (o cl&aacute;ssico 'Thank you.' em cima do ru&iacute;do) e deixar trechos inteiros sem legenda, sem dar erro nenhum. Em 'auto' o volume &eacute; medido e s&oacute; o &aacute;udio fraco &eacute; corrigido. Precisa do ffmpeg instalado.">?</span></span>
         <select id="normalize_audio">
           <option value="auto">Auto -- s&oacute; quando o &aacute;udio estiver fraco (recomendado)</option>
@@ -1248,7 +1271,7 @@ PAGINA = """<!doctype html>
         <button id="salvar-vad">Salvar</button>
       </div>
     </div>
-  </details>
+  </section>
   </div>
   </dialog>
 </main>
@@ -1593,6 +1616,32 @@ dialogoConfig.addEventListener('click', (e) => {
   if (e.target === dialogoConfig) dialogoConfig.close();
 });
 
+// Uma aba de cada vez: tradução e transcrição são assuntos separados e cada
+// uma ocupa a tela inteira do diálogo. Padrão de abas do WAI-ARIA -- só a aba
+// ativa entra na ordem do Tab, e as setas andam entre elas.
+const abas = Array.from(document.querySelectorAll('#painel-config [role=tab]'));
+
+function mostrarAba(idDaAba) {
+  abas.forEach((aba) => {
+    const ativa = aba.id === idDaAba;
+    aba.setAttribute('aria-selected', String(ativa));
+    aba.tabIndex = ativa ? 0 : -1;
+    $(aba.getAttribute('aria-controls')).hidden = !ativa;
+  });
+}
+
+abas.forEach((aba, posicao) => {
+  aba.onclick = () => mostrarAba(aba.id);
+  aba.onkeydown = (e) => {
+    const passo = e.key === 'ArrowRight' ? 1 : (e.key === 'ArrowLeft' ? -1 : 0);
+    if (!passo) return;
+    e.preventDefault();
+    const vizinha = abas[(posicao + passo + abas.length) % abas.length];
+    mostrarAba(vizinha.id);
+    vizinha.focus();
+  };
+});
+
 // Sem chave a traducao nao roda -- e o painel que diz isso agora esta
 // escondido atras do botao. O aviso sai para fora, junto de quem abre.
 function avisarChaveFaltando(faltando) {
@@ -1862,9 +1911,9 @@ async function carregarConfig() {
   // para o modo local, que não costuma precisar de chave nenhuma.
   const semChave = !c.tem_chave && $('base_url').value !== c.local_base_url;
   avisarChaveFaltando(semChave);
-  // E ao abrir o diálogo a aba da tradução já vem expandida: o aviso trouxe
-  // o usuário até aqui, não faz sentido cobrar mais um clique.
-  if (semChave) $('config').open = true;
+  // E o diálogo abre já na aba da tradução: o aviso trouxe o usuário até
+  // aqui, não faz sentido ele cair numa aba que não é a do problema.
+  if (semChave) mostrarAba('aba-traducao');
 }
 
 // Só troca o endereço; o usuário continua podendo digitar por cima, para um
