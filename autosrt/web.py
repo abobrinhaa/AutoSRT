@@ -1044,8 +1044,6 @@ PAGINA = """<!doctype html>
   .dock-ajuda strong { color: var(--text); font-weight: 600; }
   .dock-ajuda p { margin: 0 0 8px; }
   .dock-ajuda p:last-child { margin-bottom: 0; }
-  .dock-ajuda ul { margin: 0 0 8px; padding-left: 18px; }
-  .dock-ajuda li { margin-bottom: 4px; }
   .dock-estado { margin: 10px 0 0; font-size: 13px; color: var(--text-muted);
                  border-top: 1px solid var(--border); padding-top: 10px; }
   .dock-estado.ligado { color: var(--success); }
@@ -1053,7 +1051,7 @@ PAGINA = """<!doctype html>
   /* 1280px e onde a coluna de 820px + o painel de 200px cabem sem se
      tocarem; abaixo disso o painel cobriria o conteudo, entao fica no fluxo. */
   @media (min-width: 1280px) {
-    .dock { position: fixed; top: 104px; right: max(12px, calc(50vw - 626px));
+    .dock { position: fixed; top: 104px; left: max(12px, calc(50vw - 626px));
             width: 200px; margin: 0; max-height: calc(100vh - 128px);
             overflow-y: auto; }
   }
@@ -1091,16 +1089,13 @@ PAGINA = """<!doctype html>
       <span>Processar ao enviar</span>
     </label>
     <div class="dock-ajuda" id="auto-processar-ajuda">
-      <p>Ligado, todo <strong>filme ou &aacute;udio</strong> que voc&ecirc; envia
-         entra na fila na hora &mdash; sem escolher a a&ccedil;&atilde;o e clicar
-         em Processar depois.</p>
-      <ul>
-        <li><strong>Filme ou &aacute;udio:</strong> transcreve e traduz, direto.</li>
-        <li><strong>Legenda:</strong> fica fora da regra. &Eacute; guardada e espera
-            voc&ecirc; escolher o que fazer com ela.</li>
-      </ul>
-      <p>Vale para o que chega por esta p&aacute;gina, valendo para todo mundo na
-         rede. A fila continua atendendo um de cada vez.</p>
+      <p><strong>Ligado:</strong> todo filme ou &aacute;udio que voc&ecirc; envia
+         entra na fila na hora, para transcrever e traduzir &mdash; sem escolher
+         a a&ccedil;&atilde;o e clicar em Processar depois.</p>
+      <p><strong>Desligado:</strong> o arquivo s&oacute; fica guardado e espera
+         voc&ecirc; na lista.</p>
+      <p>Vale para quem enviar por esta p&aacute;gina, de qualquer m&aacute;quina
+         da rede. A fila atende um de cada vez, na ordem de chegada.</p>
     </div>
     <p class="dock-estado" id="auto-estado" role="status" aria-live="polite"></p>
   </aside>
@@ -1483,7 +1478,7 @@ $('drop').ondrop = (e) => {
 const autoProcessar = $('auto-processar');
 
 const DICA_PADRAO = 'pode mandar os dois juntos — vídeo, áudio ou legenda';
-const DICA_AUTO = 'automático ligado — filme vai direto para a fila; legenda espera você';
+const DICA_AUTO = 'automático ligado — filme e áudio vão direto para a fila';
 const dicaAtual = () => autoProcessar.checked ? DICA_AUTO : DICA_PADRAO;
 
 // Uma linha so, com dois papeis: o estado que vale agora e, por alguns
