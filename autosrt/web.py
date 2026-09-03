@@ -1089,9 +1089,11 @@ PAGINA = """<!doctype html>
       <span>Processar ao enviar</span>
     </label>
     <div class="dock-ajuda" id="auto-processar-ajuda">
-      <p><strong>Ligado:</strong> todo filme ou &aacute;udio que voc&ecirc; envia
-         entra na fila na hora, para transcrever e traduzir &mdash; sem escolher
-         a a&ccedil;&atilde;o e clicar em Processar depois.</p>
+      <p><strong>Ligado:</strong> todo filme que voc&ecirc; envia entra na fila
+         na hora, para transcrever e traduzir &mdash; sem escolher a
+         a&ccedil;&atilde;o e clicar em Processar depois.</p>
+      <p><strong>Desligado:</strong> o arquivo s&oacute; fica guardado e espera
+         voc&ecirc; na lista (processo antigo).</p>
     </div>
     <p class="dock-estado" id="auto-estado" role="status" aria-live="polite"></p>
   </aside>
@@ -1474,7 +1476,7 @@ $('drop').ondrop = (e) => {
 const autoProcessar = $('auto-processar');
 
 const DICA_PADRAO = 'pode mandar os dois juntos — vídeo, áudio ou legenda';
-const DICA_AUTO = 'automático ligado — filme e áudio vão direto para a fila';
+const DICA_AUTO = 'automático ligado — filme vai direto para a fila';
 const dicaAtual = () => autoProcessar.checked ? DICA_AUTO : DICA_PADRAO;
 
 // Uma linha so, com dois papeis: o estado que vale agora e, por alguns
