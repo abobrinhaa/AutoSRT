@@ -1453,7 +1453,7 @@ function preencherAcoesEBaixar(div, item, botaoProcessar) {
     seletor.appendChild(opcao);
   }
 
-  botaoProcessar.onclick = () => processarUm(div);
+  botaoProcessar.onclick = () => processarUm(div, botaoProcessar);
 }
 
 function botaoApagar(item) {
@@ -1484,7 +1484,7 @@ function linhaCompacta(item) {
     <span class="nome"></span>
     <span class="tag"></span><span class="tag"></span>
     <select class="acao"></select>
-    <button>Processar</button>`;
+    <button class="processar">Processar</button>`;
 
   const nome = div.querySelector('.nome');
   nome.textContent = item.pasta === '.' ? item.nome : item.nome.split('/').pop();
@@ -1502,7 +1502,7 @@ function linhaCompacta(item) {
   }
 
   div.appendChild(botaoApagar(item));
-  preencherAcoesEBaixar(div, item, div.querySelector('button'));
+  preencherAcoesEBaixar(div, item, div.querySelector('.processar'));
   return div;
 }
 
@@ -1522,7 +1522,7 @@ function cardMidia(item) {
       <p class="item-sinopse"></p>
       <div class="item-rodape">
         <select class="acao"></select>
-        <button>Processar</button>
+        <button class="processar">Processar</button>
       </div>
     </div>`;
 
@@ -1562,7 +1562,7 @@ function cardMidia(item) {
   div.querySelector('.item-sinopse').textContent = filme.sinopse || '';
   div.querySelector('.item-sinopse').hidden = !filme.sinopse;
 
-  preencherAcoesEBaixar(div, item, div.querySelector('button'));
+  preencherAcoesEBaixar(div, item, div.querySelector('.processar'));
   return div;
 }
 
@@ -1581,11 +1581,10 @@ function pedidoDe(div) {
   return pedido;
 }
 
-async function processarUm(div) {
+async function processarUm(div, botao) {
   const pedido = pedidoDe(div);
   if (!pedido) return;
 
-  const botao = div.querySelector('button');
   botao.disabled = true;
   botao.textContent = 'Enviado';
   const r = await fetch('/api/processar', {
