@@ -23,7 +23,9 @@ import requests
 from .language import language_name
 
 SEARCH_URL = "https://api.themoviedb.org/3/search/movie"
-IMAGE_BASE = "https://image.tmdb.org/t/p/w154"
+SEARCH_TV_URL = "https://api.themoviedb.org/3/search/tv"
+TV_DETAILS_URL = "https://api.themoviedb.org/3/tv/{id}"
+IMAGE_BASE = "https://image.tmdb.org/t/p/w342"
 
 DEFAULT_TIMEOUT = 4  # segundos. Curto de propósito: é um extra na listagem
                       # de arquivos, não pode travar a página por causa dele.
@@ -31,6 +33,10 @@ DEFAULT_TIMEOUT = 4  # segundos. Curto de propósito: é um extra na listagem
 # Ano plausível de lançamento: 19xx ou 20xx, isolado de outros dígitos. Evita
 # confundir com resolução ("1080p", "2160p") ou tamanho ("700mb").
 YEAR_RE = re.compile(r"(?<!\d)(19\d{2}|20\d{2})(?!\d)")
+
+# Marcação de temporada/episódio nos nomes de release de série:
+# "Nome.Da.Serie.S01E05.1080p...". O que vem antes é o título da série.
+EPISODE_RE = re.compile(r"[Ss](\d{1,2})[Ee](\d{1,3})")
 
 
 def guess_title_and_year(filename: str):
@@ -56,6 +62,28 @@ def guess_title_and_year(filename: str):
     title = re.sub(r"[\s\(\[\-–—]+$", "", title).strip()
     title = re.sub(r"\s+", " ", title).strip()
     return title, year
+
+
+def guess_series_title_and_episode(filename: str):
+    """Chuta título da série, temporada e episódio a partir do nome do arquivo.
+
+    >>> guess_series_title_and_episode("Nome.Da.Serie.S01E05.1080p.mkv")
+    ('Nome Da Serie', 1, 5)
+
+    Quando o nome não tem o padrão ``SxxExx``, devolve ``(None, None, None)``
+    -- é sinal de que o arquivo não é (ou não parece ser) um episódio.
+    """
+    stem = os.path.splitext(os.path.basename(filename))[0]
+    cleaned = re.sub(r"[._]+", " ", stem)
+
+    match = EPISODE_RE.search(cleaned)
+    if not match:
+        return None, None, None
+
+    title = cleaned[:match.start()]
+    title = re.sub(r"[\s\(\[\-–—]+$", "", title).strip()
+    title = re.sub(r"\s+", " ", title).strip()
+    return title, int(match.group(1)), int(match.group(2))
 
 
 def _poster_url(poster_path):
@@ -101,17 +129,65 @@ def search_movie(query, api_key, *, year=None, session=None,
     return resultados[0] if resultados else None
 
 
-def lookup_for_file(path, api_key, *, session=None, timeout=DEFAULT_TIMEOUT):
-    """Reconhece o filme de um arquivo de mídia pelo nome.
-
-    Returns:
-        ``{"titulo", "ano", "poster", "idioma_original"}`` quando encontra
-        algo razoável, ou ``None`` — seja por falta de chave, nome
-        irreconhecível, falha de rede, ou nenhum resultado no TMDB.
-    """
-    if not api_key:
+def search_tv(query, api_key, *, session=None, timeout=DEFAULT_TIMEOUT):
+    """Como :func:`search_movie`, mas buscando séries (``search/tv``)."""
+    if not query or not api_key:
         return None
 
+    params = {"api_key": api_key, "query": query, "language": "pt-BR",
+             "include_adult": "false"}
+
+    http = session or requests
+    try:
+        response = http.get(SEARCH_TV_URL, params=params, timeout=timeout)
+    except requests.RequestException:
+        return None
+
+    if response.status_code != 200:
+        return None
+    try:
+        data = response.json()
+    except ValueError:
+        return None
+
+    resultados = data.get("results") or []
+    return resultados[0] if resultados else None
+
+
+def tv_details(tv_id, api_key, *, session=None, timeout=DEFAULT_TIMEOUT):
+    """Busca o total de temporadas/episódios de uma série pelo seu id no
+    TMDB. A busca por nome (:func:`search_tv`) não traz esses números --
+    só o detalhe da série (``tv/{id}``) traz."""
+    http = session or requests
+    try:
+        response = http.get(TV_DETAILS_URL.format(id=tv_id),
+                            params={"api_key": api_key, "language": "pt-BR"},
+                            timeout=timeout)
+    except requests.RequestException:
+        return None
+
+    if response.status_code != 200:
+        return None
+    try:
+        return response.json()
+    except ValueError:
+        return None
+
+
+#: Cache dos detalhes de série (temporadas/episódios totais), por tv_id.
+#: Separado do cache por arquivo: vários episódios da mesma série repetem o
+#: mesmo tv_id, e esses números não mudam de um episódio pro outro.
+_tv_details_cache = {}
+
+
+def _tv_details_cached(tv_id, api_key, *, session=None, timeout=DEFAULT_TIMEOUT):
+    if tv_id not in _tv_details_cache:
+        _tv_details_cache[tv_id] = tv_details(tv_id, api_key, session=session,
+                                              timeout=timeout)
+    return _tv_details_cache[tv_id]
+
+
+def _lookup_movie(path, api_key, *, session=None, timeout=DEFAULT_TIMEOUT):
     titulo_bruto, ano = guess_title_and_year(path)
     if not titulo_bruto:
         return None
@@ -123,12 +199,62 @@ def lookup_for_file(path, api_key, *, session=None, timeout=DEFAULT_TIMEOUT):
 
     idioma = resultado.get("original_language")
     return {
+        "tipo": "filme",
         "titulo": resultado.get("title") or titulo_bruto,
         "ano": _release_year(resultado.get("release_date")),
         "poster": _poster_url(resultado.get("poster_path")),
+        "sinopse": resultado.get("overview") or None,
         "idioma_original": idioma,
         "idioma_original_nome": language_name(idioma) if idioma else None,
     }
+
+
+def _lookup_series(path, titulo_bruto, temporada, episodio, api_key, *,
+                   session=None, timeout=DEFAULT_TIMEOUT):
+    resultado = search_tv(titulo_bruto, api_key, session=session, timeout=timeout)
+    if not resultado:
+        return None
+
+    detalhes = _tv_details_cached(resultado.get("id"), api_key, session=session,
+                                  timeout=timeout) or {}
+    idioma = resultado.get("original_language")
+    return {
+        "tipo": "serie",
+        "titulo": resultado.get("name") or titulo_bruto,
+        "poster": _poster_url(resultado.get("poster_path")),
+        "sinopse": resultado.get("overview") or None,
+        "idioma_original": idioma,
+        "idioma_original_nome": language_name(idioma) if idioma else None,
+        "temporada": temporada,
+        "episodio": episodio,
+        "temporadas_total": detalhes.get("number_of_seasons"),
+        "episodios_total": detalhes.get("number_of_episodes"),
+    }
+
+
+def lookup_for_file(path, api_key, *, session=None, timeout=DEFAULT_TIMEOUT):
+    """Reconhece o filme ou episódio de série de um arquivo de mídia pelo
+    nome. Um nome com o padrão ``SxxExx`` (ex.: ``S01E05``) é tratado como
+    episódio de série; senão, como filme.
+
+    Returns:
+        Para filme: ``{"tipo": "filme", "titulo", "ano", "poster",
+        "sinopse", "idioma_original", "idioma_original_nome"}``.
+        Para série: ``{"tipo": "serie", "titulo", "poster", "sinopse",
+        "idioma_original", "idioma_original_nome", "temporada", "episodio",
+        "temporadas_total", "episodios_total"}``.
+        ``None`` quando não reconhece nada -- seja por falta de chave, nome
+        irreconhecível, falha de rede, ou nenhum resultado no TMDB.
+    """
+    if not api_key:
+        return None
+
+    titulo_serie, temporada, episodio = guess_series_title_and_episode(path)
+    if titulo_serie:
+        return _lookup_series(path, titulo_serie, temporada, episodio, api_key,
+                              session=session, timeout=timeout)
+
+    return _lookup_movie(path, api_key, session=session, timeout=timeout)
 
 
 #: Cache em memória, por nome de arquivo. O filme que um nome de arquivo
@@ -147,6 +273,7 @@ def lookup_cached(path, api_key, *, session=None, timeout=DEFAULT_TIMEOUT):
 
 
 def limpar_cache() -> None:
-    """Esvazia o cache. Usado pelos testes; útil também se o usuário renomear
-    o arquivo para o nome certo depois de um reconhecimento errado."""
+    """Esvazia os caches. Usado pelos testes; útil também se o usuário
+    renomear o arquivo para o nome certo depois de um reconhecimento errado."""
     _cache.clear()
+    _tv_details_cache.clear()

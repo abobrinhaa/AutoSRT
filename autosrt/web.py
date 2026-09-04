@@ -899,6 +899,8 @@ PAGINA = """<!doctype html>
   .tag.legenda-pronta { color: var(--success); }
   .lista { border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden;
            background: var(--surface); box-shadow: var(--shadow-sm); }
+  /* Linha compacta: usada quando não há pôster/sinopse pra mostrar (sem
+     chave do TMDB, sem reconhecimento, ou arquivo de legenda avulsa). */
   .item { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; padding: 12px 14px;
           border-bottom: 1px solid var(--border); transition: background .15s ease; }
   .item:hover { background: var(--surface-2); }
@@ -911,14 +913,30 @@ PAGINA = """<!doctype html>
   /* Marca o que acabou de subir, para o usuário achar onde clicar. */
   .item.novo { background: var(--accent-soft); box-shadow: inset 3px 0 0 var(--accent); }
   .item .acao { flex-shrink: 1; max-width: 220px; }
-  /* Selo de reconhecimento do TMDB: pôster pequeno + título (ano). É um
-     palpite pelo nome do arquivo, por isso fica discreto, não em destaque. */
-  .filme { display: flex; align-items: center; gap: 6px; flex-shrink: 0;
-           max-width: 200px; }
-  .filme .poster { width: 24px; height: 34px; object-fit: cover;
-                   border-radius: 3px; flex-shrink: 0; background: var(--surface-2); }
-  .filme .titulo { font-size: 12px; color: var(--text-muted); overflow: hidden;
-                   text-overflow: ellipsis; white-space: nowrap; }
+  /* Card rico: usado quando o TMDB reconheceu o arquivo (filme ou episódio
+     de série), com pôster grande e sinopse -- é o layout principal da
+     listagem, a linha compacta acima é só o "modo sem dados" dele. */
+  .item.item-midia { align-items: flex-start; padding: 16px; gap: 14px; position: relative; }
+  .item-midia .marca { margin-top: 3px; }
+  .item-midia .poster-grande { width: 92px; height: 138px; object-fit: cover;
+                                border-radius: var(--radius-sm); flex-shrink: 0;
+                                background: var(--surface-2); box-shadow: var(--shadow-sm); }
+  .item-corpo { flex: 1 1 260px; min-width: 0; display: flex; flex-direction: column;
+                gap: 6px; align-self: stretch; }
+  .item-topo { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+  .item-titulo { margin: 0; font-size: 15px; font-weight: 600; overflow: hidden;
+                 text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 1;
+                 -webkit-box-orient: vertical; }
+  .item-episodio { margin: -4px 0 0; font-size: 13px; color: var(--text-muted); }
+  .item-sinopse { margin: 0; font-size: 13px; line-height: 1.5; color: var(--text-muted);
+                  overflow: hidden; text-overflow: ellipsis; display: -webkit-box;
+                  -webkit-line-clamp: 3; -webkit-box-orient: vertical; }
+  .item-rodape { margin-top: auto; padding-top: 8px; display: flex; flex-wrap: wrap;
+                 align-items: center; gap: 8px; }
+  .item-rodape .acao { max-width: none; flex: 1 1 auto; }
+  .item-metadados { flex-shrink: 0; display: flex; flex-direction: column; gap: 4px;
+                     align-items: flex-start; }
+  .item-midia .apagar { flex-shrink: 0; }
   #arquivo { display: none; }
   #escolher { display: inline-block; padding: 9px 18px; background: var(--accent);
               color: #fff; border-radius: 999px; cursor: pointer; font-weight: 600;
@@ -1165,6 +1183,15 @@ PAGINA = """<!doctype html>
     .barra-acoes { flex-direction: column; align-items: stretch; }
     .trabalho .topo .acao { flex: 1 1 100%; display: flex; gap: 8px; }
     [data-tip]::after, summary[data-tip]::after { max-width: min(220px, 78vw); }
+    /* Card rico empilha: checkbox + selos ficam na primeira linha, pôster e
+       corpo cada um vira sua própria linha ocupando a largura toda -- lado
+       a lado não sobra espaço pra sinopse em tela estreita. flex-wrap com
+       flex-basis: 100% nos dois últimos filhos faz a quebra sem precisar
+       de position: absolute (que sobrepunha o selo "video" ao checkbox). */
+    .item.item-midia { flex-wrap: wrap; }
+    .item-midia .poster-grande { flex: 1 1 100%; width: 100%; height: 180px; }
+    .item-midia .item-corpo { flex: 1 1 100%; }
+    .item-metadados { flex-direction: row; gap: 8px; align-items: center; }
   }
 </style>
 </head>
@@ -1396,10 +1423,63 @@ async function carregarArquivos() {
 // legenda dentro de subpasta não é encontrada.
 const caminhoUrl = (nome) => nome.split('/').map(encodeURIComponent).join('/');
 
+// O card rico (pôster + sinopse) só faz sentido quando o TMDB reconheceu
+// algo com pôster pra mostrar; sem isso, a linha compacta de sempre.
 function linhaArquivo(item) {
+  const div = item.filme && item.filme.poster
+    ? cardMidia(item) : linhaCompacta(item);
+  div.dataset.arquivo = item.nome;
+  if (recemChegados.includes(item.nome)) div.classList.add('novo');
+  div.querySelector('.marca').onchange = contar;
+  return div;
+}
+
+function preencherAcoesEBaixar(div, item, botaoProcessar) {
+  // Legenda que já está no servidor se baixa direto, sem passar pela fila:
+  // quem só quer o arquivo de ontem não precisa reprocessar o filme.
+  if (item.tipo === 'legenda') {
+    const baixar = document.createElement('a');
+    baixar.className = 'baixar';
+    baixar.href = '/api/legenda/' + caminhoUrl(item.nome);
+    baixar.textContent = 'Baixar';
+    botaoProcessar.before(baixar);
+  }
+
+  const seletor = div.querySelector('.acao');
+  for (const acao of item.acoes) {
+    const opcao = document.createElement('option');
+    opcao.value = acao.id;
+    opcao.textContent = acao.rotulo;
+    seletor.appendChild(opcao);
+  }
+
+  botaoProcessar.onclick = () => processarUm(div);
+}
+
+function botaoApagar(item) {
+  const apagar = document.createElement('button');
+  apagar.className = 'apagar';
+  apagar.textContent = 'Apagar';
+  apagar.title = 'Apaga este arquivo do servidor';
+  apagar.onclick = async () => {
+    if (!confirm(`Apagar ${item.nome} do servidor?\\n\\nNão dá para desfazer.`)) return;
+    apagar.disabled = true;
+    const r = await fetch('/api/arquivo/' + caminhoUrl(item.nome), {method: 'DELETE'});
+    if (!r.ok) {
+      apagar.disabled = false;
+      alert((await r.json()).erro || 'Não consegui apagar.');
+      return;
+    }
+    carregarArquivos();
+  };
+  return apagar;
+}
+
+// Linha compacta: sem pôster/sinopse pra mostrar -- sem chave do TMDB, sem
+// reconhecimento, ou arquivo de legenda avulsa (nunca tem "filme").
+function linhaCompacta(item) {
   const div = document.createElement('div');
   div.className = 'item';
-  div.dataset.arquivo = item.nome;
   div.innerHTML = `<input type="checkbox" class="marca">
     <span class="nome"></span>
     <span class="tag"></span><span class="tag"></span>
@@ -1421,68 +1501,68 @@ function linhaArquivo(item) {
     div.querySelectorAll('.tag')[1].after(selo);
   }
 
-  // Reconhecimento do TMDB pelo nome do arquivo: é palpite, então some
-  // silenciosamente quando o servidor não achou nada em vez de mostrar um
-  // selo vazio ou errado.
-  if (item.filme) {
-    const bloco = document.createElement('span');
-    bloco.className = 'filme';
-    if (item.filme.poster) {
-      const img = document.createElement('img');
-      img.className = 'poster';
-      img.src = item.filme.poster;
-      img.alt = '';
-      img.loading = 'lazy';
-      bloco.appendChild(img);
+  div.appendChild(botaoApagar(item));
+  preencherAcoesEBaixar(div, item, div.querySelector('button'));
+  return div;
+}
+
+// Card rico: pôster grande + título + sinopse, no formato do protótipo.
+// Filme e série usam o mesmo esqueleto -- só a linha de temporada/episódio
+// muda entre um e outro.
+function cardMidia(item) {
+  const filme = item.filme;
+  const div = document.createElement('div');
+  div.className = 'item item-midia';
+  div.innerHTML = `<input type="checkbox" class="marca">
+    <div class="item-metadados"></div>
+    <img class="poster-grande" alt="" loading="lazy">
+    <div class="item-corpo">
+      <div class="item-topo"><h3 class="item-titulo"></h3></div>
+      <p class="item-episodio" hidden></p>
+      <p class="item-sinopse"></p>
+      <div class="item-rodape">
+        <select class="acao"></select>
+        <button>Processar</button>
+      </div>
+    </div>`;
+
+  div.querySelector('.poster-grande').src = filme.poster;
+  const titulo = div.querySelector('.item-titulo');
+  titulo.textContent = filme.ano ? `${filme.titulo} (${filme.ano})` : filme.titulo;
+  titulo.title = 'Reconhecido pelo nome do arquivo, via TMDB';
+  div.querySelector('.item-topo').appendChild(botaoApagar(item));
+
+  if (filme.tipo === 'serie') {
+    const linha = div.querySelector('.item-episodio');
+    linha.hidden = false;
+    const partes = [];
+    if (filme.temporada) partes.push(`Temporada ${filme.temporada}, Episódio ${filme.episodio}`);
+    if (filme.temporadas_total) {
+      partes.push(`${filme.temporadas_total} temporada(s) · ${filme.episodios_total} episódio(s) no total`);
     }
-    const titulo = document.createElement('span');
-    titulo.className = 'titulo';
-    titulo.textContent = item.filme.ano
-      ? `${item.filme.titulo} (${item.filme.ano})` : item.filme.titulo;
-    titulo.title = 'Reconhecido pelo nome do arquivo, via TMDB';
-    bloco.appendChild(titulo);
-    div.querySelector('.nome').after(bloco);
+    linha.textContent = partes.join(' — ');
   }
 
-  // Legenda que já está no servidor se baixa direto, sem passar pela fila:
-  // quem só quer o arquivo de ontem não precisa reprocessar o filme.
-  if (item.tipo === 'legenda') {
-    const baixar = document.createElement('a');
-    baixar.className = 'baixar';
-    baixar.href = '/api/legenda/' + caminhoUrl(item.nome);
-    baixar.textContent = 'Baixar';
-    div.querySelector('button').before(baixar);
+  const metadados = div.querySelector('.item-metadados');
+  const tagTipo = document.createElement('span');
+  tagTipo.className = 'tag';
+  tagTipo.textContent = item.tipo;
+  metadados.appendChild(tagTipo);
+  const tagTamanho = document.createElement('span');
+  tagTamanho.className = 'tag';
+  tagTamanho.textContent = item.tamanho;
+  metadados.appendChild(tagTamanho);
+  if (item.tem_legenda) {
+    const selo = document.createElement('span');
+    selo.className = 'tag legenda-pronta';
+    selo.textContent = 'tem legenda';
+    metadados.appendChild(selo);
   }
 
-  const apagar = document.createElement('button');
-  apagar.className = 'apagar';
-  apagar.textContent = 'Apagar';
-  apagar.title = 'Apaga este arquivo do servidor';
-  apagar.onclick = async () => {
-    if (!confirm(`Apagar ${item.nome} do servidor?\\n\\nNão dá para desfazer.`)) return;
-    apagar.disabled = true;
-    const r = await fetch('/api/arquivo/' + caminhoUrl(item.nome), {method: 'DELETE'});
-    if (!r.ok) {
-      apagar.disabled = false;
-      alert((await r.json()).erro || 'Não consegui apagar.');
-      return;
-    }
-    carregarArquivos();
-  };
-  div.appendChild(apagar);
+  div.querySelector('.item-sinopse').textContent = filme.sinopse || '';
+  div.querySelector('.item-sinopse').hidden = !filme.sinopse;
 
-  const seletor = div.querySelector('.acao');
-  for (const acao of item.acoes) {
-    const opcao = document.createElement('option');
-    opcao.value = acao.id;
-    opcao.textContent = acao.rotulo;
-    seletor.appendChild(opcao);
-  }
-
-  if (recemChegados.includes(item.nome)) div.classList.add('novo');
-
-  div.querySelector('.marca').onchange = contar;
-  div.querySelector('button').onclick = () => processarUm(div);
+  preencherAcoesEBaixar(div, item, div.querySelector('button'));
   return div;
 }
 
