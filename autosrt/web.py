@@ -927,6 +927,11 @@ PAGINA = """<!doctype html>
   .item-titulo { margin: 0; font-size: 15px; font-weight: 600; overflow: hidden;
                  text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 1;
                  -webkit-box-orient: vertical; }
+  /* O título vem do TMDB, então dois arquivos do mesmo filme/episódio (um
+     remux, um reencode, um refeito depois de um erro) ficam idênticos sem
+     isto -- é o nome de arquivo que diz qual é qual. */
+  .item-arquivo { margin: -4px 0 0; font-size: 12px; color: var(--text-muted);
+                  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .item-episodio { margin: -4px 0 0; font-size: 13px; color: var(--text-muted); }
   .item-sinopse { margin: 0; font-size: 13px; line-height: 1.5; color: var(--text-muted);
                   overflow: hidden; text-overflow: ellipsis; display: -webkit-box;
@@ -1518,6 +1523,7 @@ function cardMidia(item) {
     <img class="poster-grande" alt="" loading="lazy">
     <div class="item-corpo">
       <div class="item-topo"><h3 class="item-titulo"></h3></div>
+      <p class="item-arquivo"></p>
       <p class="item-episodio" hidden></p>
       <p class="item-sinopse"></p>
       <div class="item-rodape">
@@ -1531,6 +1537,12 @@ function cardMidia(item) {
   titulo.textContent = filme.ano ? `${filme.titulo} (${filme.ano})` : filme.titulo;
   titulo.title = 'Reconhecido pelo nome do arquivo, via TMDB';
   div.querySelector('.item-topo').appendChild(botaoApagar(item));
+
+  // O cabeçalho da pasta já diz onde o arquivo está, então aqui só o nome:
+  // dentro de uma pasta, o caminho inteiro repetiria o que já está acima.
+  const arquivo = div.querySelector('.item-arquivo');
+  arquivo.textContent = item.pasta === '.' ? item.nome : item.nome.split('/').pop();
+  arquivo.title = item.nome;
 
   if (filme.tipo === 'serie') {
     const linha = div.querySelector('.item-episodio');
