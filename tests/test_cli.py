@@ -276,6 +276,22 @@ class TestTranscricao(BaseCLI):
         self.assertEqual(
             fake.call_args.kwargs["hallucination_silence_threshold"], 2.0)
 
+    def test_filtro_de_alucinacao_vem_ligado(self):
+        entrada = self.touch("filme.mkv")
+        with mock.patch.object(pipeline, "process_media") as fake:
+            fake.return_value = pipeline.PipelineResult(
+                total=1, translated=1, failed=[], detected_lang="en")
+            self.run_cli([entrada])
+        self.assertTrue(fake.call_args.kwargs["filter_hallucinations"])
+
+    def test_manter_alucinacoes_desliga_o_filtro(self):
+        entrada = self.touch("filme.mkv")
+        with mock.patch.object(pipeline, "process_media") as fake:
+            fake.return_value = pipeline.PipelineResult(
+                total=1, translated=1, failed=[], detected_lang="en")
+            self.run_cli([entrada, "--manter-alucinacoes"])
+        self.assertFalse(fake.call_args.kwargs["filter_hallucinations"])
+
 
 class TestMotorViaAPI(BaseCLI):
     """Regressão do motor de transcrição via API: antes, o parâmetro

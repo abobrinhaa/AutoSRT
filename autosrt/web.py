@@ -186,7 +186,9 @@ def _executar(job, engine):
             whisper_model=config.get_whisper_model(),
             whisper_compute_type=config.get_whisper_compute_type(),
             condition_on_previous_text=config.get_condition_on_previous_text(),
-            hallucination_silence_threshold=config.get_hallucination_silence_threshold())
+            hallucination_silence_threshold=config.get_hallucination_silence_threshold(),
+            filter_hallucinations=config.get_filtrar_alucinacoes(),
+            extra_hallucinations=config.get_alucinacoes_extra())
         job.resultado = os.path.splitext(job.entrada)[0] + ".srt"
     else:
         saida = srt_io.srt_output_path(job.entrada)
@@ -486,6 +488,11 @@ def _register_routes(app, fila, media_dir, engine):
             "condition_on_previous_text": config.get_condition_on_previous_text(),
             "hallucination_silence_threshold":
                 config.get_hallucination_silence_threshold(),
+            # Ligado quando não configurado, ao contrário dos de cima: é
+            # correção de defeito, não preferência (ver
+            # config.get_filtrar_alucinacoes).
+            "filtrar_alucinacoes": config.get_filtrar_alucinacoes(),
+            "alucinacoes_extra": config.get_alucinacoes_extra(),
         })
 
     @app.post("/api/config")
@@ -578,6 +585,21 @@ def _register_routes(app, fila, media_dir, engine):
                         "erro": "Limiar de silêncio para alucinação precisa "
                                 "ser um número, em segundos (ex: 2)."}), 400
             novos["hallucination_silence_threshold"] = valor
+
+        if "filtrar_alucinacoes" in dados:
+            valor = str(dados.get("filtrar_alucinacoes") or "").strip().lower()
+            if valor and valor not in ("true", "false"):
+                return jsonify({
+                    "erro": "Descartar frases inventadas precisa ser "
+                            "verdadeiro ou falso."}), 400
+            novos["filtrar_alucinacoes"] = valor
+
+        if "alucinacoes_extra" in dados:
+            # Texto com uma frase por linha, como o usuário digita na
+            # caixa; quem lê (config.get_alucinacoes_extra) reparte e
+            # descarta linha em branco -- vazia, casaria com tudo.
+            novos["alucinacoes_extra"] = str(
+                dados.get("alucinacoes_extra") or "").strip()
 
         if not novos:
             return jsonify({"erro": "Nada para gravar."}), 400
@@ -978,9 +1000,12 @@ PAGINA = """<!doctype html>
      não importa a especificidade -- então esconder via JS não escondia
      nada de verdade. */
   #config label[hidden] { display: none; }
-  #config input, #config-transcricao input {
+  #config input, #config-transcricao input, #config-transcricao textarea {
     font: inherit; background: var(--surface-2); color: var(--text);
     border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 8px 10px; }
+  /* Sem isto a caixa de frases nasce com a largura do atributo cols e
+     escapa da coluna do painel, que e a unica largura que manda aqui. */
+  #config-transcricao textarea { width: 100%; box-sizing: border-box; resize: vertical; }
   /* Checkbox fica ao lado do texto, não empilhado como os outros campos. */
   #config-transcricao label.linha-checkbox {
     display: flex; align-items: center; gap: 8px; }
@@ -1298,6 +1323,10 @@ PAGINA = """<!doctype html>
       <label class="linha-checkbox"><input type="checkbox" id="condition_on_previous_text"> <span class="rotulo-com-ajuda">Condicionar no trecho anterior<span class="ajuda" tabindex="0" data-tip="O Whisper por padr&atilde;o usa o texto do trecho anterior para decodificar o pr&oacute;ximo, o que ajuda a manter nome pr&oacute;prio consistente -- mas tamb&eacute;m deixa uma alucina&ccedil;&atilde;o em sil&ecirc;ncio ou trilha sonora se realimentar nos trechos seguintes (a legenda repetindo frases parecidas, tipo 'Esse &eacute; o primeiro', 'Esse &eacute; o segundo'...). Desmarcado (padr&atilde;o aqui) quebra essa cadeia.">?</span></span></label>
       <label><span class="rotulo-com-ajuda">Limiar de sil&ecirc;ncio p/ alucina&ccedil;&atilde;o (s)<span class="ajuda" tabindex="0" data-tip="Segundos de sil&ecirc;ncio que o Whisper pula, em vez de tentar transcrever, quando desconfia de alucina&ccedil;&atilde;o. Evita um trecho de m&uacute;sica/sil&ecirc;ncio virar uma frase inventada cobrindo dezenas de segundos de v&iacute;deo. Em branco usa o padr&atilde;o (2 segundos).">?</span></span>
         <input type="text" id="hallucination_silence_threshold" placeholder="em branco = 2 (padrão)">
+      </label>
+      <label class="linha-checkbox"><input type="checkbox" id="filtrar_alucinacoes"> <span class="rotulo-com-ajuda">Descartar frases inventadas<span class="ajuda" tabindex="0" data-tip="Sobre sil&ecirc;ncio e trilha sonora o Whisper preenche o trecho com o clich&ecirc; de encerramento de v&iacute;deo que ele viu no treino -- 'Obrigado por assistir', 'At&eacute; a pr&oacute;xima', 'Legendas pela comunidade Amara.org'. Marcado (padr&atilde;o), essas legendas s&atilde;o descartadas depois de transcrever. As frases que tamb&eacute;m podem ser fala de verdade ('Obrigado', 'Tchau') s&oacute; saem quando est&atilde;o na borda do arquivo, isoladas por sil&ecirc;ncio longo ou repetidas.">?</span></span></label>
+      <label><span class="rotulo-com-ajuda">Frases inventadas, uma por linha<span class="ajuda" tabindex="0" data-tip="Clich&ecirc;s do seu acervo, somados aos que j&aacute; v&ecirc;m embutidos. S&oacute; sai a legenda que &eacute; inteiramente a frase; a mesma frase dentro de uma fala maior fica.">?</span></span>
+        <textarea id="alucinacoes_extra" rows="3" placeholder="ex: Legendas: Fulano"></textarea>
       </label>
       <div class="rodape">
         <span class="dica-config" id="mensagem-salvar-vad">Mudan&ccedil;as valem a partir do pr&oacute;ximo trabalho enviado &agrave; fila.</span>
@@ -1933,11 +1962,16 @@ async function carregarConfig() {
   // transcribe.py, sem repetir esse valor aqui.
   $('condition_on_previous_text').checked = c.condition_on_previous_text === true;
   $('hallucination_silence_threshold').value = c.hallucination_silence_threshold ?? '';
+  // Ligado quando não configurado: aqui o padrão é marcado, não desmarcado.
+  $('filtrar_alucinacoes').checked = c.filtrar_alucinacoes !== false;
+  $('alucinacoes_extra').value = (c.alucinacoes_extra || []).join('\\n');
   const seloVad = $('estado-vad');
   const vadAtiva = c.vad_threshold !== null || c.vad_min_silence_ms !== null
     || !!c.whisper_model || !!c.whisper_compute_type || !!c.vad_method
     || !!c.whisper_language || c.condition_on_previous_text === true
-    || c.hallucination_silence_threshold !== null;
+    || c.hallucination_silence_threshold !== null
+    || c.filtrar_alucinacoes === false
+    || (c.alucinacoes_extra || []).length > 0;
   seloVad.className = 'selo ' + (vadAtiva ? 'ok' : '');
   seloVad.textContent = vadAtiva ? 'ajustada' : 'padrão do Whisper';
 
@@ -2060,6 +2094,8 @@ $('salvar-vad').onclick = async () => {
     vad_min_silence_ms: $('vad_min_silence_ms').value.trim(),
     condition_on_previous_text: $('condition_on_previous_text').checked ? 'true' : 'false',
     hallucination_silence_threshold: $('hallucination_silence_threshold').value.trim(),
+    filtrar_alucinacoes: $('filtrar_alucinacoes').checked ? 'true' : 'false',
+    alucinacoes_extra: $('alucinacoes_extra').value.trim(),
   };
 
   $('salvar-vad').disabled = true;

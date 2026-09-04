@@ -450,5 +450,90 @@ class TestPastaDeOriginais(unittest.TestCase):
         caminho = original_path_for("/filmes/casablanca.srt")
         self.assertNotEqual(os.path.dirname(caminho), "/filmes")
 
+class TestFiltroDeAlucinacao(unittest.TestCase):
+    """A frase inventada pelo Whisper não pode chegar ao arquivo final.
+
+    O filtro roda logo depois de transcrever, antes de gravar a pasta de
+    originais e antes de traduzir -- assim a alucinação não é traduzida
+    (gastando requisição) nem some só do arquivo traduzido, deixando o
+    original sujo.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.midia = os.path.join(self.tmp, "filme.mkv")
+        open(self.midia, "wb").close()
+        self.destino = os.path.join(self.tmp, "saida.srt")
+
+    def _transcritas(self):
+        return [
+            Cue.from_source(index=1, start=1000, end=3000,
+                            source_text="Você viu o que aconteceu ontem?"),
+            Cue.from_source(index=2, start=3000, end=5000,
+                            source_text="Vi, e não acreditei."),
+            Cue.from_source(index=3, start=5000, end=7000,
+                            source_text="Ninguém acreditou."),
+            Cue.from_source(index=4, start=7000, end=9000,
+                            source_text="O delegado ainda está lá?"),
+            Cue.from_source(index=5, start=30000, end=33000,
+                            source_text="Obrigado por assistir!"),
+        ]
+
+    def _rodar(self, **kwargs):
+        with mock.patch("autosrt.transcribe.transcribe") as fake:
+            fake.return_value = self._transcritas()
+            resultado = process_media(self.midia, self.destino,
+                                      translate=False, **kwargs)
+        return resultado
+
+    def test_sai_do_arquivo_final(self):
+        resultado = self._rodar()
+        textos = [c.source_text for c in srt_io.load_cues(self.destino)]
+        self.assertNotIn("Obrigado por assistir!", textos)
+        self.assertEqual(len(textos), 4)
+        self.assertEqual(resultado.total, 4)
+
+    def test_sai_tambem_da_pasta_de_originais(self):
+        self._rodar()
+        original = srt_io.load_cues(pipeline.original_path_for(self.destino))
+        self.assertEqual(len(original), 4)
+
+    def test_pode_ser_desligado(self):
+        self._rodar(filter_hallucinations=False)
+        self.assertEqual(len(srt_io.load_cues(self.destino)), 5)
+
+    def test_vale_para_o_motor_via_api(self):
+        """O motor na nuvem não passa por nenhum parâmetro do Whisper local.
+
+        Sem este filtro, ele não tem defesa nenhuma contra alucinação.
+        """
+        cues = self._transcritas()
+
+        def runner(caminho, language=None, cancel_event=None):
+            return cues
+
+        process_media(self.midia, self.destino, translate=False,
+                      transcribe_runner=runner)
+        self.assertEqual(len(srt_io.load_cues(self.destino)), 4)
+
+    def test_frases_extras_do_usuario_chegam_ao_filtro(self):
+        with mock.patch("autosrt.transcribe.transcribe") as fake:
+            fake.return_value = self._transcritas()[:4] + [
+                Cue.from_source(index=5, start=30000, end=33000,
+                                source_text="Legendas: João da Silva")]
+            process_media(self.midia, self.destino, translate=False,
+                          extra_hallucinations=["Legendas: João da Silva"])
+        self.assertEqual(len(srt_io.load_cues(self.destino)), 4)
+
+    def test_transcricao_que_so_tem_clichê_nao_vira_arquivo_vazio(self):
+        with mock.patch("autosrt.transcribe.transcribe") as fake:
+            fake.return_value = [
+                Cue.from_source(index=1, start=1000, end=3000,
+                                source_text="Obrigado por assistir!"),
+            ]
+            process_media(self.midia, self.destino, translate=False)
+        self.assertEqual(len(srt_io.load_cues(self.destino)), 1)
+
+
 if __name__ == "__main__":
     unittest.main()

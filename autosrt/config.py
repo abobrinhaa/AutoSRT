@@ -9,6 +9,7 @@ nem versionada. A leitura acontece, nesta ordem, a partir de:
 
 import json
 import os
+import re
 import sys
 
 CONFIG_FILENAME = "config.json"
@@ -56,6 +57,14 @@ EXAMPLE_CONFIG = {
     # palavra, que build_command já liga sozinha quando este valor é
     # informado.
     "hallucination_silence_threshold": "2",
+    # Opcional: "false" desliga o descarte das frases-clichê que o Whisper
+    # inventa sobre silêncio e trilha sonora ("Obrigado por assistir",
+    # "Legendas pela comunidade Amara.org"). Em branco fica ligado, que é
+    # o padrão -- ver autosrt/hallucination.py.
+    "filtrar_alucinacoes": "true",
+    # Opcional: frases-clichê suas, uma por linha, somadas às embutidas.
+    # Cada acervo tem o seu bordão de encerramento.
+    "alucinacoes_extra": "Legendas: Fulano\nAssista o próximo episódio",
 }
 
 
@@ -313,3 +322,35 @@ def get_hallucination_silence_threshold():
         return float(valor) if valor is not None else None
     except (TypeError, ValueError):
         return None
+
+
+def get_filtrar_alucinacoes() -> bool:
+    """Se a transcrição deve ser limpa das frases inventadas pelo Whisper.
+
+    ``True`` quando não configurado, e de propósito: sobre silêncio ou
+    trilha sonora o Whisper preenche o trecho com o clichê de encerramento
+    de vídeo ("Obrigado por assistir", "Legendas pela comunidade
+    Amara.org") sem dar erro nenhum, e quem não sabe que isso existe não
+    vai procurar um botão para ligar. Só valor explicitamente falso
+    desliga -- um engano de digitação não pode devolver o defeito em
+    silêncio. Veja :mod:`autosrt.hallucination`.
+    """
+    valor = (get_setting("filtrar_alucinacoes", "AUTOSRT_FILTRAR_ALUCINACOES")
+             or "").strip().lower()
+    return valor not in ("false", "0", "nao", "não")
+
+
+def get_alucinacoes_extra() -> list:
+    """Frases-clichê do usuário, somadas às embutidas no filtro.
+
+    Aceita as duas formas de escrever: uma lista JSON, para quem edita o
+    ``config.json`` à mão, ou um texto com uma frase por linha, que é o que
+    o painel da web grava. O ponto e vírgula também separa, para caber
+    numa variável de ambiente, onde quebra de linha é incômoda. Linha em
+    branco é descartada -- vazia, casaria com tudo.
+    """
+    valor = get_setting("alucinacoes_extra", "AUTOSRT_ALUCINACOES_EXTRA")
+    if not valor:
+        return []
+    itens = valor if isinstance(valor, (list, tuple)) else re.split(r"[\n;]", str(valor))
+    return [str(item).strip() for item in itens if str(item).strip()]

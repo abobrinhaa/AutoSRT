@@ -166,6 +166,14 @@ def build_parser():
                             "de alucinação. Evita um trecho de música/"
                             "silêncio virar uma frase inventada cobrindo "
                             "dezenas de segundos de vídeo. Padrão: 2")
+    grupo.add_argument("--manter-alucinacoes", action="store_true",
+                       dest="manter_alucinacoes",
+                       help="não descarta da transcrição as frases-clichê "
+                            "que o Whisper inventa sobre silêncio e trilha "
+                            "sonora (\"Obrigado por assistir\", \"Legendas "
+                            "pela comunidade Amara.org\"). Por padrão elas "
+                            "são descartadas; use isto para conferir a "
+                            "transcrição crua")
     grupo.add_argument("--whisper-args", metavar="\"ARGS\"",
                        dest="whisper_extra_args",
                        help="argumentos extras repassados direto ao "
@@ -286,6 +294,8 @@ def process_one(entrada, args, reporter) -> bool:
                 whisper_compute_type=args.whisper_compute_type,
                 condition_on_previous_text=args.condition_on_previous_text,
                 hallucination_silence_threshold=args.hallucination_silence_threshold,
+                filter_hallucinations=not args.manter_alucinacoes,
+                extra_hallucinations=config.get_alucinacoes_extra(),
                 transcribe_extra_args=extra_args,
                 progress=reporter.progress, status=reporter.status)
         elif pipeline.is_media(entrada):

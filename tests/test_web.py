@@ -188,6 +188,11 @@ class TestPagina(BaseWeb):
         self.assertIn('id="condition_on_previous_text"', html)
         self.assertIn('id="hallucination_silence_threshold"', html)
 
+    def test_painel_de_transcricao_tem_o_filtro_de_alucinacao(self):
+        html = self.client.get("/").get_data(as_text=True)
+        self.assertIn('id="filtrar_alucinacoes"', html)
+        self.assertIn('id="alucinacoes_extra"', html)
+
     def test_botao_de_configuracao_nao_mora_no_painel_da_automacao(self):
         # Configuração de tradução e transcrição não tem nada a ver com o
         # "processar ao enviar": o botão fica no cabeçalho, ao lado do tema,
@@ -761,6 +766,47 @@ class TestAntiAlucinacaoNaFila(BaseWeb):
         self.assertIsNone(fake.call_args.kwargs["hallucination_silence_threshold"])
 
 
+class TestFiltroDeAlucinacaoNaFila(BaseWeb):
+    """O filtro vale para todo trabalho de mídia da fila, ligado por padrão.
+
+    Quem transcreve pelo navegador é justamente quem não abre terminal para
+    conferir a transcrição crua -- a frase inventada chegaria ao arquivo
+    final sem ninguém ver.
+    """
+
+    def setUp(self):
+        super().setUp()
+        from autosrt import config
+        self._app_dir = config.app_directory
+        config.app_directory = lambda: self.tmp
+        self.addCleanup(setattr, config, "app_directory", self._app_dir)
+
+    def _processar(self):
+        self.tocar("filme.mkv")
+        with mock.patch.object(pipeline, "process_media") as fake:
+            fake.return_value = pipeline.PipelineResult(
+                total=1, translated=1, failed=[], detected_lang="en")
+            job = self.client.post("/api/processar",
+                                   json={"arquivo": "filme.mkv"}).get_json()
+            self.esperar(job["id"])
+        return fake.call_args.kwargs
+
+    def test_ligado_por_padrao(self):
+        kwargs = self._processar()
+        self.assertTrue(kwargs["filter_hallucinations"])
+        self.assertEqual(kwargs["extra_hallucinations"], [])
+
+    def test_pode_ser_desligado_pelo_painel(self):
+        self.client.post("/api/config", json={"filtrar_alucinacoes": "false"})
+        self.assertFalse(self._processar()["filter_hallucinations"])
+
+    def test_frases_extras_chegam_ao_pipeline(self):
+        self.client.post("/api/config",
+                         json={"alucinacoes_extra": "Legendas: João"})
+        self.assertEqual(self._processar()["extra_hallucinations"],
+                         ["Legendas: João"])
+
+
 class TestAcoesDisponiveis(unittest.TestCase):
     def ids(self, caminho):
         return [a["id"] for a in web.acoes_para(caminho)]
@@ -1128,6 +1174,27 @@ class TestConfiguracao(BaseWeb):
         dados = self.client.get("/api/config").get_json()
         self.assertTrue(dados["condition_on_previous_text"])
         self.assertEqual(dados["hallucination_silence_threshold"], 2.0)
+
+    def test_filtro_de_alucinacao_comeca_ligado(self):
+        # Ligado sem ninguém pedir: é correção de defeito, não preferência.
+        dados = self.client.get("/api/config").get_json()
+        self.assertTrue(dados["filtrar_alucinacoes"])
+        self.assertEqual(dados["alucinacoes_extra"], [])
+
+    def test_grava_o_filtro_de_alucinacao(self):
+        resposta = self.client.post("/api/config", json={
+            "filtrar_alucinacoes": "false",
+            "alucinacoes_extra": "Legendas: João\nAssista o próximo"})
+        self.assertEqual(resposta.status_code, 200)
+        dados = self.client.get("/api/config").get_json()
+        self.assertFalse(dados["filtrar_alucinacoes"])
+        self.assertEqual(dados["alucinacoes_extra"],
+                         ["Legendas: João", "Assista o próximo"])
+
+    def test_filtro_de_alucinacao_invalido_e_recusado(self):
+        resposta = self.client.post(
+            "/api/config", json={"filtrar_alucinacoes": "talvez"})
+        self.assertEqual(resposta.status_code, 400)
 
     def test_condition_on_previous_text_invalido_e_recusado(self):
         resposta = self.client.post(

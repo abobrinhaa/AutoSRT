@@ -16,7 +16,7 @@ import tempfile
 import threading
 from dataclasses import dataclass
 
-from . import llm_translate, srt_io
+from . import hallucination, llm_translate, srt_io
 from .language import detect_language, language_name
 from .llm import LLMError
 from .translate import DEFAULT_TARGET, TranslationCancelled, translate_cues
@@ -303,6 +303,7 @@ def process_media(media_path, output_path=None, *, engine=DEFAULT_ENGINE,
                   normalize_audio=NORMALIZE_AUTO,
                   condition_on_previous_text=None,
                   hallucination_silence_threshold=None,
+                  filter_hallucinations=True, extra_hallucinations=None,
                   transcribe_extra_args=None) -> PipelineResult:
     """Transcreve um arquivo de mídia e traduz o resultado.
 
@@ -349,6 +350,15 @@ def process_media(media_path, output_path=None, *, engine=DEFAULT_ENGINE,
             :func:`autosrt.transcribe.transcribe` diretamente com
             ``hallucination_silence_threshold=None``, ou informe um valor
             bem alto (ex.: 60) para que nunca dispare na prática.
+        filter_hallucinations: descarta da transcrição as frases-clichê
+            que o Whisper inventa sobre silêncio e trilha sonora
+            ("Obrigado por assistir", "Legendas pela comunidade
+            Amara.org"). Ligado por padrão: as flags acima atacam a
+            alucinação *antes*, e nenhuma delas pega a frase curta grudada
+            no fim da última fala real -- nem existe para o motor via API.
+            Veja :mod:`autosrt.hallucination`.
+        extra_hallucinations: frases-clichê do próprio usuário, somadas às
+            embutidas. Cada acervo tem o seu.
         transcribe_extra_args: argumentos extras repassados direto ao
             executável do Whisper local.
 
@@ -437,6 +447,19 @@ def process_media(media_path, output_path=None, *, engine=DEFAULT_ENGINE,
 
     if not cues:
         raise ValueError("O Whisper não encontrou fala nenhuma no arquivo.")
+
+    # Antes de gravar os originais e antes de traduzir: assim a frase
+    # inventada não é traduzida à toa nem some apenas do arquivo traduzido,
+    # deixando a transcrição de origem suja. Vale para os dois motores --
+    # o via API não passa por nenhuma das defesas do Whisper local.
+    if filter_hallucinations:
+        antes_do_filtro = len(cues)
+        cues = hallucination.filtrar_alucinacoes(
+            cues, extras=extra_hallucinations)
+        removidas = antes_do_filtro - len(cues)
+        if removidas:
+            announce(f"{removidas} frase(s) inventada(s) pelo Whisper "
+                     "descartada(s).")
 
     detected_lang = language or _safe_detect(cues)
 

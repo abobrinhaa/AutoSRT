@@ -326,5 +326,68 @@ class TestTamanhoDeBlocoDoLLM(unittest.TestCase):
         self.assertIsNone(config.get_llm_block_size())
 
 
+class TestFiltroDeAlucinacao(unittest.TestCase):
+    """Ligado por padrão: é correção de defeito, não preferência.
+
+    A frase inventada pelo Whisper ("Obrigado por assistir" sobre o
+    silêncio final) chega ao arquivo sem nenhum aviso, e quem não sabe que
+    ela existe não vai procurar um botão para desligá-la.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self._anterior = os.environ.get("AUTOSRT_CONFIG_DIR")
+        os.environ["AUTOSRT_CONFIG_DIR"] = self.tmp
+        self._env = {k: os.environ.pop(k, None) for k in
+                     ("AUTOSRT_FILTRAR_ALUCINACOES", "AUTOSRT_ALUCINACOES_EXTRA")}
+
+    def tearDown(self):
+        if self._anterior is None:
+            os.environ.pop("AUTOSRT_CONFIG_DIR", None)
+        else:
+            os.environ["AUTOSRT_CONFIG_DIR"] = self._anterior
+        for chave, valor in self._env.items():
+            if valor is not None:
+                os.environ[chave] = valor
+            else:
+                os.environ.pop(chave, None)
+
+    def test_ligado_por_padrao(self):
+        self.assertTrue(config.get_filtrar_alucinacoes())
+
+    def test_false_desliga(self):
+        config.save_config({"filtrar_alucinacoes": "false"})
+        self.assertFalse(config.get_filtrar_alucinacoes())
+
+    def test_valor_desconhecido_nao_desliga(self):
+        # Desligar por engano de digitação seria voltar ao defeito em
+        # silêncio -- o padrão seguro é continuar filtrando.
+        config.save_config({"filtrar_alucinacoes": "talvez"})
+        self.assertTrue(config.get_filtrar_alucinacoes())
+
+    def test_ambiente_tem_prioridade(self):
+        config.save_config({"filtrar_alucinacoes": "true"})
+        os.environ["AUTOSRT_FILTRAR_ALUCINACOES"] = "false"
+        self.assertFalse(config.get_filtrar_alucinacoes())
+
+    def test_sem_frases_extras_e_lista_vazia(self):
+        self.assertEqual(config.get_alucinacoes_extra(), [])
+
+    def test_frases_extras_uma_por_linha(self):
+        config.save_config(
+            {"alucinacoes_extra": "Legendas: João\nAssista o próximo"})
+        self.assertEqual(config.get_alucinacoes_extra(),
+                         ["Legendas: João", "Assista o próximo"])
+
+    def test_frases_extras_tambem_aceitam_lista(self):
+        # Quem edita o config.json à mão escreve JSON, não texto com \n.
+        config.save_config({"alucinacoes_extra": ["Legendas: João"]})
+        self.assertEqual(config.get_alucinacoes_extra(), ["Legendas: João"])
+
+    def test_linha_em_branco_nao_vira_frase(self):
+        config.save_config({"alucinacoes_extra": "Legendas: João\n\n   \n"})
+        self.assertEqual(config.get_alucinacoes_extra(), ["Legendas: João"])
+
+
 if __name__ == "__main__":
     unittest.main()
