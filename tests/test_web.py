@@ -296,6 +296,19 @@ class TestPagina(BaseWeb):
         # prevê -- só passa a aparecer sob demanda (opção "Personalizado").
         self.assertIn('id="whisper_model_personalizado"', html)
 
+    def test_selecao_de_modelo_lista_so_o_que_o_faster_whisper_baixa_por_padrao(self):
+        # A lista não é um catálogo de todo modelo que existe -- ela
+        # baixaria (ou tentaria) o que ainda não está na máquina de quem
+        # clicasse. Só entram o padrão do próprio executável (turbo) e o
+        # large-v3, que é o que o AutoSRT já pede para instalar; qualquer
+        # outro nome passa pelo campo "Personalizado".
+        html = self.client.get("/").get_data(as_text=True)
+        inicio = html.index('<select id="whisper_model">')
+        fim = html.index('</select>', inicio)
+        bloco = html[inicio:fim]
+        valores = re.findall(r'<option value="([^"]*)"', bloco)
+        self.assertEqual(valores, ["", "large-v3", "personalizado"])
+
     def test_painel_tem_trabalhos_simultaneos_e_diarizacao(self):
         html = self.client.get("/").get_data(as_text=True)
         self.assertIn('id="max_workers"', html)

@@ -1392,16 +1392,10 @@ PAGINA = """<!doctype html>
       <label><span class="rotulo-com-ajuda">Idioma falado<span class="ajuda" tabindex="0" data-tip="C&oacute;digo do idioma do &aacute;udio (en, es, fr...). Em branco, o Whisper detecta sozinho analisando os primeiros segundos -- e um come&ccedil;o at&iacute;pico (trilha, sil&ecirc;ncio, vinheta) pode levar a uma detec&ccedil;&atilde;o errada que estraga justamente o in&iacute;cio da transcri&ccedil;&atilde;o. Informar o idioma elimina esse risco.">?</span></span>
         <input type="text" id="whisper_language" placeholder="em branco = detectar sozinho. Ex: en, es, fr">
       </label>
-      <label><span class="rotulo-com-ajuda">Modelo do Whisper<span class="ajuda" tabindex="0" data-tip="Qual modelo transcreve o &aacute;udio. 'turbo' (padr&atilde;o) &eacute; r&aacute;pido e leve. 'large-v3' &eacute; o mais preciso -- em GPU com VRAM de sobra (ex.: RTX 3060 12&nbsp;GB) cabe folgado, inclusive rodando dois arquivos ao mesmo tempo (veja 'Trabalhos simult&acirc;neos' abaixo). Modelos '.en' s&oacute; entendem ingl&ecirc;s, por&eacute;m s&atilde;o um pouco mais r&aacute;pidos nesse idioma.">?</span></span>
+      <label><span class="rotulo-com-ajuda">Modelo do Whisper<span class="ajuda" tabindex="0" data-tip="Qual modelo transcreve o &aacute;udio. 'turbo' (padr&atilde;o do pr&oacute;prio Faster-Whisper-XXL) &eacute; r&aacute;pido e leve. 'large-v3' &eacute; o mais preciso -- em GPU com VRAM de sobra (ex.: RTX 3060 12&nbsp;GB) cabe folgado, inclusive rodando dois arquivos ao mesmo tempo (veja 'Trabalhos simult&acirc;neos' abaixo). S&oacute; esses dois aparecem aqui porque s&atilde;o os que j&aacute; vêm prontos para uso -- qualquer outro nome (baixado à parte) entra em 'Personalizado'.">?</span></span>
         <select id="whisper_model">
           <option value="">Padr&atilde;o (turbo)</option>
-          <option value="tiny">tiny -- o mais leve e r&aacute;pido, menos preciso</option>
-          <option value="base">base</option>
-          <option value="small">small</option>
-          <option value="medium">medium</option>
-          <option value="large-v2">large-v2</option>
           <option value="large-v3">large-v3 -- o mais preciso, mais pesado</option>
-          <option value="distil-large-v3">distil-large-v3 -- quase t&atilde;o preciso quanto o large-v3, bem mais r&aacute;pido</option>
           <option value="personalizado">Personalizado...</option>
         </select>
         <input type="text" id="whisper_model_personalizado" hidden
