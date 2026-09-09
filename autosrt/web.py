@@ -2045,11 +2045,34 @@ $('limpar').onclick = async () => {
 // (a chave nunca volta para a página).
 let configAtual = {};
 
+// Espelha autosrt.llm.is_local_base_url: reconhece loopback e qualquer IP
+// de rede privada, não só o preset "http://localhost:11434/v1" exato --
+// senão um endereço de LAN (Ollama em outra máquina, container acessando o
+// host pelo IP) cai como se fosse a API na tela, mesmo sendo claramente
+// local.
+function pareceLocal(url) {
+  let host;
+  try {
+    host = new URL(url).hostname;
+  } catch {
+    return false;
+  }
+  host = host.replace(/^\\[|\\]$/g, '');
+  if (host === 'localhost') return true;
+  const partes = host.split('.');
+  if (partes.length === 4 && partes.every((p) => /^\\d{1,3}$/.test(p) && Number(p) <= 255)) {
+    const [a, b] = partes.map(Number);
+    return a === 10 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168)
+        || a === 127;
+  }
+  return host === '::1' || /^f[cd][0-9a-f]{2}:/i.test(host) || /^fe80:/i.test(host);
+}
+
 function marcarModoAtivo() {
   const url = $('base_url').value.trim();
-  const local = url === configAtual.local_base_url;
+  const local = pareceLocal(url);
   $('modo-openrouter').classList.toggle('ativo', url === configAtual.openrouter_base_url);
-  $('modo-local').classList.toggle('ativo', local);
+  $('modo-local').classList.toggle('ativo', url === configAtual.local_base_url);
 
   // "API" não descreve bem um servidor rodando na própria máquina -- o
   // rótulo troca de vocabulário no modo local, não só de valor.
