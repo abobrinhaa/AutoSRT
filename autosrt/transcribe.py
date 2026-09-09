@@ -83,6 +83,17 @@ DEFAULT_CONDITION_ON_PREVIOUS_TEXT = False
 # marcação por palavra não vem de graça.
 DEFAULT_HALLUCINATION_SILENCE_THRESHOLD = 2.0
 
+# "--standard" é um atalho do próprio Faster-Whisper-XXL para o jeito
+# "estilo Netflix" de quebrar legenda: uma frase por bloco, no máximo 2
+# linhas de 42 caracteres cada, quebrando depois de vírgula quando a linha
+# fica longa demais (equivale a "--sentence --max_line_width=42
+# --max_line_count=2 --max_comma_cent=70" passados um a um). Sem isso, o
+# Whisper quebra em blocos de tamanho irregular, direto da pontuação/pausa
+# detectada -- lê pior, sobretudo em tela pequena. Ligado por padrão porque
+# é formatação, não transcrição: não muda o que foi entendido, só como o
+# texto é dividido entre as linhas.
+DEFAULT_STANDARD = True
+
 # Modelos de diarização de uso pessoal e não comercial. Não entram como
 # padrão para não impor uma restrição de licença sem o usuário saber.
 RESTRICTED_DIARIZE_MODELS = {"reverb_v1", "reverb_v2"}
@@ -129,6 +140,7 @@ def build_command(media_path, output_dir, *, executable, model=DEFAULT_MODEL,
                   vad_threshold=None, vad_min_silence_ms=None,
                   condition_on_previous_text=DEFAULT_CONDITION_ON_PREVIOUS_TEXT,
                   hallucination_silence_threshold=DEFAULT_HALLUCINATION_SILENCE_THRESHOLD,
+                  standard=DEFAULT_STANDARD,
                   max_speakers=None, extra_args=None) -> list:
     """Monta a linha de comando do Faster-Whisper-XXL.
 
@@ -152,6 +164,9 @@ def build_command(media_path, output_dir, *, executable, model=DEFAULT_MODEL,
             :data:`DEFAULT_HALLUCINATION_SILENCE_THRESHOLD`. ``None`` não
             passa a flag (fica no padrão do próprio Whisper, que é não
             pular nada).
+        standard: veja :data:`DEFAULT_STANDARD`. ``False`` não passa a
+            flag (fica no padrão do próprio Whisper, que quebra a legenda
+            de um jeito menos regular).
     """
     command = [
         executable, media_path,
@@ -162,6 +177,8 @@ def build_command(media_path, output_dir, *, executable, model=DEFAULT_MODEL,
         "-pp",  # imprime progresso, que é lido para alimentar a interface
     ]
 
+    if standard:
+        command.append("--standard")
     if language:
         command += ["--language", language]
     if vad:
@@ -215,6 +232,7 @@ def transcribe(media_path, *, output_dir=None, executable=None,
                vad_threshold=None, vad_min_silence_ms=None,
                condition_on_previous_text=DEFAULT_CONDITION_ON_PREVIOUS_TEXT,
                hallucination_silence_threshold=DEFAULT_HALLUCINATION_SILENCE_THRESHOLD,
+               standard=DEFAULT_STANDARD,
                max_speakers=None, progress=None, cancel_event=None,
                timeout=None, runner=None, extra_args=None) -> list:
     """Transcreve um arquivo de mídia e devolve a lista de :class:`Cue`.
@@ -232,6 +250,7 @@ def transcribe(media_path, *, output_dir=None, executable=None,
         condition_on_previous_text: veja :data:`DEFAULT_CONDITION_ON_PREVIOUS_TEXT`.
         hallucination_silence_threshold: veja
             :data:`DEFAULT_HALLUCINATION_SILENCE_THRESHOLD`.
+        standard: veja :data:`DEFAULT_STANDARD`.
         progress: chamada como ``progress(percentual)`` conforme o Whisper
             reporta o andamento.
         runner: injeção usada pelos testes, no lugar da execução real.
@@ -266,7 +285,7 @@ def transcribe(media_path, *, output_dir=None, executable=None,
         vad_min_silence_ms=vad_min_silence_ms,
         condition_on_previous_text=condition_on_previous_text,
         hallucination_silence_threshold=hallucination_silence_threshold,
-        max_speakers=max_speakers, extra_args=extra_args)
+        standard=standard, max_speakers=max_speakers, extra_args=extra_args)
 
     # O comando montado é a única forma de comparar o que o AutoSRT pede ao
     # Whisper com o que sai de um comando digitado à mão. Sem isso, quando o

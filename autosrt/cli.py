@@ -126,7 +126,9 @@ def build_parser():
                        dest="whisper_compute_type",
                        help="precisão do cálculo na GPU (auto, int8, float16). "
                             "Em placas Pascal, int8 costuma ser mais rápido "
-                            f"que float16 (padrão: {transcribe.DEFAULT_COMPUTE_TYPE})")
+                            "que float16; numa GPU com VRAM de sobra (ex.: "
+                            "RTX 3060 12 GB), float16 cabe até no large-v3 e "
+                            f"sai mais fiel (padrão: {transcribe.DEFAULT_COMPUTE_TYPE})")
     grupo.add_argument("--whisper-api", metavar="ENGINE",
                        choices=["openrouter", "openai", "local"],
                        default="local",
@@ -135,6 +137,13 @@ def build_parser():
     grupo.add_argument("--sem-diarizacao", action="store_true",
                        help="não identifica quem fala. Mais rápido, mas o "
                             "tradutor perde a informação que corrige o gênero")
+    grupo.add_argument("--sem-quebra-padrao", action="store_false",
+                       dest="subtitle_standard", default=None,
+                       help="desliga o --standard do Whisper (quebra de "
+                            "legenda estilo Netflix: uma frase por bloco, "
+                            "até 2 linhas de 42 caracteres). Ligado por "
+                            "padrão -- só muda como o texto é dividido "
+                            "entre linhas, não o que foi entendido")
     grupo.add_argument("--so-transcrever", action="store_true",
                        help="transcreve e para, sem traduzir")
     grupo.add_argument("--vad-sensibilidade", type=float, metavar="0-1",
@@ -296,6 +305,7 @@ def process_one(entrada, args, reporter) -> bool:
                 hallucination_silence_threshold=args.hallucination_silence_threshold,
                 filter_hallucinations=not args.manter_alucinacoes,
                 extra_hallucinations=config.get_alucinacoes_extra(),
+                subtitle_standard=args.subtitle_standard,
                 transcribe_extra_args=extra_args,
                 progress=reporter.progress, status=reporter.status)
         elif pipeline.is_media(entrada):

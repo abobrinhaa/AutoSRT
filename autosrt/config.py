@@ -25,9 +25,15 @@ EXAMPLE_CONFIG = {
     "llm_block_size": "2",
     "faster_whisper_path": "/opt/faster-whisper-xxl/faster-whisper-xxl",
     # Opcional: modelo e precisão da transcrição, para toda a fila web.
-    # Em branco usa turbo/auto, os padrões do transcribe.py.
+    # Em branco usa turbo/auto, os padrões do transcribe.py. "int8" era a
+    # recomendação para placas com pouca VRAM (5 GB); numa GPU com folga
+    # (ex.: RTX 3060 12 GB), "float16" cabe até no large-v3 e sai mais fiel.
     "whisper_model": "large-v3",
-    "whisper_compute_type": "int8",
+    "whisper_compute_type": "float16",
+    # Opcional: quantos arquivos a fila web processa ao mesmo tempo. Padrão
+    # 1 (serial, seguro para qualquer VRAM). Só suba isso se o modelo
+    # escolhido couber em dobro na GPU -- ver get_max_workers().
+    "max_workers": "1",
     # Opcional: liga o "processar ao enviar" da página. Com "true", todo
     # filme que chega pelo navegador vai direto para a fila (transcrever e
     # traduzir, ou aproveitar a legenda irmã quando ela já está na pasta).
@@ -189,9 +195,31 @@ def get_whisper_compute_type():
     informar explicitamente quando a escolha automática não é a melhor para
     a placa: em GPUs Pascal (sem tensor cores), ``int8`` costuma ser mais
     rápido que ``float16`` e ocupa metade da memória, o que é o que permite
-    rodar os modelos grandes numa placa de 5 GB.
+    rodar os modelos grandes numa placa de 5 GB. Já numa GPU Ampere ou mais
+    nova com VRAM de sobra (ex.: RTX 3060 12 GB), ``float16`` cabe até no
+    large-v3 sem apertar, e sai mais fiel que ``int8``.
     """
     return get_setting("whisper_compute_type", "WHISPER_COMPUTE_TYPE")
+
+
+def get_max_workers():
+    """Quantos trabalhos a fila web roda ao mesmo tempo.
+
+    1 (padrão) é o comportamento seguro de sempre: numa GPU com pouca VRAM,
+    duas transcrições disputando a mesma placa ficam mais lentas que em
+    sequência, ou nem cabem juntas. Vale subir isso só em GPU com VRAM de
+    sobra para o modelo escolhido rodar em dobro (ex.: RTX 3060 12 GB com
+    modelos até 'medium'/'turbo' -- 'large-v3' em float16 já ocupa bem mais
+    espaço, então dois ao mesmo tempo pode não caber). Valor ausente,
+    inválido ou menor que 1 vira 1 -- zero operário deixaria a fila parada
+    para sempre.
+    """
+    valor = get_setting("max_workers", "AUTOSRT_MAX_WORKERS")
+    try:
+        numero = int(valor) if valor is not None else 1
+    except (TypeError, ValueError):
+        return 1
+    return max(1, numero)
 
 
 def get_llm_block_size():
@@ -299,6 +327,25 @@ def get_condition_on_previous_text():
     """
     valor = (get_setting("condition_on_previous_text",
                          "AUTOSRT_CONDITION_ON_PREVIOUS_TEXT") or "").strip().lower()
+    if valor in ("true", "1", "sim"):
+        return True
+    if valor in ("false", "0", "nao", "não"):
+        return False
+    return None
+
+
+def get_subtitle_standard():
+    """Se a legenda usa a quebra de linha "estilo Netflix" do
+    Faster-Whisper-XXL (``--standard``): uma frase por bloco, no máximo 2
+    linhas de 42 caracteres.
+
+    ``None`` quando não configurado -- nesse caso quem chama não repassa
+    nada e o padrão de :mod:`autosrt.transcribe` (ligado) vale sozinho.
+    ``"false"`` desliga, voltando para a quebra menos regular do próprio
+    Whisper.
+    """
+    valor = (get_setting("subtitle_standard", "AUTOSRT_SUBTITLE_STANDARD")
+             or "").strip().lower()
     if valor in ("true", "1", "sim"):
         return True
     if valor in ("false", "0", "nao", "não"):

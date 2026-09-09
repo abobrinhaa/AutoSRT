@@ -1,13 +1,20 @@
-"""Fila de trabalhos com um único operário.
+"""Fila de trabalhos com um ou mais operários.
 
-A fila é serial de propósito, não por simplicidade. A GPU não comporta duas
-coisas ao mesmo tempo: numa placa de 5 GB, o Whisper e um modelo de
+Um operário só é o padrão, não por simplicidade: numa GPU com pouca VRAM
+(a placa de 5 GB que motivou esse padrão), o Whisper e um modelo de
 linguagem local já não cabem juntos, e duas transcrições simultâneas
 disputam a mesma memória e ficam mais lentas que se fossem em sequência.
+
+Em uma GPU com VRAM de sobra (ex.: RTX 3060 12 GB) rodando modelos que
+cabem em memória duas vezes, ``max_workers=2`` processa dois arquivos ao
+mesmo tempo em vez de deixar a placa ociosa entre um trabalho e outro --
+mas continua sendo escolha de quem configura o servidor, não algo que este
+módulo decide sozinho pelo hardware.
 """
 
 import logging
 import os
+import queue
 import threading
 import time
 import uuid
@@ -80,22 +87,53 @@ class Job:
         }
 
 
-class JobQueue:
-    """Fila serial. Aceita trabalhos de qualquer thread; executa um por vez."""
+#: Ocioso por mais que isso, o operário encerra em vez de ficar parado para
+#: sempre -- o próximo ``enviar()`` sobe outro. Só importa para o teto de
+#: threads vivas; não afeta quanto tempo um trabalho já em andamento leva.
+OPERARIO_OCIOSO_SEG = 30
 
-    def __init__(self, worker):
+
+class JobQueue:
+    """Fila com um teto de operários simultâneos (padrão: 1, serial).
+
+    Aceita trabalhos de qualquer thread. Até ``max_workers`` deles rodam ao
+    mesmo tempo, cada um em sua própria thread, consumindo uma fila
+    (``queue.Queue``) compartilhada -- é o padrão produtor/consumidor de
+    sempre, escolhido justamente para não ter que adivinhar "tem operário
+    ocioso ou não" na hora de decidir se sobe mais um.
+    """
+
+    def __init__(self, worker, max_workers=1):
         """
         Args:
             worker: função ``worker(job)`` que executa o trabalho. Deve
                 preencher ``job.resultado`` e pode atualizar ``job.etapa`` e
                 ``job.progresso``.
+            max_workers: quantos trabalhos rodam ao mesmo tempo. Valores
+                menores que 1 viram 1 -- zero operário deixaria a fila
+                parada para sempre.
         """
         self._worker = worker
+        self._max_workers = max(1, int(max_workers))
         self._lock = threading.Lock()
         self._jobs = {}
         self._ordem = []
-        self._fila = []
-        self._thread = None
+        self._fila = queue.Queue()
+        self._threads = []
+
+    @property
+    def max_workers(self) -> int:
+        return self._max_workers
+
+    @max_workers.setter
+    def max_workers(self, valor):
+        """Ajusta o teto em tempo de execução, sem derrubar quem já roda.
+
+        Vale a partir do próximo ``enviar()``: baixar o teto não interrompe
+        operário em andamento (ele só não é reposto quando termina); subir
+        libera vaga para os próximos trabalhos enfileirados.
+        """
+        self._max_workers = max(1, int(valor))
 
     def enviar(self, nome, entrada, **detalhes) -> Job:
         job = Job(id=uuid.uuid4().hex[:12], nome=nome, entrada=entrada,
@@ -103,23 +141,27 @@ class JobQueue:
         with self._lock:
             self._jobs[job.id] = job
             self._ordem.append(job.id)
-            self._fila.append(job)
-            self._garantir_operario()
+        self._fila.put(job)
+        self._garantir_operarios()
         return job
 
-    def _garantir_operario(self):
-        """Sobe o operário se não houver um vivo. Chamado com o lock preso."""
-        if self._thread is None or not self._thread.is_alive():
-            self._thread = threading.Thread(target=self._rodar, daemon=True)
-            self._thread.start()
+    def _garantir_operarios(self):
+        """Sobe operários até o teto configurado. Threads ociosas demais já
+        se encerraram sozinhas (ver ``_rodar``), então subir até o teto aqui
+        nunca duplica um operário que já está de pé."""
+        with self._lock:
+            self._threads = [t for t in self._threads if t.is_alive()]
+            while len(self._threads) < self._max_workers:
+                t = threading.Thread(target=self._rodar, daemon=True)
+                self._threads.append(t)
+                t.start()
 
     def _rodar(self):
         while True:
-            with self._lock:
-                if not self._fila:
-                    self._thread = None
-                    return
-                job = self._fila.pop(0)
+            try:
+                job = self._fila.get(timeout=OPERARIO_OCIOSO_SEG)
+            except queue.Empty:
+                return
 
             if job.cancelar.is_set():
                 job.estado = CANCELADO
@@ -214,9 +256,10 @@ class JobQueue:
 
     @property
     def ocupado(self) -> bool:
+        if not self._fila.empty():
+            return True
         with self._lock:
-            return bool(self._fila) or any(
-                j.estado == RODANDO for j in self._jobs.values())
+            return any(j.estado == RODANDO for j in self._jobs.values())
 
     def em_uso(self, caminho) -> bool:
         """Diz se algum trabalho não terminado tem esse arquivo como entrada."""

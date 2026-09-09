@@ -292,6 +292,24 @@ class TestTranscricao(BaseCLI):
             self.run_cli([entrada, "--manter-alucinacoes"])
         self.assertFalse(fake.call_args.kwargs["filter_hallucinations"])
 
+    def test_quebra_de_legenda_padrao_fica_de_fora_por_padrao(self):
+        # None aqui não é "desligado" -- é "não mexi nisso", deixando o
+        # padrão de transcribe.py (ligado) valer sozinho.
+        entrada = self.touch("filme.mkv")
+        with mock.patch.object(pipeline, "process_media") as fake:
+            fake.return_value = pipeline.PipelineResult(
+                total=1, translated=1, failed=[], detected_lang="en")
+            self.run_cli([entrada])
+        self.assertIsNone(fake.call_args.kwargs["subtitle_standard"])
+
+    def test_sem_quebra_padrao_desliga(self):
+        entrada = self.touch("filme.mkv")
+        with mock.patch.object(pipeline, "process_media") as fake:
+            fake.return_value = pipeline.PipelineResult(
+                total=1, translated=1, failed=[], detected_lang="en")
+            self.run_cli([entrada, "--sem-quebra-padrao"])
+        self.assertFalse(fake.call_args.kwargs["subtitle_standard"])
+
 
 class TestMotorViaAPI(BaseCLI):
     """Regressão do motor de transcrição via API: antes, o parâmetro

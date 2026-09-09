@@ -33,6 +33,13 @@ EXTENSOES_ACEITAS = sorted(pipeline.MEDIA_EXTENSIONS | pipeline.SUBTITLE_EXTENSI
 # acidente define AUTOSRT_MAX_UPLOAD_GB.
 DEFAULT_MAX_UPLOAD_GB = None
 
+# Teto de sanidade para "trabalhos simultâneos" (max_workers): cada um
+# carrega o próprio modelo do Whisper (e, com diarização, mais um) na GPU.
+# Mesmo numa RTX 3060 de 12 GB, um número exagerado aqui só faria a placa
+# estourar VRAM aos poucos, sem nenhum aviso -- o valor não precisa ser
+# grande para já resolver o caso real (duas transcrições ao mesmo tempo).
+MAX_WORKERS_TETO = 4
+
 # /api/transcribe é síncrono de propósito (ver docstring da rota): quem
 # chama espera a legenda na mesma requisição, sem passar pela fila. Isso
 # prende uma worker thread do Flask até o Whisper terminar; o limite existe
@@ -63,7 +70,8 @@ def create_app(media_dir=None, engine=pipeline.ENGINE_LLM, max_upload_gb=None,
     os.makedirs(media_dir, exist_ok=True)
     app.config["MEDIA_DIR"] = media_dir
 
-    fila = JobQueue(lambda job: _executar(job, engine))
+    fila = JobQueue(lambda job: _executar(job, engine),
+                    max_workers=config.get_max_workers())
     app.config["FILA"] = fila
 
     _register_routes(app, fila, media_dir, engine)
@@ -178,6 +186,7 @@ def _executar(job, engine):
         resultado = pipeline.process_media(
             job.entrada, engine=engine, status=status, progress=progresso,
             cancel_event=job.cancelar, translate=(acao != "transcrever"),
+            diarize=job.detalhes.get("diarizar", True),
             language=config.get_whisper_language(),
             normalize_audio=config.get_normalize_audio(),
             vad_method=config.get_vad_method(),
@@ -188,7 +197,8 @@ def _executar(job, engine):
             condition_on_previous_text=config.get_condition_on_previous_text(),
             hallucination_silence_threshold=config.get_hallucination_silence_threshold(),
             filter_hallucinations=config.get_filtrar_alucinacoes(),
-            extra_hallucinations=config.get_alucinacoes_extra())
+            extra_hallucinations=config.get_alucinacoes_extra(),
+            subtitle_standard=config.get_subtitle_standard())
         job.resultado = os.path.splitext(job.entrada)[0] + ".srt"
     else:
         saida = srt_io.srt_output_path(job.entrada)
@@ -345,8 +355,22 @@ def _register_routes(app, fila, media_dir, engine):
         if acao not in validas:
             return None, f"A ação '{acao}' não vale para este arquivo.", 400
 
+        # Ligado por padrão: é o que permite ao tradutor acertar a
+        # concordância de gênero. Desligar é opção de quem sabe que o vídeo
+        # tem um locutor só (ou quer economizar VRAM para caber outro
+        # trabalho ao mesmo tempo -- ver max_workers).
+        diarizar = pedido.get("diarizar")
+        if diarizar is None:
+            diarizar = True
+
+        # Lido a cada envio, não só na criação do app: uma mudança salva no
+        # painel vale a partir do próximo trabalho, igual às outras opções
+        # de transcrição (VAD, modelo...), sem precisar reiniciar o servidor.
+        fila.max_workers = config.get_max_workers()
+
         job = fila.enviar(os.path.basename(nome), caminho, acao=acao,
-                          segundos=pedido.get("segundos"))
+                          segundos=pedido.get("segundos"),
+                          diarizar=bool(diarizar))
         return job, None, 202
 
     @app.post("/api/processar")
@@ -493,6 +517,8 @@ def _register_routes(app, fila, media_dir, engine):
             # config.get_filtrar_alucinacoes).
             "filtrar_alucinacoes": config.get_filtrar_alucinacoes(),
             "alucinacoes_extra": config.get_alucinacoes_extra(),
+            "max_workers": config.get_max_workers(),
+            "subtitle_standard": config.get_subtitle_standard(),
         })
 
     @app.post("/api/config")
@@ -600,6 +626,35 @@ def _register_routes(app, fila, media_dir, engine):
             # descarta linha em branco -- vazia, casaria com tudo.
             novos["alucinacoes_extra"] = str(
                 dados.get("alucinacoes_extra") or "").strip()
+
+        if "subtitle_standard" in dados:
+            valor = str(dados.get("subtitle_standard") or "").strip().lower()
+            if valor and valor not in ("true", "false"):
+                return jsonify({
+                    "erro": "Quebra de legenda padrão precisa ser "
+                            "verdadeiro ou falso."}), 400
+            novos["subtitle_standard"] = valor
+
+        if "max_workers" in dados:
+            valor = str(dados.get("max_workers") or "").strip()
+            if valor:
+                try:
+                    numero = int(valor)
+                    if numero < 1:
+                        raise ValueError
+                except ValueError:
+                    return jsonify({
+                        "erro": "Trabalhos simultâneos precisa ser um número "
+                                "inteiro positivo (ex: 1 ou 2)."}), 400
+                # Teto de sanidade: sem isso, um número exagerado (fat-finger)
+                # subiria dezenas de operários disputando a mesma GPU sem
+                # nenhum aviso, até esgotar a VRAM.
+                if numero > MAX_WORKERS_TETO:
+                    return jsonify({
+                        "erro": f"Trabalhos simultâneos acima de "
+                                f"{MAX_WORKERS_TETO} não é permitido -- cada "
+                                "um carrega o próprio modelo na GPU."}), 400
+            novos["max_workers"] = valor
 
         if not novos:
             return jsonify({"erro": "Nada para gravar."}), 400
@@ -1337,11 +1392,31 @@ PAGINA = """<!doctype html>
       <label><span class="rotulo-com-ajuda">Idioma falado<span class="ajuda" tabindex="0" data-tip="C&oacute;digo do idioma do &aacute;udio (en, es, fr...). Em branco, o Whisper detecta sozinho analisando os primeiros segundos -- e um come&ccedil;o at&iacute;pico (trilha, sil&ecirc;ncio, vinheta) pode levar a uma detec&ccedil;&atilde;o errada que estraga justamente o in&iacute;cio da transcri&ccedil;&atilde;o. Informar o idioma elimina esse risco.">?</span></span>
         <input type="text" id="whisper_language" placeholder="em branco = detectar sozinho. Ex: en, es, fr">
       </label>
-      <label><span class="rotulo-com-ajuda">Modelo do Whisper<span class="ajuda" tabindex="0" data-tip="Qual modelo transcreve o &aacute;udio. Em branco usa o 'turbo' (r&aacute;pido e leve). O 'large-v3' &eacute; mais preciso, por&eacute;m mais pesado e mais lento -- em placa de 5 GB ele s&oacute; cabe com folga em int8.">?</span></span>
-        <input type="text" id="whisper_model" placeholder="em branco = turbo (padr&atilde;o). Ex: large-v3, medium, small">
+      <label><span class="rotulo-com-ajuda">Modelo do Whisper<span class="ajuda" tabindex="0" data-tip="Qual modelo transcreve o &aacute;udio. 'turbo' (padr&atilde;o) &eacute; r&aacute;pido e leve. 'large-v3' &eacute; o mais preciso -- em GPU com VRAM de sobra (ex.: RTX 3060 12&nbsp;GB) cabe folgado, inclusive rodando dois arquivos ao mesmo tempo (veja 'Trabalhos simult&acirc;neos' abaixo). Modelos '.en' s&oacute; entendem ingl&ecirc;s, por&eacute;m s&atilde;o um pouco mais r&aacute;pidos nesse idioma.">?</span></span>
+        <select id="whisper_model">
+          <option value="">Padr&atilde;o (turbo)</option>
+          <option value="tiny">tiny -- o mais leve e r&aacute;pido, menos preciso</option>
+          <option value="base">base</option>
+          <option value="small">small</option>
+          <option value="medium">medium</option>
+          <option value="large-v2">large-v2</option>
+          <option value="large-v3">large-v3 -- o mais preciso, mais pesado</option>
+          <option value="distil-large-v3">distil-large-v3 -- quase t&atilde;o preciso quanto o large-v3, bem mais r&aacute;pido</option>
+          <option value="personalizado">Personalizado...</option>
+        </select>
+        <input type="text" id="whisper_model_personalizado" hidden
+               placeholder="nome exato do modelo, como o Faster-Whisper-XXL espera">
       </label>
-      <label><span class="rotulo-com-ajuda">Tipo de c&aacute;lculo<span class="ajuda" tabindex="0" data-tip="Precis&atilde;o num&eacute;rica usada na GPU. Em branco ('auto') o pr&oacute;prio CTranslate2 escolhe. Em placas Pascal (s&eacute;rie P, sem tensor cores) o 'int8' costuma ser mais r&aacute;pido que 'float16' e ocupa metade da mem&oacute;ria.">?</span></span>
-        <input type="text" id="whisper_compute_type" placeholder="em branco = auto. Ex: int8, float16, float32">
+      <label><span class="rotulo-com-ajuda">Tipo de c&aacute;lculo<span class="ajuda" tabindex="0" data-tip="Precis&atilde;o num&eacute;rica usada na GPU. Em branco ('auto') o pr&oacute;prio CTranslate2 escolhe. Em placas Pascal (s&eacute;rie P, sem tensor cores) o 'int8' costuma ser mais r&aacute;pido que 'float16' e ocupa metade da mem&oacute;ria; numa GPU Ampere ou mais nova com VRAM de sobra (ex.: RTX 3060 12&nbsp;GB), 'float16' j&aacute; cabe at&eacute; no large-v3 e sai mais fiel que int8.">?</span></span>
+        <input type="text" id="whisper_compute_type" placeholder="em branco = auto. Ex: float16, int8, float32">
+      </label>
+      <label class="linha-checkbox"><input type="checkbox" id="diarizar_padrao" checked> <span class="rotulo-com-ajuda">Identificar quem fala (diariza&ccedil;&atilde;o)<span class="ajuda" tabindex="0" data-tip="Marca o locutor de cada fala, que &eacute; o que permite ao tradutor acertar a concord&acirc;ncia de g&ecirc;nero. Desligar economiza tempo e VRAM -- &uacute;til em v&iacute;deo de um locutor s&oacute;, ou para caber outro trabalho ao mesmo tempo. Vale para os pr&oacute;ximos envios desta p&aacute;gina, n&atilde;o fica salvo no servidor.">?</span></span></label>
+      <label><span class="rotulo-com-ajuda">Trabalhos simult&acirc;neos<span class="ajuda" tabindex="0" data-tip="Quantos arquivos a fila processa ao mesmo tempo. 1 (padr&atilde;o) &eacute; o seguro para qualquer GPU. S&oacute; suba se a VRAM sobrar para o modelo escolhido rodar em dobro -- numa RTX 3060 12&nbsp;GB isso costuma valer para 'turbo' at&eacute; 'medium'; 'large-v3' em float16 j&aacute; ocupa bastante espa&ccedil;o sozinho, ent&atilde;o teste antes de contar com 2.">?</span></span>
+        <select id="max_workers">
+          <option value="1">1 -- um arquivo por vez (padr&atilde;o, seguro)</option>
+          <option value="2">2 -- dois arquivos ao mesmo tempo</option>
+          <option value="3">3</option>
+        </select>
       </label>
       <label><span class="rotulo-com-ajuda">Detector de fala (VAD)<span class="ajuda" tabindex="0" data-tip="Qual detector decide onde h&aacute; fala. Cada um calibra a sensibilidade de um jeito, ent&atilde;o trocar o detector &eacute; t&atilde;o candidato a resolver legenda com buracos quanto mexer na sensibilidade. O padr&atilde;o do pr&oacute;prio execut&aacute;vel &eacute; silero_v4_fw.">?</span></span>
         <input type="text" id="vad_method" placeholder="em branco = padr&atilde;o. Ex: silero_v5, pyannote_v3, webrtc">
@@ -1353,6 +1428,7 @@ PAGINA = """<!doctype html>
         <input type="text" id="vad_min_silence_ms" placeholder="ex: 300 -- evita cortar a &uacute;ltima palavra de falas r&aacute;pidas">
       </label>
       <label class="linha-checkbox"><input type="checkbox" id="condition_on_previous_text"> <span class="rotulo-com-ajuda">Condicionar no trecho anterior<span class="ajuda" tabindex="0" data-tip="O Whisper por padr&atilde;o usa o texto do trecho anterior para decodificar o pr&oacute;ximo, o que ajuda a manter nome pr&oacute;prio consistente -- mas tamb&eacute;m deixa uma alucina&ccedil;&atilde;o em sil&ecirc;ncio ou trilha sonora se realimentar nos trechos seguintes (a legenda repetindo frases parecidas, tipo 'Esse &eacute; o primeiro', 'Esse &eacute; o segundo'...). Desmarcado (padr&atilde;o aqui) quebra essa cadeia.">?</span></span></label>
+      <label class="linha-checkbox"><input type="checkbox" id="subtitle_standard" checked> <span class="rotulo-com-ajuda">Quebra de legenda estilo Netflix<span class="ajuda" tabindex="0" data-tip="Liga o --standard do Faster-Whisper-XXL: uma frase por bloco, no m&aacute;ximo 2 linhas de 42 caracteres, quebrando ap&oacute;s v&iacute;rgula quando a linha fica longa. Ligado por padr&atilde;o -- s&oacute; muda como o texto &eacute; dividido entre linhas, n&atilde;o o que foi entendido. Desmarque para voltar &agrave; quebra menos regular do pr&oacute;prio Whisper.">?</span></span></label>
       <label><span class="rotulo-com-ajuda">Limiar de sil&ecirc;ncio p/ alucina&ccedil;&atilde;o (s)<span class="ajuda" tabindex="0" data-tip="Segundos de sil&ecirc;ncio que o Whisper pula, em vez de tentar transcrever, quando desconfia de alucina&ccedil;&atilde;o. Evita um trecho de m&uacute;sica/sil&ecirc;ncio virar uma frase inventada cobrindo dezenas de segundos de v&iacute;deo. Em branco usa o padr&atilde;o (2 segundos).">?</span></span>
         <input type="text" id="hallucination_silence_threshold" placeholder="em branco = 2 (padrão)">
       </label>
@@ -1580,7 +1656,8 @@ function cardMidia(item) {
 
 function pedidoDe(div) {
   const acao = div.querySelector('.acao').value;
-  const pedido = {arquivo: div.dataset.arquivo, acao: acao};
+  const pedido = {arquivo: div.dataset.arquivo, acao: acao,
+                  diarizar: $('diarizar_padrao').checked};
   if (acao === 'deslocar') {
     const resposta = prompt(
       'Quantos segundos deslocar?\\n' +
@@ -2021,6 +2098,35 @@ function limparModeloSeIncompativel(local) {
   }
 }
 
+// O select cobre os modelos mais comuns do Faster-Whisper-XXL, mas a lista
+// muda entre versões do executável -- "Personalizado" mantém a
+// possibilidade de digitar qualquer nome, sem esconder o campo livre.
+function definirModeloSelecionado(valor) {
+  const select = $('whisper_model');
+  const personalizado = $('whisper_model_personalizado');
+  const opcoes = Array.from(select.options).map((o) => o.value);
+  if (opcoes.includes(valor)) {
+    select.value = valor;
+    personalizado.hidden = true;
+    personalizado.value = '';
+  } else {
+    select.value = 'personalizado';
+    personalizado.hidden = false;
+    personalizado.value = valor;
+  }
+}
+
+function modeloEscolhido() {
+  return $('whisper_model').value === 'personalizado'
+    ? $('whisper_model_personalizado').value.trim()
+    : $('whisper_model').value;
+}
+
+$('whisper_model').addEventListener('change', () => {
+  $('whisper_model_personalizado').hidden = $('whisper_model').value !== 'personalizado';
+  if (!$('whisper_model_personalizado').hidden) $('whisper_model_personalizado').focus();
+});
+
 async function carregarConfig() {
   const r = await fetch('/api/config');
   const c = await r.json();
@@ -2042,8 +2148,9 @@ async function carregarConfig() {
   // null (não configurado) vira campo vazio, não "null" escrito na tela.
   $('normalize_audio').value = c.normalize_audio || 'auto';
   $('whisper_language').value = c.whisper_language ?? '';
-  $('whisper_model').value = c.whisper_model ?? '';
+  definirModeloSelecionado(c.whisper_model ?? '');
   $('whisper_compute_type').value = c.whisper_compute_type ?? '';
+  $('max_workers').value = String(c.max_workers || 1);
   $('vad_method').value = c.vad_method ?? '';
   $('vad_method').placeholder =
     'em branco = ' + c.vad_method_padrao + '. Ex: silero_v4_fw, pyannote_v3, webrtc';
@@ -2056,13 +2163,17 @@ async function carregarConfig() {
   // Ligado quando não configurado: aqui o padrão é marcado, não desmarcado.
   $('filtrar_alucinacoes').checked = c.filtrar_alucinacoes !== false;
   $('alucinacoes_extra').value = (c.alucinacoes_extra || []).join('\\n');
+  // Ligado por padrão (diferente de condition_on_previous_text): só marca
+  // desligado quando alguém explicitamente salvou "false".
+  $('subtitle_standard').checked = c.subtitle_standard !== false;
   const seloVad = $('estado-vad');
   const vadAtiva = c.vad_threshold !== null || c.vad_min_silence_ms !== null
     || !!c.whisper_model || !!c.whisper_compute_type || !!c.vad_method
     || !!c.whisper_language || c.condition_on_previous_text === true
     || c.hallucination_silence_threshold !== null
     || c.filtrar_alucinacoes === false
-    || (c.alucinacoes_extra || []).length > 0;
+    || (c.alucinacoes_extra || []).length > 0
+    || c.subtitle_standard === false || (c.max_workers || 1) > 1;
   seloVad.className = 'selo ' + (vadAtiva ? 'ok' : '');
   seloVad.textContent = vadAtiva ? 'ajustada' : 'padrão do Whisper';
 
@@ -2178,7 +2289,7 @@ $('salvar-vad').onclick = async () => {
   const corpo = {
     normalize_audio: $('normalize_audio').value,
     whisper_language: $('whisper_language').value.trim(),
-    whisper_model: $('whisper_model').value.trim(),
+    whisper_model: modeloEscolhido(),
     whisper_compute_type: $('whisper_compute_type').value.trim(),
     vad_method: $('vad_method').value.trim(),
     vad_threshold: $('vad_threshold').value.trim(),
@@ -2187,6 +2298,8 @@ $('salvar-vad').onclick = async () => {
     hallucination_silence_threshold: $('hallucination_silence_threshold').value.trim(),
     filtrar_alucinacoes: $('filtrar_alucinacoes').checked ? 'true' : 'false',
     alucinacoes_extra: $('alucinacoes_extra').value.trim(),
+    subtitle_standard: $('subtitle_standard').checked ? 'true' : 'false',
+    max_workers: $('max_workers').value,
   };
 
   $('salvar-vad').disabled = true;

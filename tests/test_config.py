@@ -215,6 +215,44 @@ class TestProcessarAoEnviar(unittest.TestCase):
         self.assertFalse(config.get_auto_processar())
 
 
+class TestQuebraDeLegendaPadrao(unittest.TestCase):
+    """subtitle_standard liga/desliga o --standard do Faster-Whisper-XXL
+    (quebra de linha "estilo Netflix"). None (não configurado) deixa o
+    padrão de transcribe.py (ligado) valer sozinho."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self._anterior = os.environ.get("AUTOSRT_CONFIG_DIR")
+        os.environ["AUTOSRT_CONFIG_DIR"] = self.tmp
+        self._env = os.environ.pop("AUTOSRT_SUBTITLE_STANDARD", None)
+
+    def tearDown(self):
+        if self._anterior is None:
+            os.environ.pop("AUTOSRT_CONFIG_DIR", None)
+        else:
+            os.environ["AUTOSRT_CONFIG_DIR"] = self._anterior
+        if self._env is not None:
+            os.environ["AUTOSRT_SUBTITLE_STANDARD"] = self._env
+        else:
+            os.environ.pop("AUTOSRT_SUBTITLE_STANDARD", None)
+
+    def test_sem_configuracao_e_none(self):
+        self.assertIsNone(config.get_subtitle_standard())
+
+    def test_le_do_arquivo(self):
+        config.save_config({"subtitle_standard": "false"})
+        self.assertFalse(config.get_subtitle_standard())
+
+    def test_false_explicito_e_diferente_de_nao_configurado(self):
+        config.save_config({"subtitle_standard": "true"})
+        self.assertTrue(config.get_subtitle_standard())
+
+    def test_ambiente_tem_prioridade(self):
+        config.save_config({"subtitle_standard": "true"})
+        os.environ["AUTOSRT_SUBTITLE_STANDARD"] = "false"
+        self.assertFalse(config.get_subtitle_standard())
+
+
 class TestModeloDoWhisper(unittest.TestCase):
     """A fila web usava o padrão fixo do transcribe.py e não tinha como
     trocar -- o ajuste só existia no --modelo do CLI, justamente na
@@ -252,6 +290,48 @@ class TestModeloDoWhisper(unittest.TestCase):
         config.save_config({"whisper_model": "large-v3"})
         os.environ["WHISPER_MODEL"] = "medium"
         self.assertEqual(config.get_whisper_model(), "medium")
+
+
+class TestQuantidadeDeOperarios(unittest.TestCase):
+    """max_workers decide quantos trabalhos a fila web roda ao mesmo tempo.
+    Padrão 1 (serial) é o seguro para VRAM pouca; GPU com sobra pode subir
+    isso -- ver autosrt.jobs.JobQueue."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self._anterior = os.environ.get("AUTOSRT_CONFIG_DIR")
+        os.environ["AUTOSRT_CONFIG_DIR"] = self.tmp
+        self._env = os.environ.pop("AUTOSRT_MAX_WORKERS", None)
+
+    def tearDown(self):
+        if self._anterior is None:
+            os.environ.pop("AUTOSRT_CONFIG_DIR", None)
+        else:
+            os.environ["AUTOSRT_CONFIG_DIR"] = self._anterior
+        if self._env is not None:
+            os.environ["AUTOSRT_MAX_WORKERS"] = self._env
+        else:
+            os.environ.pop("AUTOSRT_MAX_WORKERS", None)
+
+    def test_sem_configuracao_e_um(self):
+        self.assertEqual(config.get_max_workers(), 1)
+
+    def test_le_do_arquivo(self):
+        config.save_config({"max_workers": "2"})
+        self.assertEqual(config.get_max_workers(), 2)
+
+    def test_ambiente_tem_prioridade(self):
+        config.save_config({"max_workers": "2"})
+        os.environ["AUTOSRT_MAX_WORKERS"] = "1"
+        self.assertEqual(config.get_max_workers(), 1)
+
+    def test_valor_invalido_vira_um(self):
+        config.save_config({"max_workers": "nao-e-numero"})
+        self.assertEqual(config.get_max_workers(), 1)
+
+    def test_valor_menor_que_um_vira_um(self):
+        config.save_config({"max_workers": "0"})
+        self.assertEqual(config.get_max_workers(), 1)
 
 
 class TestMetodoDaVAD(unittest.TestCase):

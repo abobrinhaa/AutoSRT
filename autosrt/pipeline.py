@@ -304,6 +304,7 @@ def process_media(media_path, output_path=None, *, engine=DEFAULT_ENGINE,
                   condition_on_previous_text=None,
                   hallucination_silence_threshold=None,
                   filter_hallucinations=True, extra_hallucinations=None,
+                  subtitle_standard=None,
                   transcribe_extra_args=None) -> PipelineResult:
     """Transcreve um arquivo de mídia e traduz o resultado.
 
@@ -359,6 +360,9 @@ def process_media(media_path, output_path=None, *, engine=DEFAULT_ENGINE,
             Veja :mod:`autosrt.hallucination`.
         extra_hallucinations: frases-clichê do próprio usuário, somadas às
             embutidas. Cada acervo tem o seu.
+        subtitle_standard: ``None`` (padrão) usa o padrão de
+            :mod:`autosrt.transcribe` (ligado -- quebra de linha "estilo
+            Netflix"). ``False`` desliga.
         transcribe_extra_args: argumentos extras repassados direto ao
             executável do Whisper local.
 
@@ -412,6 +416,8 @@ def process_media(media_path, output_path=None, *, engine=DEFAULT_ENGINE,
             kwargs["condition_on_previous_text"] = condition_on_previous_text
         if hallucination_silence_threshold is not None:
             kwargs["hallucination_silence_threshold"] = hallucination_silence_threshold
+        if subtitle_standard is not None:
+            kwargs["standard"] = subtitle_standard
         if whisper_model:
             kwargs["model"] = whisper_model
         if whisper_compute_type:

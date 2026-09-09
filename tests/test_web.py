@@ -288,6 +288,23 @@ class TestPagina(BaseWeb):
         self.assertIn('id="aviso-config"', html)
         self.assertIn("function avisarChaveFaltando", html)
 
+    def test_selecao_de_modelo_e_um_select_com_large_v3(self):
+        html = self.client.get("/").get_data(as_text=True)
+        self.assertIn('<select id="whisper_model">', html)
+        self.assertIn('value="large-v3"', html)
+        # O campo livre continua existindo, para modelo que a lista não
+        # prevê -- só passa a aparecer sob demanda (opção "Personalizado").
+        self.assertIn('id="whisper_model_personalizado"', html)
+
+    def test_painel_tem_trabalhos_simultaneos_e_diarizacao(self):
+        html = self.client.get("/").get_data(as_text=True)
+        self.assertIn('id="max_workers"', html)
+        self.assertIn('id="diarizar_padrao"', html)
+
+    def test_painel_tem_campo_de_quebra_de_legenda_padrao(self):
+        html = self.client.get("/").get_data(as_text=True)
+        self.assertIn('id="subtitle_standard"', html)
+
 
 class TestListagem(BaseWeb):
     def test_lista_videos_e_legendas(self):
@@ -807,6 +824,88 @@ class TestFiltroDeAlucinacaoNaFila(BaseWeb):
                          ["Legendas: João"])
 
 
+class TestQuebraDeLegendaPadraoNaFila(BaseWeb):
+    """subtitle_standard configurado no painel vale para todo trabalho de
+    mídia da fila -- liga o --standard (quebra estilo Netflix) do
+    Faster-Whisper-XXL."""
+
+    def setUp(self):
+        super().setUp()
+        from autosrt import config
+        self._app_dir = config.app_directory
+        config.app_directory = lambda: self.tmp
+        self.addCleanup(setattr, config, "app_directory", self._app_dir)
+
+    def test_repassa_a_configuracao(self):
+        self.client.post("/api/config", json={"subtitle_standard": "false"})
+        video = self.tocar("filme.mkv")
+
+        with mock.patch.object(pipeline, "process_media") as fake:
+            fake.return_value = pipeline.PipelineResult(
+                total=1, translated=1, failed=[], detected_lang="en")
+            job = self.client.post("/api/processar",
+                                   json={"arquivo": "filme.mkv"}).get_json()
+            self.esperar(job["id"])
+
+        self.assertFalse(fake.call_args.kwargs["subtitle_standard"])
+
+    def test_sem_configuracao_nao_manda_nada(self):
+        video = self.tocar("filme.mkv")
+
+        with mock.patch.object(pipeline, "process_media") as fake:
+            fake.return_value = pipeline.PipelineResult(
+                total=1, translated=1, failed=[], detected_lang="en")
+            job = self.client.post("/api/processar",
+                                   json={"arquivo": "filme.mkv"}).get_json()
+            self.esperar(job["id"])
+
+        self.assertIsNone(fake.call_args.kwargs["subtitle_standard"])
+
+
+class TestDiarizacaoPorArquivo(BaseWeb):
+    """Diarização vem ligada por padrão (é o que dá gênero certo à
+    tradução), mas dá para desligar por arquivo -- economiza VRAM em vídeo
+    de um locutor só, ou para caber outro trabalho ao mesmo tempo."""
+
+    def test_ligada_por_padrao(self):
+        video = self.tocar("filme.mkv")
+
+        with mock.patch.object(pipeline, "process_media") as fake:
+            fake.return_value = pipeline.PipelineResult(
+                total=1, translated=1, failed=[], detected_lang="en")
+            job = self.client.post("/api/processar",
+                                   json={"arquivo": "filme.mkv"}).get_json()
+            self.esperar(job["id"])
+
+        self.assertTrue(fake.call_args.kwargs["diarize"])
+
+    def test_desligada_quando_pedido(self):
+        video = self.tocar("filme.mkv")
+
+        with mock.patch.object(pipeline, "process_media") as fake:
+            fake.return_value = pipeline.PipelineResult(
+                total=1, translated=1, failed=[], detected_lang="en")
+            job = self.client.post(
+                "/api/processar",
+                json={"arquivo": "filme.mkv", "diarizar": False}).get_json()
+            self.esperar(job["id"])
+
+        self.assertFalse(fake.call_args.kwargs["diarize"])
+
+    def test_vale_tambem_no_lote(self):
+        self.tocar("filme.mkv")
+
+        with mock.patch.object(pipeline, "process_media") as fake:
+            fake.return_value = pipeline.PipelineResult(
+                total=1, translated=1, failed=[], detected_lang="en")
+            resp = self.client.post("/api/processar-lote", json={
+                "itens": [{"arquivo": "filme.mkv", "diarizar": False}]})
+            job = resp.get_json()["enfileirados"][0]
+            self.esperar(job["id"])
+
+        self.assertFalse(fake.call_args.kwargs["diarize"])
+
+
 class TestAcoesDisponiveis(unittest.TestCase):
     def ids(self, caminho):
         return [a["id"] for a in web.acoes_para(caminho)]
@@ -1205,6 +1304,49 @@ class TestConfiguracao(BaseWeb):
         resposta = self.client.post(
             "/api/config",
             json={"hallucination_silence_threshold": "nao-e-numero"})
+        self.assertEqual(resposta.status_code, 400)
+
+    def test_max_workers_comeca_em_um(self):
+        dados = self.client.get("/api/config").get_json()
+        self.assertEqual(dados["max_workers"], 1)
+
+    def test_grava_max_workers(self):
+        resposta = self.client.post("/api/config", json={"max_workers": "2"})
+        self.assertEqual(resposta.status_code, 200)
+        self.assertEqual(
+            self.client.get("/api/config").get_json()["max_workers"], 2)
+
+    def test_max_workers_invalido_e_recusado(self):
+        resposta = self.client.post("/api/config",
+                                    json={"max_workers": "muitos"})
+        self.assertEqual(resposta.status_code, 400)
+
+    def test_max_workers_acima_do_teto_e_recusado(self):
+        # Um número exagerado aqui (fat-finger) não vira 50 threads
+        # disputando a GPU sem nenhum aviso.
+        resposta = self.client.post("/api/config", json={"max_workers": "50"})
+        self.assertEqual(resposta.status_code, 400)
+
+    def test_max_workers_vazio_volta_ao_padrao(self):
+        self.client.post("/api/config", json={"max_workers": "2"})
+        self.client.post("/api/config", json={"max_workers": ""})
+        self.assertEqual(
+            self.client.get("/api/config").get_json()["max_workers"], 1)
+
+    def test_quebra_de_legenda_padrao_comeca_vazia(self):
+        dados = self.client.get("/api/config").get_json()
+        self.assertIsNone(dados["subtitle_standard"])
+
+    def test_grava_quebra_de_legenda_padrao(self):
+        resposta = self.client.post("/api/config",
+                                    json={"subtitle_standard": "false"})
+        self.assertEqual(resposta.status_code, 200)
+        self.assertFalse(
+            self.client.get("/api/config").get_json()["subtitle_standard"])
+
+    def test_quebra_de_legenda_padrao_invalido_e_recusado(self):
+        resposta = self.client.post("/api/config",
+                                    json={"subtitle_standard": "talvez"})
         self.assertEqual(resposta.status_code, 400)
 
 

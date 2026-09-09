@@ -170,6 +170,17 @@ class TestBuildCommand(unittest.TestCase):
         self.assertNotIn("--hallucination_silence_threshold", command)
         self.assertNotIn("--word_timestamps", command)
 
+    def test_quebra_de_linha_padrao_netflix_ligada_por_padrao(self):
+        # --standard é o preset do próprio Faster-Whisper-XXL para o
+        # "estilo Netflix": uma frase por bloco, no máx. 2 linhas de 42
+        # caracteres, quebrando depois de vírgula em linha longa. Sem isso,
+        # o Whisper quebra a legenda em blocos de tamanho irregular.
+        command = self.build()
+        self.assertIn("--standard", command)
+
+    def test_quebra_de_linha_padrao_pode_ser_desligada(self):
+        self.assertNotIn("--standard", self.build(standard=False))
+
 
 class TestIterLines(unittest.TestCase):
     """Regressão: a barra do Whisper reescreve a mesma linha terminando cada
