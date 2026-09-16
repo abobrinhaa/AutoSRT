@@ -21,6 +21,8 @@ import os
 import re
 import shutil
 import subprocess
+import threading
+import time
 
 #: Abaixo disto o áudio é considerado fraco demais para transcrever bem.
 #: Filme com diálogo normal fica entre -25 e -20 dB; o caso que motivou
@@ -40,6 +42,60 @@ class AudioError(Exception):
     """Falha ao medir ou preparar o áudio."""
 
 
+class AudioCancelled(AudioError):
+    """O preparo do áudio foi cancelado pelo usuário."""
+
+
+def _watch_cancel(process, cancel_event, cancelled):
+    """Derruba o ffmpeg assim que ``cancel_event`` for acionado.
+
+    ``subprocess.run`` bloqueia até o processo terminar sozinho, sem
+    nenhuma forma de interromper -- num filme longo, cancelar durante a
+    normalização do áudio ficava sem efeito nenhum até o ffmpeg acabar por
+    conta própria. Esta thread observa o evento por fora e mata o processo
+    assim que ele for acionado.
+    """
+    while process.poll() is None:
+        if cancel_event.is_set():
+            cancelled.set()
+            process.terminate()
+            return
+        time.sleep(0.3)
+
+
+def _run_ffmpeg(comando, *, timeout=None, cancel_event=None):
+    """Roda o ffmpeg, cancelável a qualquer momento via ``cancel_event``."""
+    try:
+        processo = subprocess.Popen(
+            comando, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+            text=True, errors="replace")
+    except OSError as exc:
+        raise AudioError(f"Não foi possível executar o ffmpeg: {exc}")
+
+    cancelled = threading.Event()
+    watcher = None
+    if cancel_event is not None:
+        watcher = threading.Thread(
+            target=_watch_cancel, args=(processo, cancel_event, cancelled),
+            daemon=True)
+        watcher.start()
+
+    try:
+        _, stderr = processo.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        processo.kill()
+        processo.communicate()
+        raise AudioError("O ffmpeg passou do tempo limite.")
+    finally:
+        if watcher is not None:
+            watcher.join(timeout=1)
+
+    if cancelled.is_set():
+        raise AudioCancelled("Preparo do áudio cancelado.")
+
+    return processo.returncode, stderr
+
+
 def find_ffmpeg(executable=None):
     """Localiza o ffmpeg. Devolve ``None`` se não houver."""
     if executable and os.path.isfile(executable):
@@ -47,7 +103,8 @@ def find_ffmpeg(executable=None):
     return shutil.which(os.environ.get("FFMPEG_PATH") or "ffmpeg")
 
 
-def medir_volume_medio(media_path, *, ffmpeg=None, timeout=None):
+def medir_volume_medio(media_path, *, ffmpeg=None, timeout=None,
+                       cancel_event=None):
     """Mede o volume médio do áudio, em dB.
 
     Usa o filtro ``volumedetect``, que percorre o arquivo inteiro sem
@@ -56,9 +113,10 @@ def medir_volume_medio(media_path, *, ffmpeg=None, timeout=None):
 
     Returns:
         O ``mean_volume`` em dB, ou ``None`` quando não dá para medir
-        (sem ffmpeg, arquivo sem áudio, saída inesperada). ``None`` é
-        "não sei", e quem chama deve seguir sem normalizar em vez de
-        tratar como erro: medir é uma otimização, não um pré-requisito.
+        (sem ffmpeg, arquivo sem áudio, saída inesperada, ou cancelado).
+        ``None`` é "não sei", e quem chama deve seguir sem normalizar em
+        vez de tratar como erro: medir é uma otimização, não um
+        pré-requisito.
     """
     binario = find_ffmpeg(ffmpeg)
     if not binario:
@@ -68,32 +126,33 @@ def medir_volume_medio(media_path, *, ffmpeg=None, timeout=None):
                "-af", "volumedetect", "-vn", "-sn", "-dn",
                "-f", "null", "-"]
     try:
-        processo = subprocess.run(
-            comando, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
-            text=True, errors="replace", timeout=timeout)
-    except (OSError, subprocess.TimeoutExpired):
+        returncode, stderr = _run_ffmpeg(
+            comando, timeout=timeout, cancel_event=cancel_event)
+    except AudioError:
         return None
 
     # O volumedetect escreve no stderr, e o ffmpeg sai com código 0 mesmo
     # assim -- o que interessa é a linha, não o código de saída.
-    achado = MEAN_VOLUME_RE.search(processo.stderr or "")
+    achado = MEAN_VOLUME_RE.search(stderr or "")
     return float(achado.group(1)) if achado else None
 
 
 def volume_baixo(media_path, *, limiar=LIMIAR_VOLUME_BAIXO, ffmpeg=None,
-                 timeout=None) -> bool:
+                 timeout=None, cancel_event=None) -> bool:
     """Diz se o áudio está fraco a ponto de atrapalhar a transcrição.
 
     Sem conseguir medir, responde ``False``: normalizar sem saber trocaria
     um problema conhecido por um palpite, e o custo de errar para mais é
     reprocessar o áudio de todo mundo à toa.
     """
-    medido = medir_volume_medio(media_path, ffmpeg=ffmpeg, timeout=timeout)
+    medido = medir_volume_medio(media_path, ffmpeg=ffmpeg, timeout=timeout,
+                                cancel_event=cancel_event)
     return medido is not None and medido < limiar
 
 
 def normalizar_para_wav(media_path, destino, *, ffmpeg=None, timeout=None,
-                        alvo_lufs=ALVO_LUFS, true_peak=ALVO_TRUE_PEAK) -> str:
+                        alvo_lufs=ALVO_LUFS, true_peak=ALVO_TRUE_PEAK,
+                        cancel_event=None) -> str:
     """Grava o áudio normalizado como WAV 16 kHz mono.
 
     16 kHz mono não é escolha arbitrária: é o formato que o Whisper usa
@@ -105,6 +164,7 @@ def normalizar_para_wav(media_path, destino, *, ffmpeg=None, timeout=None,
 
     Raises:
         AudioError: sem ffmpeg, ou o ffmpeg falhou.
+        AudioCancelled: cancelado pelo usuário via ``cancel_event``.
     """
     binario = find_ffmpeg(ffmpeg)
     if not binario:
@@ -124,17 +184,11 @@ def normalizar_para_wav(media_path, destino, *, ffmpeg=None, timeout=None,
         "-vn", "-sn", "-dn",
         destino,
     ]
-    try:
-        processo = subprocess.run(
-            comando, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
-            text=True, errors="replace", timeout=timeout)
-    except subprocess.TimeoutExpired:
-        raise AudioError("O ffmpeg passou do tempo limite ao normalizar o áudio.")
-    except OSError as exc:
-        raise AudioError(f"Não foi possível executar o ffmpeg: {exc}")
+    returncode, stderr = _run_ffmpeg(
+        comando, timeout=timeout, cancel_event=cancel_event)
 
-    if processo.returncode != 0:
-        detalhe = (processo.stderr or "").strip()[-500:]
+    if returncode != 0:
+        detalhe = (stderr or "").strip()[-500:]
         raise AudioError(f"O ffmpeg falhou ao normalizar o áudio:\n{detalhe}")
     if not os.path.exists(destino):
         raise AudioError("O ffmpeg terminou mas não gerou o áudio normalizado.")

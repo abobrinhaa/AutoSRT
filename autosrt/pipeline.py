@@ -160,7 +160,7 @@ NORMALIZE_NUNCA = "nunca"
 
 
 @contextlib.contextmanager
-def _audio_preparado(media_path, modo, *, announce=None):
+def _audio_preparado(media_path, modo, *, announce=None, cancel_event=None):
     """Entrega o caminho a transcrever, normalizado quando fizer sentido.
 
     Devolve o próprio ``media_path`` quando não há o que fazer, ou um WAV
@@ -185,7 +185,8 @@ def _audio_preparado(media_path, modo, *, announce=None):
     if modo == NORMALIZE_AUTO:
         if announce:
             announce("Conferindo o volume do áudio...")
-        medido = audio_module.medir_volume_medio(media_path)
+        medido = audio_module.medir_volume_medio(
+            media_path, cancel_event=cancel_event)
         if medido is None:
             # "Não sei" não pode passar por "está bom". Sem ffmpeg, a
             # medição falha para todo arquivo, e tratar isso em silêncio
@@ -213,7 +214,10 @@ def _audio_preparado(media_path, modo, *, announce=None):
         destino = os.path.join(
             pasta, os.path.splitext(os.path.basename(media_path))[0] + ".wav")
         try:
-            yield audio_module.normalizar_para_wav(media_path, destino)
+            yield audio_module.normalizar_para_wav(
+                media_path, destino, cancel_event=cancel_event)
+        except audio_module.AudioCancelled:
+            raise
         except audio_module.AudioError as exc:
             logger.warning("normalização do áudio falhou (%s); "
                            "seguindo com o áudio original", exc)
@@ -432,7 +436,8 @@ def process_media(media_path, output_path=None, *, engine=DEFAULT_ENGINE,
         # vazios, sem erro nenhum -- ver autosrt.audio. Normalizar antes
         # resolve, e o WAV vai para o Whisper no lugar da mídia.
         with _audio_preparado(media_path, normalize_audio,
-                              announce=announce) as entrada:
+                              announce=announce,
+                              cancel_event=cancel_event) as entrada:
             if entrada != media_path:
                 # O Whisper nomeia o .srt pelo arquivo de entrada. Com o WAV
                 # temporário no lugar da mídia, deixar o output_dir apontando
