@@ -85,6 +85,13 @@ class TestBuildCommand(unittest.TestCase):
         posicao = command.index("--compute_type")
         self.assertEqual(command[posicao + 1], "auto")
 
+    def test_device_cuda_e_sempre_forcado(self):
+        # Sem isso, GPU sumindo (ex.: container perdendo /dev/nvidia*) faz o
+        # Whisper cair sozinho pro CPU e rodar horas em silêncio, sem erro.
+        command = self.build()
+        posicao = command.index("--device")
+        self.assertEqual(command[posicao + 1], "cuda")
+
     def test_idioma_so_entra_quando_informado(self):
         self.assertNotIn("--language", self.build())
         self.assertIn("--language", self.build(language="en"))

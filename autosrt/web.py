@@ -697,6 +697,18 @@ def _register_routes(app, fila, media_dir, engine):
             return jsonify({"erro": str(exc)}), 502
         return jsonify({"modelos": lista})
 
+    @app.get("/api/gpu")
+    def gpu():
+        """Estado da GPU, para o indicador no canto da interface.
+
+        Com "--device cuda" agora forçado no comando do Whisper (ver
+        transcribe.build_command), a falta de GPU vira erro no job em vez de
+        cair silenciosamente pro CPU -- mas só um erro no meio de um job já
+        enfileirado é tarde demais para evitar a fila inteira travada. Este
+        indicador mostra o estado antes de mandar qualquer trabalho.
+        """
+        return jsonify(transcribe.gpu_status())
+
     @app.get("/api/trabalhos")
     def trabalhos():
         return jsonify([j.para_json() for j in fila.listar()])
@@ -1128,6 +1140,20 @@ PAGINA = """<!doctype html>
                           margin-top: 2px; }
   /* Tooltip curta no "?" ao lado do rótulo, para o campo que precisa de
      uma explicação mais longa do que o rótulo comporta. */
+  /* Indicador de GPU no canto do cabeçalho: com "--device cuda" forçado no
+     comando do Whisper, a GPU sumir agora é erro na hora, não silêncio caro
+     de horas em CPU -- mas só aparece no meio de um job já enfileirado. Este
+     indicador avisa antes de mandar qualquer trabalho para a fila. */
+  .indicador-gpu { display: inline-flex; align-items: center; gap: 6px;
+                   font-size: 12px; font-weight: 600; color: var(--text-muted);
+                   border: 1px solid var(--border); border-radius: 999px;
+                   padding: 5px 10px 5px 8px; background: var(--surface); }
+  .indicador-gpu-ponto { width: 8px; height: 8px; border-radius: 50%;
+                         background: var(--text-muted); flex-shrink: 0; }
+  .indicador-gpu.gpu-ok { color: var(--success); border-color: var(--success); }
+  .indicador-gpu.gpu-ok .indicador-gpu-ponto { background: var(--success); }
+  .indicador-gpu.gpu-falha { color: var(--danger); border-color: var(--danger); }
+  .indicador-gpu.gpu-falha .indicador-gpu-ponto { background: var(--danger); }
   .rotulo-com-ajuda { display: inline-flex; align-items: center; gap: 6px; }
   .ajuda { display: inline-flex; align-items: center; justify-content: center;
            width: 16px; height: 16px; border-radius: 999px; background: var(--surface-2);
@@ -1263,6 +1289,11 @@ PAGINA = """<!doctype html>
       <p class="sub">Transcreve o áudio do filme e traduz a legenda para português.</p>
     </div>
     <div class="acoes-cabecalho">
+    <span id="indicador-gpu" class="indicador-gpu" role="status" hidden
+          title="">
+      <span class="indicador-gpu-ponto" aria-hidden="true"></span>
+      <span id="indicador-gpu-texto"></span>
+    </span>
     <button type="button" id="abrir-config" class="botao-icone"
             aria-haspopup="dialog" aria-controls="painel-config"
             title="Tradu&ccedil;&atilde;o e transcri&ccedil;&atilde;o" aria-label="Configura&ccedil;&otilde;es">
@@ -2351,10 +2382,29 @@ function mostrarSucesso(idMensagem) {
   }, 4000);
 }
 
+async function atualizarGpu() {
+  const indicador = $('indicador-gpu');
+  const texto = $('indicador-gpu-texto');
+  try {
+    const r = await fetch('/api/gpu');
+    const estado = await r.json();
+    indicador.hidden = false;
+    indicador.classList.toggle('gpu-ok', estado.disponivel);
+    indicador.classList.toggle('gpu-falha', !estado.disponivel);
+    texto.textContent = estado.disponivel ? 'GPU conectada' : 'Sem GPU';
+    indicador.title = estado.detalhe || '';
+  } catch (e) {
+    // Falha em checar não é falha de GPU -- deixa o indicador como estava
+    // (ou escondido, se nunca respondeu) em vez de acusar "sem GPU" à toa.
+  }
+}
+
 carregarConfig();
 carregarArquivos();
 atualizar();
+atualizarGpu();
 setInterval(atualizar, 2000);
+setInterval(atualizarGpu, 15000);
 </script>
 </body>
 </html>

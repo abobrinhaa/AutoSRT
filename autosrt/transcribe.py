@@ -134,6 +134,38 @@ def whisper_available(explicit_path: str = None) -> bool:
     return find_executable(explicit_path) is not None
 
 
+def gpu_status() -> dict:
+    """Verifica se há GPU NVIDIA disponível para o Whisper usar.
+
+    Consulta o ``nvidia-smi`` direto, sem depender de bibliotecas Python de
+    GPU (o projeto não usa nenhuma -- o Whisper roda como executável à
+    parte). Serve para mostrar na interface se a GPU está conectada antes
+    mesmo de rodar um job, já que agora ``--device cuda`` é forçado e falha
+    na hora sem ela.
+    """
+    nvidia_smi = shutil.which("nvidia-smi")
+    if not nvidia_smi:
+        return {"disponivel": False,
+                "detalhe": "nvidia-smi não encontrado no PATH."}
+
+    try:
+        result = subprocess.run(
+            [nvidia_smi, "--query-gpu=name", "--format=csv,noheader"],
+            capture_output=True, text=True, timeout=5)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return {"disponivel": False, "detalhe": f"nvidia-smi falhou: {exc}"}
+
+    if result.returncode != 0:
+        detalhe = (result.stderr or result.stdout).strip() or "sem detalhe."
+        return {"disponivel": False, "detalhe": detalhe}
+
+    nomes = [linha.strip() for linha in result.stdout.splitlines() if linha.strip()]
+    if not nomes:
+        return {"disponivel": False, "detalhe": "nvidia-smi não listou nenhuma GPU."}
+
+    return {"disponivel": True, "detalhe": ", ".join(nomes)}
+
+
 def build_command(media_path, output_dir, *, executable, model=DEFAULT_MODEL,
                   language=None, diarize=DEFAULT_DIARIZE_MODEL,
                   compute_type=DEFAULT_COMPUTE_TYPE, vad=DEFAULT_VAD,
@@ -174,6 +206,12 @@ def build_command(media_path, output_dir, *, executable, model=DEFAULT_MODEL,
         "--output_dir", output_dir,
         "--output_format", "srt",
         "--compute_type", compute_type,
+        # Forçado, nunca configurável: sem GPU disponível, o Faster-Whisper-XXL
+        # cai sozinho pro CPU e segue rodando sem erro nenhum -- foi assim que
+        # um container perdeu os /dev/nvidia* e passou horas transcrevendo em
+        # CPU sem que ninguém percebesse. Com "--device cuda" travado, a falta
+        # de GPU vira erro imediato no job, em vez de silêncio caro.
+        "--device", "cuda",
         "-pp",  # imprime progresso, que é lido para alimentar a interface
     ]
 
