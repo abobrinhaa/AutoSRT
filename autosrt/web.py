@@ -2045,6 +2045,9 @@ function cartao(job) {
     b.className = 'fantasma';
     b.textContent = 'Cancelar';
     b.onclick = async () => {
+      b.disabled = true;
+      b.textContent = 'Cancelando...';
+      etapa.textContent = 'Cancelando...';
       await fetch('/api/trabalho/' + job.id + '/cancelar', {method: 'POST'});
       atualizar();
     };

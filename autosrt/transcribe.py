@@ -25,6 +25,8 @@ import re
 import shlex
 import shutil
 import subprocess
+import threading
+import time
 
 from .errors import UnsupportedSubtitleError
 
@@ -392,6 +394,24 @@ def _iter_lines(stream):
         yield "".join(pedaco)
 
 
+def _watch_cancel(process, cancel_event, cancelled):
+    """Derruba o processo assim que ``cancel_event`` for acionado.
+
+    Roda numa thread à parte porque a leitura da saída do Whisper (abaixo)
+    bloqueia em ``stream.read(1)`` -- em trechos silenciosos (carregando o
+    modelo, por exemplo) o laço principal fica parado esperando um caractere
+    que não vem, e só olha ``cancel_event`` depois que um chega. Sem essa
+    thread, cancelar durante esses trechos silenciosos não tem efeito
+    nenhum até o Whisper voltar a imprimir algo por conta própria.
+    """
+    while process.poll() is None:
+        if cancel_event.is_set():
+            cancelled.set()
+            process.terminate()
+            return
+        time.sleep(0.3)
+
+
 def _run_process(command, *, progress=None, cancel_event=None, timeout=None):
     """Executa o Whisper, repassando o progresso conforme ele é impresso."""
     try:
@@ -400,6 +420,14 @@ def _run_process(command, *, progress=None, cancel_event=None, timeout=None):
             text=True, bufsize=1, errors="replace")
     except OSError as exc:
         raise TranscriptionError(f"Não foi possível executar o Whisper: {exc}")
+
+    cancelled = threading.Event()
+    watcher = None
+    if cancel_event is not None:
+        watcher = threading.Thread(
+            target=_watch_cancel, args=(process, cancel_event, cancelled),
+            daemon=True)
+        watcher.start()
 
     output_tail = []
     try:
@@ -410,9 +438,8 @@ def _run_process(command, *, progress=None, cancel_event=None, timeout=None):
                 match = PROGRESS_RE.search(line)
                 if match:
                     progress(min(100, int(match.group(1))))
-            if cancel_event is not None and cancel_event.is_set():
-                process.terminate()
-                raise TranscriptionError("Transcrição cancelada.")
+            if cancelled.is_set():
+                break
         process.wait(timeout=timeout)
     except subprocess.TimeoutExpired:
         process.kill()
@@ -420,6 +447,11 @@ def _run_process(command, *, progress=None, cancel_event=None, timeout=None):
     finally:
         if process.stdout:
             process.stdout.close()
+        if watcher is not None:
+            watcher.join(timeout=1)
+
+    if cancelled.is_set():
+        raise TranscriptionError("Transcrição cancelada.")
 
     if process.returncode != 0:
         # As linhas já vêm sem o terminador (_iter_lines o consome), então
