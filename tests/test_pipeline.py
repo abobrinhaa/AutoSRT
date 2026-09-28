@@ -232,7 +232,7 @@ class TestEtapaDuranteATranscricao(unittest.TestCase):
                                 source_text="Hello there.")]
 
     @contextlib.contextmanager
-    def preparo_falante(self, caminho, modo, announce=None):
+    def preparo_falante(self, caminho, modo, announce=None, cancel_event=None):
         """Preparo de audio que fala logo antes de entregar o arquivo.
 
         E o caso relatado: "Audio fraco (-28,8 dB): normalizando antes de
