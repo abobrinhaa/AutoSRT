@@ -318,6 +318,11 @@ class TestPagina(BaseWeb):
         html = self.client.get("/").get_data(as_text=True)
         self.assertIn('id="subtitle_standard"', html)
 
+    def test_painel_tem_campos_de_tempo_de_exibicao(self):
+        html = self.client.get("/").get_data(as_text=True)
+        self.assertIn('id="duracao_minima_exibicao"', html)
+        self.assertIn('id="caracteres_por_segundo"', html)
+
 
 class TestListagem(BaseWeb):
     def test_lista_videos_e_legendas(self):
@@ -875,6 +880,40 @@ class TestQuebraDeLegendaPadraoNaFila(BaseWeb):
         self.assertIsNone(fake.call_args.kwargs["subtitle_standard"])
 
 
+class TestTempoDeExibicaoNaFila(BaseWeb):
+    """O tempo de exibição configurado no painel vale para todo trabalho de
+    mídia da fila; sem configuração, o pipeline cai no padrão (ligado)."""
+
+    def setUp(self):
+        super().setUp()
+        from autosrt import config
+        self._app_dir = config.app_directory
+        config.app_directory = lambda: self.tmp
+        self.addCleanup(setattr, config, "app_directory", self._app_dir)
+
+    def _processar(self):
+        self.tocar("filme.mkv")
+        with mock.patch.object(pipeline, "process_media") as fake:
+            fake.return_value = pipeline.PipelineResult(
+                total=1, translated=1, failed=[], detected_lang="en")
+            job = self.client.post("/api/processar",
+                                   json={"arquivo": "filme.mkv"}).get_json()
+            self.esperar(job["id"])
+        return fake.call_args.kwargs
+
+    def test_sem_configuracao_usa_o_padrao_do_pipeline(self):
+        kwargs = self._processar()
+        self.assertIsNone(kwargs["min_display_seconds"])
+        self.assertIsNone(kwargs["reading_cps"])
+
+    def test_repassa_a_configuracao(self):
+        self.client.post("/api/config", json={
+            "duracao_minima_exibicao": "2", "caracteres_por_segundo": "12"})
+        kwargs = self._processar()
+        self.assertEqual(kwargs["min_display_seconds"], 2.0)
+        self.assertEqual(kwargs["reading_cps"], 12.0)
+
+
 class TestDiarizacaoPorArquivo(BaseWeb):
     """Diarização vem ligada por padrão (é o que dá gênero certo à
     tradução), mas dá para desligar por arquivo -- economiza VRAM em vídeo
@@ -1361,6 +1400,47 @@ class TestConfiguracao(BaseWeb):
         resposta = self.client.post("/api/config",
                                     json={"subtitle_standard": "talvez"})
         self.assertEqual(resposta.status_code, 400)
+
+    def test_tempo_de_exibicao_vem_com_o_padrao(self):
+        # O painel preenche o campo com o padrão: o ajuste já vem ligado,
+        # e o usuário vê o valor que está valendo.
+        from autosrt import timing
+        dados = self.client.get("/api/config").get_json()
+        self.assertIsNone(dados["duracao_minima_exibicao"])
+        self.assertIsNone(dados["caracteres_por_segundo"])
+        self.assertEqual(dados["duracao_minima_exibicao_padrao"],
+                         timing.DURACAO_MINIMA_PADRAO)
+        self.assertEqual(dados["caracteres_por_segundo_padrao"],
+                         timing.CARACTERES_POR_SEGUNDO_PADRAO)
+
+    def test_grava_tempo_de_exibicao(self):
+        resposta = self.client.post("/api/config", json={
+            "duracao_minima_exibicao": "2",
+            "caracteres_por_segundo": "12"})
+        self.assertEqual(resposta.status_code, 200)
+        dados = self.client.get("/api/config").get_json()
+        self.assertEqual(dados["duracao_minima_exibicao"], 2.0)
+        self.assertEqual(dados["caracteres_por_segundo"], 12.0)
+
+    def test_tempo_de_exibicao_aceita_virgula(self):
+        resposta = self.client.post("/api/config",
+                                    json={"duracao_minima_exibicao": "1,5"})
+        self.assertEqual(resposta.status_code, 200)
+        self.assertEqual(
+            self.client.get("/api/config").get_json()["duracao_minima_exibicao"],
+            1.5)
+
+    def test_tempo_de_exibicao_invalido_e_recusado(self):
+        for campo, valor in (("duracao_minima_exibicao", "abc"),
+                             ("duracao_minima_exibicao", "-1"),
+                             ("duracao_minima_exibicao", "60"),
+                             ("caracteres_por_segundo", "rápido"),
+                             ("caracteres_por_segundo", "-5"),
+                             ("caracteres_por_segundo", "500")):
+            with self.subTest(campo=campo, valor=valor):
+                resposta = self.client.post("/api/config", json={campo: valor})
+                self.assertEqual(resposta.status_code, 400)
+                self.assertIn("erro", resposta.get_json())
 
 
 class TestModelos(BaseWeb):

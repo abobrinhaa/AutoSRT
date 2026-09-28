@@ -73,6 +73,19 @@ def get_transcribe_runner(whisper_engine, reporter):
     return transcriber_via_api
 
 
+def _nao_negativo(texto):
+    """Número de 0 para cima, aceitando vírgula decimal ("1,5").
+
+    Negativo é recusado aqui, e não tratado como zero: zero desliga o
+    ajuste, e desligar por engano de digitação passaria despercebido.
+    """
+    numero = config.numero_nao_negativo(texto)
+    if numero is None:
+        raise argparse.ArgumentTypeError(
+            f"precisa ser um número de 0 para cima, não {texto!r}")
+    return numero
+
+
 def build_parser():
     parser = argparse.ArgumentParser(
         prog="autosrt",
@@ -183,6 +196,20 @@ def build_parser():
                             "pela comunidade Amara.org\"). Por padrão elas "
                             "são descartadas; use isto para conferir a "
                             "transcrição crua")
+    grupo.add_argument("--tempo-minimo", type=_nao_negativo, metavar="SEG",
+                       dest="min_display_seconds",
+                       help="tempo mínimo de cada legenda transcrita na "
+                            "tela. O Whisper fecha a legenda no fim exato da "
+                            "fala, e \"Sim.\" some antes de ser lido. Só "
+                            "estende dentro do silêncio, sem invadir a "
+                            "legenda seguinte. 0 desliga (padrão: o do "
+                            "config.json, ou 1.5)")
+    grupo.add_argument("--leitura-cps", type=_nao_negativo, metavar="N",
+                       dest="reading_cps",
+                       help="velocidade de leitura, em caracteres por "
+                            "segundo: legenda com mais texto fica mais "
+                            "tempo na tela. 0 desliga (padrão: o do "
+                            "config.json, ou 15)")
     grupo.add_argument("--whisper-args", metavar="\"ARGS\"",
                        dest="whisper_extra_args",
                        help="argumentos extras repassados direto ao "
@@ -306,6 +333,10 @@ def process_one(entrada, args, reporter) -> bool:
                 filter_hallucinations=not args.manter_alucinacoes,
                 extra_hallucinations=config.get_alucinacoes_extra(),
                 subtitle_standard=args.subtitle_standard,
+                min_display_seconds=_ou_da_configuracao(
+                    args.min_display_seconds, config.get_duracao_minima_exibicao),
+                reading_cps=_ou_da_configuracao(
+                    args.reading_cps, config.get_caracteres_por_segundo),
                 transcribe_extra_args=extra_args,
                 progress=reporter.progress, status=reporter.status)
         elif pipeline.is_media(entrada):
@@ -325,6 +356,15 @@ def process_one(entrada, args, reporter) -> bool:
 
     _report_result(resultado, reporter)
     return True
+
+
+def _ou_da_configuracao(valor, getter):
+    """O valor da linha de comando, ou o do config.json quando ausente.
+
+    O mesmo ajuste feito no painel da web vale aqui sem precisar repetir a
+    opção a cada execução; a opção explícita vence, só para aquela vez.
+    """
+    return valor if valor is not None else getter()
 
 
 def _report_result(resultado, reporter):

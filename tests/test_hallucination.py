@@ -182,5 +182,41 @@ class TestFrasesExtras(unittest.TestCase):
         self.assertEqual(len(resultado), 5)
 
 
+class TestEscritaDiferenteDoArquivo(unittest.TestCase):
+    """O Whisper também tem clichê de encerramento em chinês e japonês.
+
+    "请不吝点赞 订阅 转发 打赏支持明镜与点点栏目", "字幕by索兰娅",
+    "ご視聴ありがとうございました" -- sobre silêncio, num filme falado em
+    português ou inglês. A normalização das listas reduz tudo a letras
+    latinas, então nenhuma dessas frases casava com nada e todas passavam.
+    """
+
+    def test_frase_em_chines_num_filme_em_portugues_sai(self):
+        cues = DIALOGO[:2] + [
+            cue(3, 5, 7, "请不吝点赞 订阅 转发 打赏支持明镜与点点栏目")] + DIALOGO[2:]
+        resultado = hallucination.filtrar_alucinacoes(cues)
+        self.assertEqual(textos(resultado), textos(DIALOGO))
+
+    def test_credito_misturando_ideograma_e_latim_sai(self):
+        cues = DIALOGO + [cue(6, 30, 33, "字幕by索兰娅")]
+        self.assertEqual(len(hallucination.filtrar_alucinacoes(cues)), 5)
+
+    def test_japones_tambem_sai(self):
+        cues = DIALOGO + [cue(6, 30, 33, "ご視聴ありがとうございました")]
+        self.assertEqual(len(hallucination.filtrar_alucinacoes(cues)), 5)
+
+    def test_filme_em_chines_fica_inteiro(self):
+        falas = ["你今天去哪里了？", "我去了市场。", "买了什么？",
+                 "一些水果和蔬菜。", "很好。"]
+        cues = [cue(i, i * 2, i * 2 + 1.5, fala)
+                for i, fala in enumerate(falas, start=1)]
+        self.assertEqual(textos(hallucination.filtrar_alucinacoes(cues)), falas)
+
+    def test_nome_em_ideograma_dentro_de_fala_fica(self):
+        fala = "Eu morei em 北京 durante dois anos inteiros."
+        cues = DIALOGO[:2] + [cue(3, 5, 7, fala)] + DIALOGO[2:]
+        self.assertIn(fala, textos(hallucination.filtrar_alucinacoes(cues)))
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -349,6 +349,47 @@ class TestVerificacaoDeMudancaDeIdioma(unittest.TestCase):
         self.assertEqual(falhas, [1])
 
 
+class TestEscorregadaParaOutroIdioma(unittest.TestCase):
+    """Modelos treinados com muito chinês (DeepSeek, Qwen) às vezes trocam
+    de idioma no meio da frase. A resposta vem bem formada, um bloco por
+    número, e passava como tradução -- o chinês ia parar na legenda."""
+
+    def test_chines_na_resposta_do_bloco_cai_para_individual(self):
+        class EscorregaNoBlocoClient:
+            def complete(self, system, user):
+                blocos = llm_translate.BLOCK_RE.findall(user)
+                sujo = len(blocos) > 1
+                return "\n".join(
+                    f"<{n}>{'我不知道' if sujo else 'Eu não sei.'}</{n}>"
+                    for n, _ in blocos)
+
+        cues = make_cues("I don't know.", "Me neither.")
+        falhas = translate_cues_llm(cues, "inglês",
+                                    client=EscorregaNoBlocoClient(),
+                                    block_size=2)
+        self.assertEqual(falhas, [])
+        self.assertEqual([c.text for c in cues], ["Eu não sei.", "Eu não sei."])
+
+    def test_chines_insistente_mantem_o_original(self):
+        class SoChinesClient:
+            def complete(self, system, user):
+                return "\n".join(f"<{n}>Eu não sei 发生了什么</{n}>"
+                                 for n, _ in llm_translate.BLOCK_RE.findall(user))
+
+        cues = make_cues("I don't know what happened.")
+        falhas = translate_cues_llm(cues, "inglês", client=SoChinesClient())
+        self.assertEqual(falhas, [1])
+        self.assertEqual(cues[0].text, "I don't know what happened.")
+
+    def test_ideograma_que_ja_estava_na_origem_nao_reprova(self):
+        # O nome escrito em ideograma na fala original pode legitimamente
+        # atravessar a tradução; não é o modelo trocando de idioma.
+        cues = make_cues("I lived in 北京.")
+        falhas = translate_cues_llm(cues, "inglês", client=EchoClient())
+        self.assertEqual(falhas, [])
+        self.assertEqual(cues[0].text, "PT:I lived in 北京.")
+
+
 class TestTamanhoDeBlocoAutomatico(unittest.TestCase):
     """Motor local (Ollama etc.) ganha bloco bem menor sozinho, sem que quem
     chama precise saber disso -- é o caso do pipeline, que não passa

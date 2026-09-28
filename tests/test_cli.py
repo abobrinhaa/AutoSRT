@@ -310,6 +310,36 @@ class TestTranscricao(BaseCLI):
             self.run_cli([entrada, "--sem-quebra-padrao"])
         self.assertFalse(fake.call_args.kwargs["subtitle_standard"])
 
+    def test_tempo_de_exibicao_chega_ao_pipeline(self):
+        entrada = self.touch("filme.mkv")
+        with mock.patch.object(pipeline, "process_media") as fake:
+            fake.return_value = pipeline.PipelineResult(
+                total=1, translated=1, failed=[], detected_lang="en")
+            self.run_cli([entrada, "--tempo-minimo", "2.5",
+                          "--leitura-cps", "12"])
+        self.assertEqual(fake.call_args.kwargs["min_display_seconds"], 2.5)
+        self.assertEqual(fake.call_args.kwargs["reading_cps"], 12.0)
+
+    def test_tempo_minimo_aceita_virgula_e_recusa_negativo(self):
+        args = cli.build_parser().parse_args(["x.mkv", "--tempo-minimo", "1,5"])
+        self.assertEqual(args.min_display_seconds, 1.5)
+        with mock.patch.object(cli.sys, "stderr", self.err), \
+             self.assertRaises(SystemExit):
+            cli.build_parser().parse_args(["x.mkv", "--tempo-minimo", "-1"])
+
+    def test_sem_flag_o_tempo_de_exibicao_vem_da_configuracao(self):
+        entrada = self.touch("filme.mkv")
+        with mock.patch.object(pipeline, "process_media") as fake, \
+             mock.patch("autosrt.config.get_duracao_minima_exibicao",
+                        return_value=3.0), \
+             mock.patch("autosrt.config.get_caracteres_por_segundo",
+                        return_value=None):
+            fake.return_value = pipeline.PipelineResult(
+                total=1, translated=1, failed=[], detected_lang="en")
+            self.run_cli([entrada])
+        self.assertEqual(fake.call_args.kwargs["min_display_seconds"], 3.0)
+        self.assertIsNone(fake.call_args.kwargs["reading_cps"])
+
 
 class TestMotorViaAPI(BaseCLI):
     """Regressão do motor de transcrição via API: antes, o parâmetro

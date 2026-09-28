@@ -25,6 +25,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 from .llm import (DEFAULT_BASE_URL, DEFAULT_MODEL, LLMClient, LLMError,
                   is_local_base_url)
+from .sanitize import tem_cjk
 from .transcribe import SPEAKER_RE
 from .translate import TranslationCancelled
 
@@ -61,7 +62,10 @@ Regras:
   resposta.
 - Preste atenção em quem fala cada linha para acertar a concordância de
   gênero em português.
-- Preserve as quebras de linha internas de cada legenda.
+- Escreva só em português do Brasil. Nunca use caracteres chineses,
+  japoneses ou coreanos na tradução.
+- Preserve as quebras de linha internas de cada legenda como quebra de
+  linha de verdade. Nunca escreva <br>, </br>, </n> nem \\n no lugar dela.
 - Preserve as marcações de formatação exatamente como vieram, incluindo tags
   como <i></i> e o travessão que abre cada fala em legendas de diálogo.
 - Não comente, não explique, não numere de novo. Devolva apenas os blocos.
@@ -292,6 +296,23 @@ def _traducao_mudou(original: str, traduzido: str) -> bool:
     return original.strip().casefold() != traduzido.strip().casefold()
 
 
+def _traducao_aceitavel(original: str, traduzido: str) -> bool:
+    """True se ``traduzido`` pode ir para a legenda.
+
+    Além de não ser eco (:func:`_traducao_mudou`), não pode ter escorregado
+    para o chinês: modelos treinados com muito chinês (DeepSeek, Qwen)
+    trocam de idioma no meio da frase, e a resposta continua bem formada,
+    um bloco por número. Só conta ideograma que a fala original não tinha
+    -- um nome escrito em ideograma na origem pode atravessar a tradução.
+    Reprovar aqui manda a legenda para a tentativa individual, que costuma
+    acertar; a limpeza antes de gravar (:mod:`autosrt.sanitize`) fica como
+    última barreira.
+    """
+    if not _traducao_mudou(original, traduzido):
+        return False
+    return tem_cjk(original) or not tem_cjk(traduzido)
+
+
 def _translate_block(bloco, antes, depois, source_lang, speaker_genders, client,
                      on_error=None):
     """Traduz um bloco, com uma segunda tentativa e queda para individual."""
@@ -309,7 +330,7 @@ def _translate_block(bloco, antes, depois, source_lang, speaker_genders, client,
 
     traduzidos = {
         numero: texto for numero, texto in traduzidos.items()
-        if _traducao_mudou(cues_por_numero[numero].source_text, texto)
+        if _traducao_aceitavel(cues_por_numero[numero].source_text, texto)
     }
 
     if len(traduzidos) == len(esperados):
@@ -341,12 +362,12 @@ def _translate_single(cue, numero, antes, depois, source_lang, speaker_genders,
 
     traduzidos = parse_response(resposta, {numero})
     texto = traduzidos.get(numero)
-    if texto and _traducao_mudou(cue.source_text, texto):
+    if texto and _traducao_aceitavel(cue.source_text, texto):
         return texto
 
     # Última chance: resposta sem os delimitadores, mas de uma linha só.
     limpo = _clean_block(re.sub(r"</?\d+>", "", resposta or ""))
-    if limpo and _traducao_mudou(cue.source_text, limpo):
+    if limpo and _traducao_aceitavel(cue.source_text, limpo):
         return limpo
     return None
 

@@ -29,12 +29,21 @@ em dois níveis:
 Em qualquer dos dois níveis, só sai a legenda que é **inteiramente** o
 clichê: a mesma frase dentro de uma fala maior ("Obrigado por assistir ao
 filme comigo ontem") é fala de verdade e fica.
+
+O clichê também vem em chinês e japonês ("请不吝点赞 订阅 转发", "字幕by
+索兰娅", "ご視聴ありがとうございました"), e esse não cabe em lista: a
+normalização reduz tudo a letras latinas e o ideograma some. O sinal ali é
+a escrita: uma legenda em ideogramas, num arquivo em que a maioria das
+legendas não usa essa escrita, é tratada como inequívoca. Num filme falado
+em chinês a maioria usa, e nada sai por isso.
 """
 
 import logging
 import re
 import unicodedata
 from collections import Counter
+
+from .sanitize import predominio_cjk
 
 logger = logging.getLogger(__name__)
 
@@ -253,14 +262,22 @@ def filtrar_alucinacoes(cues, *, extras=None) -> list:
 
     contagem = Counter(normalizar(cue.source_text) for cue in cues)
 
+    # Empate conta como arquivo CJK: na dúvida, a legenda fica.
+    em_cjk = [predominio_cjk(cue.source_text) for cue in cues]
+    arquivo_cjk = sum(em_cjk) * 2 >= len(cues)
+
     mantidas = []
     for posicao, cue in enumerate(cues):
-        classe = classificar(cue.source_text, inequivocas)
+        escrita_estranha = em_cjk[posicao] and not arquivo_cjk
+        classe = (INEQUIVOCA if escrita_estranha
+                  else classificar(cue.source_text, inequivocas))
         if classe is None:
             mantidas.append(cue)
             continue
 
-        if classe == INEQUIVOCA:
+        if escrita_estranha:
+            motivo = "escrita diferente do resto do arquivo"
+        elif classe == INEQUIVOCA:
             motivo = "frase que não é fala de filme"
         else:
             sinais = _sinais(cues, posicao, contagem)

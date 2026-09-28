@@ -6,6 +6,11 @@ A ordem aqui é a do plano: o texto de origem é preservado ao carregar, a
 tradução escreve em ``cue.text``, e só então o arquivo é gravado. O passe de
 correção de gênero (etapa 4) entra entre a tradução e a gravação, lendo os
 dois textos.
+
+Toda gravação passa antes pela limpeza (:mod:`autosrt.sanitize`), que tira
+o lixo que o tocador mostraria ao pé da letra. A legenda transcrita aqui
+ganha também tempo de leitura (:mod:`autosrt.timing`); a que já existia
+mantém os tempos que tinha, porque esses foram feitos por alguém.
 """
 
 import contextlib
@@ -16,7 +21,7 @@ import tempfile
 import threading
 from dataclasses import dataclass
 
-from . import hallucination, llm_translate, srt_io
+from . import hallucination, llm_translate, sanitize, srt_io, timing
 from .language import detect_language, language_name
 from .llm import LLMError
 from .translate import DEFAULT_TARGET, TranslationCancelled, translate_cues
@@ -142,6 +147,11 @@ def translate_file(input_path, output_path=None, *, target=DEFAULT_TARGET,
         translated, failed = report.translated, report.failed
 
     announce("Gravando...")
+    # O modelo sempre traduz para português; só o Google aceita outro
+    # destino, e só um destino CJK pode manter ideograma na legenda.
+    destino = DEFAULT_TARGET if engine == ENGINE_LLM else target
+    cues = sanitize.limpar_legendas(
+        cues, remover_cjk=not sanitize.idioma_cjk(destino))
     srt_io.save_cues(cues, output_path)
 
     return PipelineResult(
@@ -309,6 +319,7 @@ def process_media(media_path, output_path=None, *, engine=DEFAULT_ENGINE,
                   hallucination_silence_threshold=None,
                   filter_hallucinations=True, extra_hallucinations=None,
                   subtitle_standard=None,
+                  min_display_seconds=None, reading_cps=None,
                   transcribe_extra_args=None) -> PipelineResult:
     """Transcreve um arquivo de mídia e traduz o resultado.
 
@@ -367,6 +378,12 @@ def process_media(media_path, output_path=None, *, engine=DEFAULT_ENGINE,
         subtitle_standard: ``None`` (padrão) usa o padrão de
             :mod:`autosrt.transcribe` (ligado -- quebra de linha "estilo
             Netflix"). ``False`` desliga.
+        min_display_seconds: tempo mínimo de cada legenda na tela, em
+            segundos. ``None`` (padrão) usa o de :mod:`autosrt.timing`, que
+            já vem ligado; ``0`` desliga.
+        reading_cps: velocidade de leitura, em caracteres por segundo, que
+            estende a legenda com mais texto. ``None`` usa o padrão de
+            :mod:`autosrt.timing`; ``0`` desliga.
         transcribe_extra_args: argumentos extras repassados direto ao
             executável do Whisper local.
 
@@ -474,6 +491,21 @@ def process_media(media_path, output_path=None, *, engine=DEFAULT_ENGINE,
 
     detected_lang = language or _safe_detect(cues)
 
+    def finalizar(cues, idioma):
+        """Última passada antes de gravar: limpa o texto e dá tempo de
+        leitura. Roda de novo depois da tradução, que muda o texto."""
+        cues = sanitize.limpar_legendas(
+            cues, remover_cjk=not sanitize.idioma_cjk(idioma))
+        estendidas = timing.ajustar_exibicao(
+            cues, duracao_minima=min_display_seconds,
+            caracteres_por_segundo=reading_cps)
+        if estendidas:
+            logger.info("%d legenda(s) ganharam mais tempo de tela",
+                        estendidas)
+        return cues
+
+    cues = finalizar(cues, detected_lang)
+
     if keep_original:
         srt_io.save_cues(cues, original_path_for(output_path))
 
@@ -500,6 +532,7 @@ def process_media(media_path, output_path=None, *, engine=DEFAULT_ENGINE,
         translated, failed = report.translated, report.failed
 
     announce("Gravando...")
+    cues = finalizar(cues, DEFAULT_TARGET)
     srt_io.save_cues(cues, output_path)
 
     return PipelineResult(total=len(cues), translated=translated, failed=failed,

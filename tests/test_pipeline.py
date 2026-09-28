@@ -535,5 +535,105 @@ class TestFiltroDeAlucinacao(unittest.TestCase):
         self.assertEqual(len(srt_io.load_cues(self.destino)), 1)
 
 
+class SujoLLM:
+    """Modelo que devolve a quebra de linha como texto -- o "</br>" e o
+    "</n>" (eco do <N>texto</N> do prompt) que apareciam na legenda."""
+
+    def complete(self, system, user):
+        return "\n".join(f"<{n}>Tradução</br>de teste</n></{n}>"
+                         for n, _ in llm_translate.BLOCK_RE.findall(user))
+
+
+class ChinesTranslator(FakeTranslator):
+    def translate(self, text):
+        return "Tradução 你好 de teste"
+
+
+class TestLixoNaoChegaAoArquivo(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.origem = os.path.join(self.tmp, "filme.srt")
+        with open(self.origem, "w", encoding="utf-8") as handle:
+            handle.write(SAMPLE)
+        self.destino = os.path.join(self.tmp, "saida.srt")
+
+    def gravado(self):
+        with open(self.destino, encoding="utf-8") as handle:
+            return handle.read()
+
+    def test_quebra_escrita_como_texto_vira_quebra_de_verdade(self):
+        translate_file(self.origem, self.destino, engine=ENGINE_LLM,
+                       llm_client=SujoLLM())
+        conteudo = self.gravado()
+        self.assertNotIn("</br>", conteudo)
+        self.assertNotIn("</n>", conteudo)
+        self.assertEqual(srt_io.load_cues(self.destino)[0].source_text,
+                         "Tradução\nde teste")
+
+    def test_chines_nao_chega_ao_arquivo_traduzido(self):
+        # O Google não passa pela conferência do modelo; a limpeza antes
+        # de gravar é a barreira que sobra.
+        translate_file(self.origem, self.destino, engine=ENGINE_GOOGLE,
+                       translator_factory=lambda s, t: ChinesTranslator())
+        self.assertNotIn("你好", self.gravado())
+
+    def test_ideograma_fica_quando_o_destino_e_chines(self):
+        translate_file(self.origem, self.destino, engine=ENGINE_GOOGLE,
+                       target="zh-CN",
+                       translator_factory=lambda s, t: ChinesTranslator())
+        self.assertIn("你好", self.gravado())
+
+
+class TestTempoDeExibicao(unittest.TestCase):
+    """A transcrição fecha cada legenda no fim exato da fala, e "Yes." de
+    300 ms some antes de ser lido. O ajuste já vem ligado."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.midia = os.path.join(self.tmp, "filme.mkv")
+        open(self.midia, "wb").close()
+        self.destino = os.path.join(self.tmp, "saida.srt")
+
+    def transcritas(self):
+        return [
+            Cue.from_source(index=1, start=0, end=300, source_text="Yes."),
+            Cue.from_source(index=2, start=10000, end=12000,
+                            source_text="Right, let's go then."),
+        ]
+
+    def rodar(self, **kwargs):
+        cues = self.transcritas()
+        kwargs.setdefault("translate", False)
+        process_media(self.midia, self.destino,
+                      transcribe_runner=lambda caminho, **kw: cues, **kwargs)
+        return srt_io.load_cues(self.destino)
+
+    def test_ligado_por_padrao(self):
+        self.assertEqual(self.rodar()[0].end, 1500)
+
+    def test_tempo_minimo_configuravel(self):
+        self.assertEqual(self.rodar(min_display_seconds=3)[0].end, 3000)
+
+    def test_zero_desliga(self):
+        saida = self.rodar(min_display_seconds=0, reading_cps=0)
+        self.assertEqual(saida[0].end, 300)
+
+    def test_pasta_de_originais_tambem_ganha_o_tempo(self):
+        self.rodar()
+        original = srt_io.load_cues(pipeline.original_path_for(self.destino))
+        self.assertEqual(original[0].end, 1500)
+
+    def test_velocidade_de_leitura_mede_a_traducao(self):
+        class LongoLLM:
+            def complete(self, system, user):
+                return "\n".join(f"<{n}>{'a' * 45}</{n}>"
+                                 for n, _ in llm_translate.BLOCK_RE.findall(user))
+
+        saida = self.rodar(translate=True, engine=ENGINE_LLM,
+                           llm_client=LongoLLM(), min_display_seconds=0,
+                           reading_cps=15)
+        self.assertEqual(saida[0].end, 3000)
+
+
 if __name__ == "__main__":
     unittest.main()

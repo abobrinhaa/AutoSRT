@@ -469,5 +469,64 @@ class TestFiltroDeAlucinacao(unittest.TestCase):
         self.assertEqual(config.get_alucinacoes_extra(), ["Legendas: João"])
 
 
+class TestTempoDeExibicao(unittest.TestCase):
+    """Sem configuração, None: quem chama cai no padrão de timing.py, que
+    já vem ligado. Valor inválido também vira None -- um engano de
+    digitação não pode desligar o ajuste em silêncio."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self._anterior = os.environ.get("AUTOSRT_CONFIG_DIR")
+        os.environ["AUTOSRT_CONFIG_DIR"] = self.tmp
+        self._env = {k: os.environ.pop(k, None) for k in
+                     ("AUTOSRT_DURACAO_MINIMA_EXIBICAO",
+                      "AUTOSRT_CARACTERES_POR_SEGUNDO")}
+
+    def tearDown(self):
+        if self._anterior is None:
+            os.environ.pop("AUTOSRT_CONFIG_DIR", None)
+        else:
+            os.environ["AUTOSRT_CONFIG_DIR"] = self._anterior
+        for chave, valor in self._env.items():
+            if valor is not None:
+                os.environ[chave] = valor
+            else:
+                os.environ.pop(chave, None)
+
+    def test_sem_configuracao_e_none(self):
+        self.assertIsNone(config.get_duracao_minima_exibicao())
+        self.assertIsNone(config.get_caracteres_por_segundo())
+
+    def test_ida_e_volta(self):
+        config.save_config({"duracao_minima_exibicao": "2.5",
+                            "caracteres_por_segundo": "12"})
+        self.assertEqual(config.get_duracao_minima_exibicao(), 2.5)
+        self.assertEqual(config.get_caracteres_por_segundo(), 12.0)
+
+    def test_aceita_virgula_decimal(self):
+        # Quem edita o config.json à mão escreve do jeito brasileiro.
+        config.save_config({"duracao_minima_exibicao": "1,5"})
+        self.assertEqual(config.get_duracao_minima_exibicao(), 1.5)
+
+    def test_zero_e_valido_e_desliga(self):
+        config.save_config({"duracao_minima_exibicao": "0",
+                            "caracteres_por_segundo": "0"})
+        self.assertEqual(config.get_duracao_minima_exibicao(), 0.0)
+        self.assertEqual(config.get_caracteres_por_segundo(), 0.0)
+
+    def test_invalido_volta_ao_padrao(self):
+        for valor in ("abc", "-1"):
+            with self.subTest(valor=valor):
+                config.save_config({"duracao_minima_exibicao": valor,
+                                    "caracteres_por_segundo": valor})
+                self.assertIsNone(config.get_duracao_minima_exibicao())
+                self.assertIsNone(config.get_caracteres_por_segundo())
+
+    def test_ambiente_tem_prioridade(self):
+        config.save_config({"duracao_minima_exibicao": "1.5"})
+        os.environ["AUTOSRT_DURACAO_MINIMA_EXIBICAO"] = "3"
+        self.assertEqual(config.get_duracao_minima_exibicao(), 3.0)
+
+
 if __name__ == "__main__":
     unittest.main()

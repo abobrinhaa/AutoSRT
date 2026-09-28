@@ -8,6 +8,7 @@ nem versionada. A leitura acontece, nesta ordem, a partir de:
 """
 
 import json
+import math
 import os
 import re
 import sys
@@ -71,6 +72,11 @@ EXAMPLE_CONFIG = {
     # Opcional: frases-clichê suas, uma por linha, somadas às embutidas.
     # Cada acervo tem o seu bordão de encerramento.
     "alucinacoes_extra": "Legendas: Fulano\nAssista o próximo episódio",
+    # Opcional: tempo de tela das legendas transcritas. Em branco usa os
+    # padrões de timing.py (1,5 s e 15 caracteres por segundo), que já vêm
+    # ligados; "0" desliga cada critério.
+    "duracao_minima_exibicao": "1.5",
+    "caracteres_por_segundo": "15",
 }
 
 
@@ -401,3 +407,38 @@ def get_alucinacoes_extra() -> list:
         return []
     itens = valor if isinstance(valor, (list, tuple)) else re.split(r"[\n;]", str(valor))
     return [str(item).strip() for item in itens if str(item).strip()]
+
+
+def numero_nao_negativo(valor):
+    """Lê um número que aceita vírgula decimal ("1,5"), ou ``None``.
+
+    ``None`` também para negativo: aqui nenhum ajuste faz sentido abaixo
+    de zero, e tratar isso como zero desligaria o ajuste em silêncio.
+    """
+    try:
+        numero = float(str(valor).strip().replace(",", "."))
+    except (TypeError, ValueError):
+        return None
+    # "inf" e "nan" passam pelo float() e estouram adiante, no cálculo.
+    return numero if math.isfinite(numero) and numero >= 0 else None
+
+
+def get_duracao_minima_exibicao():
+    """Segundos mínimos de cada legenda transcrita na tela, ou ``None``.
+
+    ``None`` não é "desligado": quem chama não repassa nada e o padrão de
+    :mod:`autosrt.timing` (ligado) vale sozinho. ``0`` desliga. O Whisper
+    fecha a legenda no fim exato da fala, e "Sim." de 300 ms some antes de
+    ser lido.
+    """
+    valor = get_setting("duracao_minima_exibicao",
+                        "AUTOSRT_DURACAO_MINIMA_EXIBICAO")
+    return numero_nao_negativo(valor) if valor is not None else None
+
+
+def get_caracteres_por_segundo():
+    """Velocidade de leitura usada para estender a legenda com mais texto,
+    ou ``None`` para o padrão de :mod:`autosrt.timing`. ``0`` desliga."""
+    valor = get_setting("caracteres_por_segundo",
+                        "AUTOSRT_CARACTERES_POR_SEGUNDO")
+    return numero_nao_negativo(valor) if valor is not None else None

@@ -16,7 +16,7 @@ import tempfile
 
 from flask import (Flask, jsonify, request, send_file)
 
-from . import config, llm, pipeline, srt_io, sync, tmdb, transcribe
+from . import config, llm, pipeline, srt_io, sync, timing, tmdb, transcribe
 from .jobs import JobQueue
 from .transcribe import TranscriptionError
 
@@ -39,6 +39,12 @@ DEFAULT_MAX_UPLOAD_GB = None
 # estourar VRAM aos poucos, sem nenhum aviso -- o valor não precisa ser
 # grande para já resolver o caso real (duas transcrições ao mesmo tempo).
 MAX_WORKERS_TETO = 4
+
+# Tetos de sanidade do tempo de exibição. Acima deles o ajuste não serve
+# para ler melhor: legenda de 10 s mínimos atravessa a cena seguinte, e 40
+# caracteres por segundo já é mais rápido que qualquer leitor.
+TETO_DURACAO_MINIMA_EXIBICAO = 10
+TETO_CARACTERES_POR_SEGUNDO = 40
 
 # /api/transcribe é síncrono de propósito (ver docstring da rota): quem
 # chama espera a legenda na mesma requisição, sem passar pela fila. Isso
@@ -198,7 +204,9 @@ def _executar(job, engine):
             hallucination_silence_threshold=config.get_hallucination_silence_threshold(),
             filter_hallucinations=config.get_filtrar_alucinacoes(),
             extra_hallucinations=config.get_alucinacoes_extra(),
-            subtitle_standard=config.get_subtitle_standard())
+            subtitle_standard=config.get_subtitle_standard(),
+            min_display_seconds=config.get_duracao_minima_exibicao(),
+            reading_cps=config.get_caracteres_por_segundo())
         job.resultado = os.path.splitext(job.entrada)[0] + ".srt"
     else:
         saida = srt_io.srt_output_path(job.entrada)
@@ -519,6 +527,13 @@ def _register_routes(app, fila, media_dir, engine):
             "alucinacoes_extra": config.get_alucinacoes_extra(),
             "max_workers": config.get_max_workers(),
             "subtitle_standard": config.get_subtitle_standard(),
+            # None quando não configurado; o painel preenche o campo com o
+            # padrão, para o valor que está valendo ficar à vista.
+            "duracao_minima_exibicao": config.get_duracao_minima_exibicao(),
+            "duracao_minima_exibicao_padrao": timing.DURACAO_MINIMA_PADRAO,
+            "caracteres_por_segundo": config.get_caracteres_por_segundo(),
+            "caracteres_por_segundo_padrao":
+                timing.CARACTERES_POR_SEGUNDO_PADRAO,
         })
 
     @app.post("/api/config")
@@ -634,6 +649,25 @@ def _register_routes(app, fila, media_dir, engine):
                     "erro": "Quebra de legenda padrão precisa ser "
                             "verdadeiro ou falso."}), 400
             novos["subtitle_standard"] = valor
+
+        # Vírgula decimal aceita ("1,5"): é como se escreve aqui, e recusar
+        # isso seria cobrar do usuário um detalhe que o servidor resolve.
+        for campo, teto, erro in (
+                ("duracao_minima_exibicao", TETO_DURACAO_MINIMA_EXIBICAO,
+                 "Tempo mínimo de exibição precisa ser um número de "
+                 "segundos entre 0 e {teto} (ex: 1,5). 0 desliga."),
+                ("caracteres_por_segundo", TETO_CARACTERES_POR_SEGUNDO,
+                 "Velocidade de leitura precisa ser um número de "
+                 "caracteres por segundo entre 0 e {teto} (ex: 15). "
+                 "0 desliga.")):
+            if campo in dados:
+                valor = str(dados.get(campo) or "").strip()
+                if valor:
+                    numero = config.numero_nao_negativo(valor)
+                    if numero is None or numero > teto:
+                        return jsonify({"erro": erro.format(teto=teto)}), 400
+                    valor = f"{numero:g}"
+                novos[campo] = valor
 
         if "max_workers" in dados:
             valor = str(dados.get("max_workers") or "").strip()
@@ -1454,6 +1488,12 @@ PAGINA = """<!doctype html>
       </label>
       <label class="linha-checkbox"><input type="checkbox" id="condition_on_previous_text"> <span class="rotulo-com-ajuda">Condicionar no trecho anterior<span class="ajuda" tabindex="0" data-tip="O Whisper por padr&atilde;o usa o texto do trecho anterior para decodificar o pr&oacute;ximo, o que ajuda a manter nome pr&oacute;prio consistente -- mas tamb&eacute;m deixa uma alucina&ccedil;&atilde;o em sil&ecirc;ncio ou trilha sonora se realimentar nos trechos seguintes (a legenda repetindo frases parecidas, tipo 'Esse &eacute; o primeiro', 'Esse &eacute; o segundo'...). Desmarcado (padr&atilde;o aqui) quebra essa cadeia.">?</span></span></label>
       <label class="linha-checkbox"><input type="checkbox" id="subtitle_standard" checked> <span class="rotulo-com-ajuda">Quebra de legenda estilo Netflix<span class="ajuda" tabindex="0" data-tip="Liga o --standard do Faster-Whisper-XXL: uma frase por bloco, no m&aacute;ximo 2 linhas de 42 caracteres, quebrando ap&oacute;s v&iacute;rgula quando a linha fica longa. Ligado por padr&atilde;o -- s&oacute; muda como o texto &eacute; dividido entre linhas, n&atilde;o o que foi entendido. Desmarque para voltar &agrave; quebra menos regular do pr&oacute;prio Whisper.">?</span></span></label>
+      <label><span class="rotulo-com-ajuda">Tempo m&iacute;nimo de exibi&ccedil;&atilde;o (s)<span class="ajuda" tabindex="0" data-tip="O Whisper fecha cada legenda no instante em que a fala acaba -- um 'Sim.' fica 0,3 s na tela e some antes de ser lido. Com isto, nenhuma legenda transcrita fica menos que esse tempo. S&oacute; estende dentro do sil&ecirc;ncio que j&aacute; existe: nunca invade a legenda seguinte nem encurta nenhuma. Legenda que j&aacute; existia (s&oacute; traduzida) mant&eacute;m os tempos originais. 0 desliga.">?</span></span>
+        <input type="text" inputmode="decimal" id="duracao_minima_exibicao" placeholder="padr&atilde;o: 1,5 -- 0 desliga">
+      </label>
+      <label><span class="rotulo-com-ajuda">Velocidade de leitura (caracteres/s)<span class="ajuda" tabindex="0" data-tip="Legenda com mais texto fica mais tempo na tela: a dura&ccedil;&atilde;o passa a ser pelo menos o tempo de ler o texto nessa velocidade (at&eacute; 7 s). Menor = mais tempo de tela. 15 &eacute; confort&aacute;vel; os guias de streaming usam 17 para adulto. Mesmas regras do campo acima. 0 desliga.">?</span></span>
+        <input type="text" inputmode="decimal" id="caracteres_por_segundo" placeholder="padr&atilde;o: 15 -- 0 desliga">
+      </label>
       <label><span class="rotulo-com-ajuda">Limiar de sil&ecirc;ncio p/ alucina&ccedil;&atilde;o (s)<span class="ajuda" tabindex="0" data-tip="Segundos de sil&ecirc;ncio que o Whisper pula, em vez de tentar transcrever, quando desconfia de alucina&ccedil;&atilde;o. Evita um trecho de m&uacute;sica/sil&ecirc;ncio virar uma frase inventada cobrindo dezenas de segundos de v&iacute;deo. Em branco usa o padr&atilde;o (2 segundos).">?</span></span>
         <input type="text" id="hallucination_silence_threshold" placeholder="em branco = 2 (padrão)">
       </label>
@@ -2178,6 +2218,12 @@ $('whisper_model').addEventListener('change', () => {
   if (!$('whisper_model_personalizado').hidden) $('whisper_model_personalizado').focus();
 });
 
+// Número com vírgula decimal, como se escreve aqui; o servidor aceita as
+// duas grafias na volta.
+function formatarDecimal(valor) {
+  return valor === null || valor === undefined ? '' : String(valor).replace('.', ',');
+}
+
 async function carregarConfig() {
   const r = await fetch('/api/config');
   const c = await r.json();
@@ -2217,6 +2263,17 @@ async function carregarConfig() {
   // Ligado por padrão (diferente de condition_on_previous_text): só marca
   // desligado quando alguém explicitamente salvou "false".
   $('subtitle_standard').checked = c.subtitle_standard !== false;
+  // Já vem preenchido com o padrão: o ajuste está ligado mesmo sem ninguém
+  // ter mexido, e o campo mostra o valor que está valendo.
+  $('duracao_minima_exibicao').value = formatarDecimal(
+    c.duracao_minima_exibicao ?? c.duracao_minima_exibicao_padrao);
+  $('caracteres_por_segundo').value = formatarDecimal(
+    c.caracteres_por_segundo ?? c.caracteres_por_segundo_padrao);
+  const tempoAjustado =
+    (c.duracao_minima_exibicao !== null
+      && c.duracao_minima_exibicao !== c.duracao_minima_exibicao_padrao)
+    || (c.caracteres_por_segundo !== null
+      && c.caracteres_por_segundo !== c.caracteres_por_segundo_padrao);
   const seloVad = $('estado-vad');
   const vadAtiva = c.vad_threshold !== null || c.vad_min_silence_ms !== null
     || !!c.whisper_model || !!c.whisper_compute_type || !!c.vad_method
@@ -2224,7 +2281,8 @@ async function carregarConfig() {
     || c.hallucination_silence_threshold !== null
     || c.filtrar_alucinacoes === false
     || (c.alucinacoes_extra || []).length > 0
-    || c.subtitle_standard === false || (c.max_workers || 1) > 1;
+    || c.subtitle_standard === false || (c.max_workers || 1) > 1
+    || tempoAjustado;
   seloVad.className = 'selo ' + (vadAtiva ? 'ok' : '');
   seloVad.textContent = vadAtiva ? 'ajustada' : 'padrão do Whisper';
 
@@ -2350,6 +2408,8 @@ $('salvar-vad').onclick = async () => {
     filtrar_alucinacoes: $('filtrar_alucinacoes').checked ? 'true' : 'false',
     alucinacoes_extra: $('alucinacoes_extra').value.trim(),
     subtitle_standard: $('subtitle_standard').checked ? 'true' : 'false',
+    duracao_minima_exibicao: $('duracao_minima_exibicao').value.trim(),
+    caracteres_por_segundo: $('caracteres_por_segundo').value.trim(),
     max_workers: $('max_workers').value,
   };
 
