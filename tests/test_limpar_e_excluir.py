@@ -26,6 +26,15 @@ class BaseComPasta(unittest.TestCase):
         self.tmp = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
 
+        # Trabalho de verdade chega ao fim aqui (processar_ate_o_fim), o que
+        # dispara autosrt.historico via JobQueue(on_final=...) -- sem isto
+        # gravaria no ~/.config/autosrt/historico.db real em vez de um
+        # descartável.
+        from autosrt import config
+        self._app_dir = config.app_directory
+        config.app_directory = lambda: self.tmp
+        self.addCleanup(setattr, config, "app_directory", self._app_dir)
+
         original = pipeline._translate_with_llm
         self.addCleanup(setattr, pipeline, "_translate_with_llm", original)
         pipeline._translate_with_llm = lambda cues, lang, **kw: (len(cues), [])

@@ -103,7 +103,7 @@ class JobQueue:
     ocioso ou não" na hora de decidir se sobe mais um.
     """
 
-    def __init__(self, worker, max_workers=1):
+    def __init__(self, worker, max_workers=1, on_final=None):
         """
         Args:
             worker: função ``worker(job)`` que executa o trabalho. Deve
@@ -112,9 +112,16 @@ class JobQueue:
             max_workers: quantos trabalhos rodam ao mesmo tempo. Valores
                 menores que 1 viram 1 -- zero operário deixaria a fila
                 parada para sempre.
+            on_final: chamada com o ``Job`` assim que ele chega num estado
+                final (concluído, erro ou cancelado) -- ponto de extensão
+                pra quem quiser persistir histórico sem este módulo
+                precisar saber como (ver ``autosrt.historico``). Erro
+                dentro dela não derruba o operário: é registro, não faz
+                parte do trabalho em si.
         """
         self._worker = worker
         self._max_workers = max(1, int(max_workers))
+        self._on_final = on_final
         self._lock = threading.Lock()
         self._jobs = {}
         self._ordem = []
@@ -192,6 +199,14 @@ class JobQueue:
                     job.estado = CONCLUIDO
                     job.etapa = "Pronto!"
                     job.progresso = 100
+
+            if self._on_final:
+                try:
+                    self._on_final(job)
+                except Exception:  # pragma: no cover - defensivo
+                    logger.exception(
+                        "on_final falhou para o trabalho %s (ignorado, "
+                        "não afeta o resultado do trabalho)", job.id)
 
     def buscar(self, job_id):
         with self._lock:

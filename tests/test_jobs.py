@@ -6,11 +6,17 @@ quer processar mais de um arquivo ao mesmo tempo em vez de deixar a placa
 ociosa entre um trabalho e outro.
 """
 
+import logging
 import threading
 import time
 import unittest
 
 from autosrt import jobs
+
+# Os testes de falha (worker e on_final quebrados) provocam exceção de
+# propósito; o traceback delas no log só poluiria a saída da suíte -- mesmo
+# ajuste que test_web.py já faz para autosrt.jobs.
+logging.getLogger("autosrt.jobs").setLevel(logging.CRITICAL)
 
 
 def _esperar_todos(trabalhos, limite=5):
@@ -140,6 +146,76 @@ class TestConcorrenciaDaFila(unittest.TestCase):
             job = fila.enviar("j", "/tmp/j")
             _esperar_todos([job])
             self.assertEqual(job.estado, jobs.CONCLUIDO)
+
+
+class TestOnFinal(unittest.TestCase):
+    """``on_final`` é o gancho que autosrt.historico usa pra persistir cada
+    trabalho terminado (ver autosrt.web, JobQueue(on_final=historico.registrar)).
+    Sem fila nem thread nestes testes -- só o contrato: quando é chamado,
+    com o quê, e que um erro nele não derruba o operário."""
+
+    def test_chamado_apos_concluir(self):
+        recebidos = []
+        fila = jobs.JobQueue(lambda job: None, on_final=recebidos.append)
+        job = fila.enviar("j", "/tmp/j")
+        _esperar_todos([job])
+
+        self.assertEqual(len(recebidos), 1)
+        self.assertIs(recebidos[0], job)
+        self.assertEqual(recebidos[0].estado, jobs.CONCLUIDO)
+
+    def test_chamado_apos_erro_com_estado_erro(self):
+        def falha(job):
+            raise RuntimeError("deu ruim")
+
+        recebidos = []
+        fila = jobs.JobQueue(falha, on_final=recebidos.append)
+        job = fila.enviar("j", "/tmp/j")
+        _esperar_todos([job])
+
+        self.assertEqual(len(recebidos), 1)
+        self.assertEqual(recebidos[0].estado, jobs.ERRO)
+
+    def test_chamado_apos_cancelar_com_estado_cancelado(self):
+        liberar = threading.Event()
+
+        def worker(job):
+            liberar.wait(2)
+            # O operário só percebe o cancelamento ao checar depois --
+            # mesma mecânica que o resto da suíte já usa (ver
+            # TestConcorrenciaDaFila acima).
+
+        recebidos = []
+        fila = jobs.JobQueue(worker, on_final=recebidos.append)
+        job = fila.enviar("j", "/tmp/j")
+        time.sleep(0.05)
+        job.cancelar.set()
+        liberar.set()
+        _esperar_todos([job])
+
+        self.assertEqual(len(recebidos), 1)
+        self.assertEqual(recebidos[0].estado, jobs.CANCELADO)
+
+    def test_erro_dentro_de_on_final_nao_impede_o_proximo_trabalho(self):
+        # Histórico é registro, não faz parte do trabalho em si -- um bug
+        # ali (disco cheio, permissão, SQLite travado) não pode travar a
+        # fila nem apagar o resultado do trabalho que acabou de terminar.
+        def on_final_quebrado(job):
+            raise RuntimeError("não consegui gravar")
+
+        fila = jobs.JobQueue(lambda job: None, on_final=on_final_quebrado)
+        primeiro = fila.enviar("um", "/tmp/um")
+        segundo = fila.enviar("dois", "/tmp/dois")
+        _esperar_todos([primeiro, segundo])
+
+        self.assertEqual(primeiro.estado, jobs.CONCLUIDO)
+        self.assertEqual(segundo.estado, jobs.CONCLUIDO)
+
+    def test_sem_on_final_nao_quebra(self):
+        fila = jobs.JobQueue(lambda job: None)
+        job = fila.enviar("j", "/tmp/j")
+        _esperar_todos([job])
+        self.assertEqual(job.estado, jobs.CONCLUIDO)
 
 
 if __name__ == "__main__":

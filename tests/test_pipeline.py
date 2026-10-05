@@ -5,7 +5,7 @@ import threading
 import unittest
 from unittest import mock
 
-from autosrt import llm_translate, pipeline, srt_io, transcribe
+from autosrt import audio, llm_translate, pipeline, srt_io, transcribe
 from autosrt.cue import Cue
 from autosrt.llm import LLMError
 from autosrt.pipeline import ENGINE_GOOGLE, ENGINE_LLM, process_media, translate_file
@@ -232,7 +232,8 @@ class TestEtapaDuranteATranscricao(unittest.TestCase):
                                 source_text="Hello there.")]
 
     @contextlib.contextmanager
-    def preparo_falante(self, caminho, modo, announce=None, cancel_event=None):
+    def preparo_falante(self, caminho, modo, announce=None, cancel_event=None,
+                        on_aviso=None):
         """Preparo de audio que fala logo antes de entregar o arquivo.
 
         E o caso relatado: "Audio fraco (-28,8 dB): normalizando antes de
@@ -633,6 +634,90 @@ class TestTempoDeExibicao(unittest.TestCase):
                            llm_client=LongoLLM(), min_display_seconds=0,
                            reading_cps=15)
         self.assertEqual(saida[0].end, 3000)
+
+
+class TestAvisoDeCobertura(unittest.TestCase):
+    """A legenda pode "terminar" bem antes do vídeo acabar -- áudio
+    corrompido mais adiante, ou arquivo incompleto (ver autosrt.audio e o
+    incidente real: "Hijack (1973).mp4" parava aos 42min de um vídeo de
+    90min, sem erro nenhum na tela). ``process_media`` compara com a
+    duração real via ffprobe (barato, só lê metadado) e avisa.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.midia = os.path.join(self.tmp, "filme.mkv")
+        open(self.midia, "wb").close()
+
+    def _transcrever_ate(self, fim_ms):
+        return mock.patch.object(
+            transcribe, "transcribe",
+            return_value=[Cue.from_source(index=1, start=0, end=fim_ms,
+                                          source_text="Oi.")])
+
+    def test_avisa_quando_falta_muito_depois_da_ultima_legenda(self):
+        # 90min de vídeo, legenda só até 42min -- o caso real do Hijack.
+        with self._transcrever_ate(42 * 60_000), \
+             mock.patch.object(audio, "duracao_do_video", return_value=5400.0):
+            resultado = process_media(self.midia,
+                                      os.path.join(self.tmp, "saida.srt"),
+                                      translate=False,
+                                      normalize_audio=pipeline.NORMALIZE_NUNCA)
+        self.assertIsNotNone(resultado.aviso)
+        self.assertIn("42:00", resultado.aviso)
+
+    def test_nao_avisa_quando_a_legenda_cobre_o_video_todo(self):
+        with self._transcrever_ate(89 * 60_000 + 44_000), \
+             mock.patch.object(audio, "duracao_do_video", return_value=5400.0):
+            resultado = process_media(self.midia,
+                                      os.path.join(self.tmp, "saida.srt"),
+                                      translate=False,
+                                      normalize_audio=pipeline.NORMALIZE_NUNCA)
+        self.assertIsNone(resultado.aviso)
+
+    def test_buraco_pequeno_num_filme_curto_nao_avisa(self):
+        # Piso de 5min existe por causa disto: um filme de 20min com os
+        # créditos finais mudos (90s sem legenda) não é um arquivo quebrado.
+        with self._transcrever_ate(18 * 60_000 + 30_000), \
+             mock.patch.object(audio, "duracao_do_video", return_value=1200.0):
+            resultado = process_media(self.midia,
+                                      os.path.join(self.tmp, "saida.srt"),
+                                      translate=False,
+                                      normalize_audio=pipeline.NORMALIZE_NUNCA)
+        self.assertIsNone(resultado.aviso)
+
+    def test_sem_ffprobe_nao_quebra_nem_avisa(self):
+        # duracao_do_video devolve None quando não sabe (ver autosrt.audio)
+        # -- "não sei" não pode virar aviso de arquivo quebrado.
+        with self._transcrever_ate(5000), \
+             mock.patch.object(audio, "duracao_do_video", return_value=None):
+            resultado = process_media(self.midia,
+                                      os.path.join(self.tmp, "saida.srt"),
+                                      translate=False,
+                                      normalize_audio=pipeline.NORMALIZE_NUNCA)
+        self.assertIsNone(resultado.aviso)
+
+    def test_aviso_de_corrupcao_e_de_cobertura_se_somam(self):
+        # Os dois avisos vêm de lugares diferentes do pipeline (preparo do
+        # áudio vs. depois de transcrever) e precisam sobreviver juntos no
+        # mesmo PipelineResult, não um sobrescrever o outro.
+        def preparo_com_corrupcao(caminho, modo, announce=None,
+                                  cancel_event=None, on_aviso=None):
+            if on_aviso:
+                on_aviso("O ffmpeg encontrou áudio corrompido por volta de "
+                        "19:32.")
+            return contextlib.nullcontext(caminho)
+
+        with self._transcrever_ate(42 * 60_000), \
+             mock.patch.object(pipeline, "_audio_preparado",
+                               preparo_com_corrupcao), \
+             mock.patch.object(audio, "duracao_do_video", return_value=5400.0):
+            resultado = process_media(self.midia,
+                                      os.path.join(self.tmp, "saida.srt"),
+                                      translate=False,
+                                      normalize_audio=pipeline.NORMALIZE_NUNCA)
+        self.assertIn("corrompido", resultado.aviso)
+        self.assertIn("42:00", resultado.aviso)
 
 
 if __name__ == "__main__":

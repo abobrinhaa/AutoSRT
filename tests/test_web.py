@@ -31,6 +31,16 @@ class EchoLLM:
 class BaseWeb(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp()
+        # create_app liga o historico (autosrt.historico, gravado via
+        # JobQueue(on_final=...)) a cada trabalho que termina -- sem isto,
+        # qualquer teste que deixa um trabalho rodar de verdade grava no
+        # ~/.config/autosrt/historico.db real em vez de um descartável.
+        # Subclasse que já redireciona config.app_directory sozinha (várias
+        # abaixo) só repete o mesmo valor por cima disto -- inofensivo.
+        from autosrt import config
+        self._app_dir = config.app_directory
+        config.app_directory = lambda: self.tmp
+        self.addCleanup(setattr, config, "app_directory", self._app_dir)
         self.app = web.create_app(media_dir=self.tmp)
         self.app.config["TESTING"] = True
         self.client = self.app.test_client()

@@ -103,13 +103,124 @@ def find_ffmpeg(executable=None):
     return shutil.which(os.environ.get("FFMPEG_PATH") or "ffmpeg")
 
 
+def duracao_do_video(media_path, *, ffprobe=None, timeout=None) -> float:
+    """Duração do arquivo, em segundos, via ``ffprobe``.
+
+    Só lê metadado do contêiner -- não decodifica o arquivo, então é quase
+    instantâneo mesmo num filme de duas horas. É o que permite comparar
+    "até onde a legenda foi" com "quanto o vídeo realmente dura" sem pagar
+    o custo de uma segunda passada de decodificação completa.
+
+    Returns:
+        A duração em segundos, ou ``None`` quando não dá para saber (sem
+        ffprobe, arquivo sem o metadado, saída inesperada). Mesma
+        convenção de "não sei" de :func:`medir_volume_medio`: quem chama
+        segue sem o aviso de cobertura em vez de tratar como erro.
+    """
+    if ffprobe and os.path.isfile(ffprobe):
+        binario = ffprobe
+    else:
+        binario = shutil.which(os.environ.get("FFPROBE_PATH") or "ffprobe")
+    if not binario:
+        return None
+    comando = [binario, "-v", "error", "-show_entries", "format=duration",
+               "-of", "default=noprint_wrappers=1:nokey=1", media_path]
+    try:
+        saida = subprocess.run(comando, capture_output=True, text=True,
+                               timeout=timeout).stdout
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    try:
+        return float(saida.strip())
+    except ValueError:
+        return None
+
+
+#: Trechos de mensagem do ffmpeg que indicam stream de áudio corrompido --
+#: dado quebrado de verdade, não só fraco. Vistos em arquivos reais que
+#: motivaram isto (set/2026): um filme parava de transcrever a partir de um
+#: certo ponto, sem erro nenhum na tela, porque dali pra frente o ffmpeg só
+#: conseguia extrair silêncio do áudio quebrado. Em minúsculas porque a
+#: busca abaixo também é.
+PADROES_CORRUPCAO = (
+    "invalid data found when processing input",
+    "pulse data corrupt",
+    "invalid band type",
+    "skip_data_stream_element",
+)
+
+#: "size=... time=01:23:45.67 bitrate=..." -- linha de progresso que o
+#: ffmpeg imprime no stderr durante a conversão inteira, separada por \r.
+TEMPO_FFMPEG_RE = re.compile(r"time=(\d+):(\d+):(\d+)")
+
+
+def _tempo_aproximado(stderr, posicao):
+    """Acha o 'time=HH:MM:SS' mais recente antes de ``posicao`` no stderr.
+
+    O ffmpeg não imprime o timestamp junto da própria mensagem de erro --
+    só a linha de progresso, separada, um pouco antes. Isso dá uma
+    aproximação de onde no arquivo o problema apareceu, não o segundo
+    exato (a última atualização de progresso pode ter alguns segundos de
+    atraso em relação ao erro).
+
+    Returns:
+        Segundos (``int``), ou ``None`` se não achou nenhuma linha de
+        progresso antes da posição dada.
+    """
+    ultimo = None
+    for m in TEMPO_FFMPEG_RE.finditer(stderr, 0, posicao):
+        ultimo = m
+    if not ultimo:
+        return None
+    h, mi, s = (int(x) for x in ultimo.groups())
+    return h * 3600 + mi * 60 + s
+
+
+def detectar_corrupcao(stderr):
+    """Procura sinal de stream de áudio corrompido no stderr do ffmpeg.
+
+    Chamar depois de qualquer passada que já decodifica o arquivo inteiro
+    (``medir_volume_medio``, ``normalizar_para_wav``) -- não vale o custo
+    de uma passada só pra isso, mas aproveitar uma que já ia rodar é de
+    graça.
+
+    Returns:
+        Uma frase pronta pra mostrar na tela, com o minuto aproximado
+        quando dá pra achar (ver :func:`_tempo_aproximado`), ou ``None``
+        se o stderr não tem nenhum dos padrões conhecidos.
+    """
+    if not stderr:
+        return None
+    baixo = stderr.lower()
+    for padrao in PADROES_CORRUPCAO:
+        pos = baixo.find(padrao)
+        if pos == -1:
+            continue
+        segundos = _tempo_aproximado(stderr, pos)
+        if segundos is not None:
+            minutos, s = divmod(segundos, 60)
+            onde = f" por volta de {minutos}:{s:02d}"
+        else:
+            onde = ""
+        return (f"O ffmpeg encontrou áudio corrompido{onde}. A "
+                "transcrição pode ficar incompleta a partir daí -- o "
+                "arquivo de origem provavelmente está danificado.")
+    return None
+
+
 def medir_volume_medio(media_path, *, ffmpeg=None, timeout=None,
-                       cancel_event=None):
+                       cancel_event=None, on_aviso=None):
     """Mede o volume médio do áudio, em dB.
 
     Usa o filtro ``volumedetect``, que percorre o arquivo inteiro sem
     produzir saída. Num filme longo isso leva alguns segundos -- pouco
     perto do custo de transcrever, e é o que evita normalizar às cegas.
+
+    Args:
+        on_aviso: chamada com uma frase pronta (ver
+            :func:`detectar_corrupcao`) se essa mesma passada encontrar
+            sinal de áudio corrompido. Opcional: sem isso, a corrupção
+            ainda é descartada em silêncio, igual antes.
 
     Returns:
         O ``mean_volume`` em dB, ou ``None`` quando não dá para medir
@@ -130,6 +241,11 @@ def medir_volume_medio(media_path, *, ffmpeg=None, timeout=None,
             comando, timeout=timeout, cancel_event=cancel_event)
     except AudioError:
         return None
+
+    if on_aviso:
+        aviso = detectar_corrupcao(stderr)
+        if aviso:
+            on_aviso(aviso)
 
     # O volumedetect escreve no stderr, e o ffmpeg sai com código 0 mesmo
     # assim -- o que interessa é a linha, não o código de saída.

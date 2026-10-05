@@ -1,4 +1,5 @@
 import os
+import shutil
 import subprocess
 import unittest
 from unittest import mock
@@ -13,9 +14,9 @@ SAIDA_VOLUMEDETECT = """\
 """
 
 
-def resultado(returncode=0, stderr=""):
+def resultado(returncode=0, stderr="", stdout=""):
     return subprocess.CompletedProcess(
-        args=[], returncode=returncode, stdout="", stderr=stderr)
+        args=[], returncode=returncode, stdout=stdout, stderr=stderr)
 
 
 class TestMedirVolumeMedio(unittest.TestCase):
@@ -112,6 +113,113 @@ class TestNormalizarParaWav(unittest.TestCase):
              mock.patch.object(os.path, "exists", return_value=False):
             with self.assertRaises(audio.AudioError):
                 audio.normalizar_para_wav("filme.mp4", "/tmp/saida.wav")
+
+
+class TestDetectarCorrupcao(unittest.TestCase):
+    """Reconhecer áudio corrompido no stderr do ffmpeg, com o minuto
+    aproximado -- caso real: "Silhouette 1990.mp4" (05/out/2026) parava de
+    transcrever aos 19min porque o stream de áudio quebrava ali, sem
+    nenhum erro visível antes disso."""
+
+    def test_sem_padrao_conhecido_devolve_none(self):
+        self.assertIsNone(audio.detectar_corrupcao("tudo normal por aqui"))
+
+    def test_stderr_vazio_devolve_none(self):
+        self.assertIsNone(audio.detectar_corrupcao(""))
+        self.assertIsNone(audio.detectar_corrupcao(None))
+
+    def test_acha_o_padrao_e_o_minuto_mais_recente_antes_dele(self):
+        stderr = (
+            "size=N/A time=00:19:32.10 bitrate=N/A speed=120x\n"
+            "[aac] Invalid data found when processing input\n"
+        )
+        aviso = audio.detectar_corrupcao(stderr)
+        self.assertIsNotNone(aviso)
+        self.assertIn("19:32", aviso)
+
+    def test_sem_linha_de_progresso_antes_nao_inventa_minuto(self):
+        aviso = audio.detectar_corrupcao(
+            "[aac] Invalid data found when processing input")
+        self.assertIsNotNone(aviso)
+        self.assertNotIn(" por volta de", aviso)
+
+    def test_so_conta_o_time_antes_do_erro_nao_depois(self):
+        # Um "time=" depois do erro é da passada seguinte (o ffmpeg segue
+        # tentando decodificar); usar ele inventaria um minuto que vem
+        # DEPOIS de onde o problema realmente apareceu.
+        stderr = (
+            "size=N/A time=00:05:00.00 bitrate=N/A\n"
+            "[aac] invalid band type\n"
+            "size=N/A time=01:40:00.00 bitrate=N/A\n"
+        )
+        aviso = audio.detectar_corrupcao(stderr)
+        self.assertIn("5:00", aviso)
+        self.assertNotIn("1:40:00", aviso)
+
+    def test_reconhece_cada_padrao_conhecido(self):
+        exemplos = [
+            "Invalid data found when processing input",
+            "Pulse data corrupt or invalid.",
+            "invalid band type",
+            "skip_data_stream_element: Input buffer exhausted",
+        ]
+        for linha in exemplos:
+            with self.subTest(linha=linha):
+                self.assertIsNotNone(audio.detectar_corrupcao(linha))
+
+
+class TestMedirVolumeMedioAvisaCorrupcao(unittest.TestCase):
+    """``on_aviso`` aproveita a mesma passada do volumedetect -- não é uma
+    segunda chamada ao ffmpeg, só o stderr que já ia ser descartado."""
+
+    def test_chama_on_aviso_quando_acha_corrupcao(self):
+        avisos = []
+        with mock.patch.object(audio, "find_ffmpeg", return_value="ffmpeg"), \
+             mock.patch.object(audio, "_run_ffmpeg", return_value=(
+                 0, "Invalid data found when processing input")):
+            audio.medir_volume_medio("filme.mp4", on_aviso=avisos.append)
+        self.assertEqual(len(avisos), 1)
+
+    def test_nao_chama_on_aviso_quando_esta_tudo_bem(self):
+        avisos = []
+        with mock.patch.object(audio, "find_ffmpeg", return_value="ffmpeg"), \
+             mock.patch.object(audio, "_run_ffmpeg",
+                               return_value=(0, SAIDA_VOLUMEDETECT)):
+            audio.medir_volume_medio("filme.mp4", on_aviso=avisos.append)
+        self.assertEqual(avisos, [])
+
+    def test_sem_on_aviso_nao_quebra(self):
+        with mock.patch.object(audio, "find_ffmpeg", return_value="ffmpeg"), \
+             mock.patch.object(audio, "_run_ffmpeg", return_value=(
+                 0, "Invalid data found when processing input")):
+            # Sem on_aviso, só precisa não lançar -- a medição continua
+            # funcionando normalmente pra quem não quer saber de avisos.
+            self.assertIsNone(audio.medir_volume_medio("filme.mp4"))
+
+
+class TestDuracaoDoVideo(unittest.TestCase):
+    def test_le_a_duracao_da_saida_do_ffprobe(self):
+        with mock.patch.object(shutil, "which", return_value="ffprobe"), \
+             mock.patch.object(subprocess, "run", return_value=resultado(
+                 stdout="5306.131000\n")):
+            self.assertEqual(audio.duracao_do_video("filme.mp4"), 5306.131)
+
+    def test_sem_ffprobe_devolve_none(self):
+        with mock.patch.object(shutil, "which", return_value=None):
+            self.assertIsNone(audio.duracao_do_video("filme.mp4"))
+
+    def test_saida_nao_numerica_devolve_none(self):
+        with mock.patch.object(shutil, "which", return_value="ffprobe"), \
+             mock.patch.object(subprocess, "run",
+                               return_value=resultado(stdout="N/A\n")):
+            self.assertIsNone(audio.duracao_do_video("filme.mp4"))
+
+    def test_timeout_devolve_none(self):
+        with mock.patch.object(shutil, "which", return_value="ffprobe"), \
+             mock.patch.object(
+                 subprocess, "run",
+                 side_effect=subprocess.TimeoutExpired(cmd="ffprobe", timeout=5)):
+            self.assertIsNone(audio.duracao_do_video("filme.mp4"))
 
 
 if __name__ == "__main__":

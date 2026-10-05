@@ -70,6 +70,12 @@ class PipelineResult:
     detected_lang: str
     backup_path: str = None
     engine: str = DEFAULT_ENGINE
+    #: Frase pronta pra mostrar na tela quando algo no arquivo de origem
+    #: parece quebrado -- áudio corrompido (ver autosrt.audio) ou a
+    #: legenda cobrindo bem menos do que a duração real do vídeo (ver
+    #: process_media). ``None`` quando não achou nada suspeito; nunca foi
+    #: um erro do trabalho em si, por isso não usa ``failed``.
+    aviso: str = None
 
     @property
     def language_label(self) -> str:
@@ -170,7 +176,8 @@ NORMALIZE_NUNCA = "nunca"
 
 
 @contextlib.contextmanager
-def _audio_preparado(media_path, modo, *, announce=None, cancel_event=None):
+def _audio_preparado(media_path, modo, *, announce=None, cancel_event=None,
+                     on_aviso=None):
     """Entrega o caminho a transcrever, normalizado quando fizer sentido.
 
     Devolve o próprio ``media_path`` quando não há o que fazer, ou um WAV
@@ -185,6 +192,12 @@ def _audio_preparado(media_path, modo, *, announce=None, cancel_event=None):
     Falha ao normalizar não interrompe o trabalho: transcrever com o áudio
     original é pior que com ele normalizado, mas é muito melhor que não
     transcrever.
+
+    Args:
+        on_aviso: repassado pra medição de volume (``auto``), que já
+            decodifica o arquivo inteiro -- ver
+            ``audio.medir_volume_medio``. Pega o caso de áudio corrompido
+            de graça, sem pagar outra passada só pra isso.
     """
     from . import audio as audio_module
 
@@ -196,7 +209,7 @@ def _audio_preparado(media_path, modo, *, announce=None, cancel_event=None):
         if announce:
             announce("Conferindo o volume do áudio...")
         medido = audio_module.medir_volume_medio(
-            media_path, cancel_event=cancel_event)
+            media_path, cancel_event=cancel_event, on_aviso=on_aviso)
         if medido is None:
             # "Não sei" não pode passar por "está bom". Sem ffmpeg, a
             # medição falha para todo arquivo, e tratar isso em silêncio
@@ -396,6 +409,13 @@ def process_media(media_path, output_path=None, *, engine=DEFAULT_ENGINE,
         if status:
             status(message)
 
+    # Juntados ao longo da função inteira (preparo do áudio e, depois de
+    # transcrever, cobertura) e só expostos no final via
+    # PipelineResult.aviso -- nenhum dos dois é erro a ponto de interromper
+    # o trabalho, mas esconder os dois é o que levava horas pra descobrir
+    # por que um filme saía com a legenda pela metade.
+    avisos = []
+
     if output_path is None:
         output_path = os.path.splitext(media_path)[0] + ".srt"
 
@@ -454,7 +474,8 @@ def process_media(media_path, output_path=None, *, engine=DEFAULT_ENGINE,
         # resolve, e o WAV vai para o Whisper no lugar da mídia.
         with _audio_preparado(media_path, normalize_audio,
                               announce=announce,
-                              cancel_event=cancel_event) as entrada:
+                              cancel_event=cancel_event,
+                              on_aviso=avisos.append) as entrada:
             if entrada != media_path:
                 # O Whisper nomeia o .srt pelo arquivo de entrada. Com o WAV
                 # temporário no lugar da mídia, deixar o output_dir apontando
@@ -489,6 +510,33 @@ def process_media(media_path, output_path=None, *, engine=DEFAULT_ENGINE,
             announce(f"{removidas} frase(s) inventada(s) pelo Whisper "
                      "descartada(s).")
 
+    # A transcrição pode "terminar" normalmente tendo processado só um
+    # pedaço do arquivo -- áudio corrompido mais adiante (pega acima, mas
+    # só quando normalize_audio é "auto"), um trecho realmente mudo, ou
+    # download incompleto. Sem comparar com a duração real, o trabalho
+    # fica "concluído" e o buraco só aparece quando alguém assiste.
+    # ffprobe só lê metadado (não decodifica), então isso não pesa no
+    # tempo do trabalho.
+    from . import audio as audio_module
+    duracao = audio_module.duracao_do_video(media_path)
+    if duracao:
+        cobertura = cues[-1].end / 1000
+        faltando = duracao - cobertura
+        # Piso duplo de propósito: 5 min cobre filme curto (um corte de 8%
+        # no fim não é emergência), e 8% cobre filme longo (5 min sumidos
+        # de 3h é normal -- créditos, intervalo). Só os dois juntos pegam
+        # o caso real (Hijack: 48 de 90min faltando, Silhouette: 69 de
+        # 88min) sem alarme à toa num filme que só tem os créditos mudos.
+        if faltando > 300 and faltando > duracao * 0.08:
+            cov_m, cov_s = divmod(int(cobertura), 60)
+            dur_m = int(duracao // 60)
+            falta_m = int(faltando // 60)
+            avisos.append(
+                f"A legenda cobre só até {cov_m}:{cov_s:02d}, mas o vídeo "
+                f"tem {dur_m}min -- faltam uns {falta_m}min sem legenda "
+                "no fim. Pode ser um trecho corrompido ou o arquivo de "
+                "origem incompleto.")
+
     detected_lang = language or _safe_detect(cues)
 
     def finalizar(cues, idioma):
@@ -512,7 +560,8 @@ def process_media(media_path, output_path=None, *, engine=DEFAULT_ENGINE,
     if not translate:
         srt_io.save_cues(cues, output_path)
         return PipelineResult(total=len(cues), translated=0, failed=[],
-                              detected_lang=detected_lang, engine="nenhum")
+                              detected_lang=detected_lang, engine="nenhum",
+                              aviso="; ".join(avisos) if avisos else None)
 
     speakers = transcribe_module.speakers_in(cues)
     if speakers:
@@ -536,7 +585,8 @@ def process_media(media_path, output_path=None, *, engine=DEFAULT_ENGINE,
     srt_io.save_cues(cues, output_path)
 
     return PipelineResult(total=len(cues), translated=translated, failed=failed,
-                          detected_lang=detected_lang, engine=engine)
+                          detected_lang=detected_lang, engine=engine,
+                          aviso="; ".join(avisos) if avisos else None)
 
 
 def _safe_detect(cues) -> str:

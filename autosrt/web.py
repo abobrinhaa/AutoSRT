@@ -16,7 +16,7 @@ import tempfile
 
 from flask import (Flask, jsonify, request, send_file)
 
-from . import config, llm, pipeline, srt_io, sync, timing, tmdb, transcribe
+from . import config, historico, llm, pipeline, srt_io, sync, timing, tmdb, transcribe
 from .jobs import JobQueue
 from .transcribe import TranscriptionError
 
@@ -77,7 +77,8 @@ def create_app(media_dir=None, engine=pipeline.ENGINE_LLM, max_upload_gb=None,
     app.config["MEDIA_DIR"] = media_dir
 
     fila = JobQueue(lambda job: _executar(job, engine),
-                    max_workers=config.get_max_workers())
+                    max_workers=config.get_max_workers(),
+                    on_final=historico.registrar)
     app.config["FILA"] = fila
 
     _register_routes(app, fila, media_dir, engine)
@@ -220,6 +221,7 @@ def _executar(job, engine):
         "traduzidas": resultado.translated,
         "falhas": resultado.failure_count,
         "idioma": resultado.language_label,
+        "aviso": resultado.aviso,
     })
 
 
@@ -243,6 +245,7 @@ def _traduzir_existente(job, engine, status, progresso):
         "traduzidas": resultado.translated,
         "falhas": resultado.failure_count,
         "idioma": resultado.language_label,
+        "aviso": resultado.aviso,
     })
 
 
@@ -747,6 +750,15 @@ def _register_routes(app, fila, media_dir, engine):
     def trabalhos():
         return jsonify([j.para_json() for j in fila.listar()])
 
+    @app.get("/api/historico")
+    def historico_de_trabalhos():
+        """Todos os trabalhos já terminados, mesmo os que já saíram da
+        lista de 'Trabalhos' (em memória, ver ``autosrt.jobs``) ou cujo
+        arquivo já foi apagado -- este registro não depende de nenhum dos
+        dois."""
+        limite = request.args.get("limite", 200, type=int)
+        return jsonify(historico.listar(limite=limite))
+
     @app.delete("/api/trabalho/<job_id>")
     def dispensar(job_id):
         """Tira um trabalho terminado da lista, sem tocar nos arquivos."""
@@ -1101,6 +1113,7 @@ PAGINA = """<!doctype html>
   .etapa { color: var(--text-muted); font-size: 14px; margin-top: 6px; }
   .erro { color: var(--danger); }
   .ok { color: var(--success); }
+  .trabalho .aviso { color: var(--warning); font-size: 13px; margin-top: 4px; }
   .vazio { color: var(--text-muted); padding: 20px; text-align: center; }
   a.baixar { color: var(--accent); text-decoration: none; font-weight: 600; }
   a.baixar:hover { text-decoration: underline; }
@@ -1291,6 +1304,15 @@ PAGINA = """<!doctype html>
            text-align: center; white-space: nowrap; }
   }
   .corpo-modal { flex: 1; overflow-y: auto; padding: 0 20px 20px; }
+  .tabela-historico { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .tabela-historico th { text-align: left; color: var(--text-muted); font-weight: 600;
+                          padding: 6px 10px; border-bottom: 1px solid var(--border);
+                          position: sticky; top: 0; background: var(--surface); }
+  .tabela-historico td { padding: 6px 10px; border-bottom: 1px solid var(--border);
+                          vertical-align: top; }
+  .tabela-historico tr.estado-erro td.estado { color: var(--danger); }
+  .tabela-historico tr.estado-concluido td.estado { color: var(--success); }
+  .tabela-historico td.aviso { color: var(--warning); max-width: 280px; }
   /* 1280px e onde a coluna de 820px + o painel de 200px cabem sem se
      tocarem; abaixo disso o painel cobriria o conteudo, entao fica no fluxo. */
   @media (min-width: 1280px) {
@@ -1328,6 +1350,15 @@ PAGINA = """<!doctype html>
       <span class="indicador-gpu-ponto" aria-hidden="true"></span>
       <span id="indicador-gpu-texto"></span>
     </span>
+    <button type="button" id="abrir-historico" class="botao-icone"
+            aria-haspopup="dialog" aria-controls="painel-historico"
+            title="Hist&oacute;rico de trabalhos" aria-label="Hist&oacute;rico de trabalhos">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+             stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M3 12a9 9 0 1 0 9-9 9 9 0 0 0-7.5 4H3"></path>
+          <path d="M3 4v3h3"></path>
+          <path d="M12 7v5l3 3"></path></svg>
+    </button>
     <button type="button" id="abrir-config" class="botao-icone"
             aria-haspopup="dialog" aria-controls="painel-config"
             title="Tradu&ccedil;&atilde;o e transcri&ccedil;&atilde;o" aria-label="Configura&ccedil;&otilde;es">
@@ -1507,6 +1538,34 @@ PAGINA = """<!doctype html>
       </div>
     </div>
   </section>
+  </div>
+  </dialog>
+
+  <dialog id="painel-historico" class="modal-config" aria-labelledby="titulo-painel-historico">
+  <div class="topo-modal">
+    <div class="titulo-modal">
+      <h2 id="titulo-painel-historico">Hist&oacute;rico de trabalhos</h2>
+      <button type="button" id="fechar-historico" class="fantasma"
+              title="Fechar (Esc)" aria-label="Fechar hist&oacute;rico">&times;</button>
+    </div>
+    <p class="sub" style="padding: 0 20px 14px; margin: 0;">
+      Todo filme que j&aacute; passou por aqui, mesmo que o arquivo tenha
+      sido apagado depois. Fica guardado fora da pasta do c&oacute;digo,
+      ent&atilde;o sobrevive a reinicio e atualiza&ccedil;&atilde;o do
+      autosrt.
+    </p>
+  </div>
+  <div class="corpo-modal">
+    <div id="historico-vazio" class="vazio" hidden>Nada no hist&oacute;rico ainda.</div>
+    <table id="tabela-historico" class="tabela-historico" hidden>
+      <thead>
+        <tr>
+          <th>Quando</th><th>Arquivo</th><th>Estado</th><th>Idioma</th>
+          <th>Total</th><th>Traduzidas</th><th>Falhas</th><th>Aviso</th>
+        </tr>
+      </thead>
+      <tbody id="corpo-historico"></tbody>
+    </table>
   </div>
   </dialog>
 </main>
@@ -1911,6 +1970,75 @@ dialogoConfig.addEventListener('click', (e) => {
   if (e.target === dialogoConfig) dialogoConfig.close();
 });
 
+// Histórico: mesmo padrão do diálogo de configuração acima, mas o
+// conteúdo só é buscado na hora de abrir -- ninguém olha isso toda vez
+// que a página carrega, e a lista só cresce.
+const dialogoHistorico = $('painel-historico');
+
+$('abrir-historico').onclick = () => {
+  dialogoHistorico.showModal();
+  carregarHistorico();
+};
+$('fechar-historico').onclick = () => dialogoHistorico.close();
+dialogoHistorico.addEventListener('click', (e) => {
+  if (e.target === dialogoHistorico) dialogoHistorico.close();
+});
+
+function formatarQuando(sqliteUtc) {
+  // SQLite devolve "AAAA-MM-DD HH:MM:SS" em UTC (datetime('now')); o 'Z'
+  // no fim é o que faz o Date entender que não é hora local antes de
+  // converter de volta pra hora local na hora de mostrar.
+  const d = new Date(sqliteUtc.replace(' ', 'T') + 'Z');
+  return isNaN(d) ? sqliteUtc : d.toLocaleString('pt-BR');
+}
+
+function carregarHistorico() {
+  const tabela = $('tabela-historico');
+  const vazio = $('historico-vazio');
+  const corpo = $('corpo-historico');
+  corpo.innerHTML = '';
+
+  fetch('/api/historico')
+    .then((r) => r.json())
+    .then((linhas) => {
+      if (!linhas.length) {
+        tabela.hidden = true;
+        vazio.hidden = false;
+        return;
+      }
+      vazio.hidden = true;
+      tabela.hidden = false;
+      // textContent em cada célula, nunca innerHTML com o valor junto:
+      // nome de arquivo e aviso vêm de fora (quem envia o filme escolhe o
+      // nome), então tratar como HTML abriria injeção -- mesmo cuidado
+      // que cartao() já tem para job.nome.
+      for (const l of linhas) {
+        const tr = document.createElement('tr');
+        tr.className = 'estado-' + l.estado;
+        const col = (texto, classe) => {
+          const td = document.createElement('td');
+          if (classe) td.className = classe;
+          td.textContent = texto;
+          tr.appendChild(td);
+        };
+        col(formatarQuando(l.quando));
+        col(l.arquivo);
+        col(l.estado, 'estado');
+        col(l.idioma || '');
+        col(l.total ?? '');
+        col(l.traduzidas ?? '');
+        col(l.falhas ?? '');
+        col(l.aviso || l.erro || '', 'aviso');
+        corpo.appendChild(tr);
+      }
+    })
+    .catch(() => {
+      vazio.hidden = false;
+      vazio.textContent = 'Não consegui carregar o histórico.';
+      tabela.hidden = true;
+    });
+}
+
 // Uma aba de cada vez: tradução e transcrição são assuntos separados e cada
 // uma ocupa a tela inteira do diálogo. Padrão de abas do WAI-ARIA -- só a aba
 // ativa entra na ordem do Tab, e as setas andam entre elas.
@@ -2034,6 +2162,7 @@ function cartao(job) {
       <span class="acao"></span>
     </div>
     <div class="etapa"></div>
+    <div class="aviso" hidden></div>
     <div class="barra"><div></div></div>`;
   div.querySelector('.nome').textContent = job.nome;
 
@@ -2047,6 +2176,15 @@ function cartao(job) {
     etapa.textContent = `${d.total || 0} legendas` +
       (d.idioma ? ` · ${d.idioma}` : '') +
       (d.falhas ? ` · ${d.falhas} não traduzida(s)` : '');
+    // Corrupção de áudio ou legenda muito mais curta que o vídeo (ver
+    // autosrt.pipeline.process_media) -- não é erro (o trabalho terminou
+    // normalmente), mas esconder isso é exatamente o que levava alguém a
+    // só notar quando já tinha assistido o filme com a legenda pela metade.
+    if (d.aviso) {
+      const avisoEl = div.querySelector('.aviso');
+      avisoEl.hidden = false;
+      avisoEl.textContent = '⚠ ' + d.aviso;
+    }
   } else {
     etapa.textContent = job.etapa + faltam(job.restante_seg);
   }
