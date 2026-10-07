@@ -3,7 +3,7 @@ import unittest
 import requests
 
 from autosrt.llm import (DEFAULT_BASE_URL, LLMClient, LLMError,
-                         is_local_base_url, list_models)
+                         is_local_base_url, list_models, unload_local_model)
 
 
 class FakeResponse:
@@ -11,6 +11,10 @@ class FakeResponse:
         self.status_code = status_code
         self._payload = payload
         self.text = text or str(payload)
+
+    @property
+    def ok(self):
+        return self.status_code < 400
 
     def json(self):
         if self._payload is None:
@@ -246,6 +250,63 @@ class TestIsLocalBaseUrl(unittest.TestCase):
 
     def test_vazio_nao_e_local(self):
         self.assertFalse(is_local_base_url(""))
+
+
+class TestUnloadLocalModel(unittest.TestCase):
+    """Pedir pro Ollama local descarregar o modelo antes do Whisper
+    começar -- caso real (05 e 07/out/2026): modelo parado na VRAM sem
+    processar nada já derrubou várias transcrições com "CUDA failed with
+    error out of memory"."""
+
+    def test_pede_descarregar_no_endereco_nativo_do_ollama(self):
+        session = FakeSession(FakeResponse(200))
+        resultado = unload_local_model(
+            "http://192.168.1.100:11434/v1", "qwen2.5:14b", session=session)
+
+        self.assertTrue(resultado)
+        self.assertEqual(len(session.calls), 1)
+        chamada = session.calls[0]
+        # /v1 é só o espelho compatível com OpenAI -- descarregar é coisa da
+        # API nativa do Ollama, que mora na raiz, sem o /v1.
+        self.assertEqual(chamada["url"],
+                         "http://192.168.1.100:11434/api/generate")
+        self.assertEqual(chamada["json"],
+                         {"model": "qwen2.5:14b", "keep_alive": 0})
+
+    def test_endereco_sem_v1_tambem_funciona(self):
+        session = FakeSession(FakeResponse(200))
+        unload_local_model("http://localhost:11434", "modelo", session=session)
+        self.assertEqual(session.calls[0]["url"],
+                         "http://localhost:11434/api/generate")
+
+    def test_nao_mexe_em_provedor_na_nuvem(self):
+        session = FakeSession(FakeResponse(200))
+        resultado = unload_local_model(DEFAULT_BASE_URL, "deepseek/deepseek-chat",
+                                       session=session)
+        self.assertFalse(resultado)
+        self.assertEqual(session.calls, [])
+
+    def test_sem_modelo_nao_tenta(self):
+        session = FakeSession(FakeResponse(200))
+        resultado = unload_local_model("http://localhost:11434/v1", "",
+                                       session=session)
+        self.assertFalse(resultado)
+        self.assertEqual(session.calls, [])
+
+    def test_servidor_fora_do_ar_nao_lanca(self):
+        session = FakeSession(requests.ConnectionError("recusou"))
+        resultado = unload_local_model("http://localhost:11434/v1", "modelo",
+                                       session=session)
+        self.assertFalse(resultado)
+
+    def test_erro_http_nao_lanca(self):
+        session = FakeSession(FakeResponse(404, text="não achou"))
+        resultado = unload_local_model("http://localhost:11434/v1", "modelo",
+                                       session=session)
+        self.assertFalse(resultado)
+
+    def test_endereco_vazio_nao_lanca(self):
+        self.assertFalse(unload_local_model("", "modelo"))
 
 
 if __name__ == "__main__":

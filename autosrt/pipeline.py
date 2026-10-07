@@ -440,6 +440,21 @@ def process_media(media_path, output_path=None, *, engine=DEFAULT_ENGINE,
         if progress:
             progress(peso_audio, 100)
     else:
+        # O Ollama local disputa a mesma GPU que o Whisper/diarização usam
+        # aqui, e um modelo parado na VRAM esperando o próprio keep_alive
+        # expirar (nem precisa estar processando nada) já derruba a
+        # transcrição com "CUDA failed with error out of memory" sem
+        # nenhum aviso antes (caso real, 05/out/2026). Liberar antes de
+        # começar é de graça quando não há Ollama local configurado --
+        # unload_local_model nem tenta indo contra um provedor na nuvem --
+        # e a tradução, mais tarde neste mesmo trabalho, recarrega o
+        # modelo sozinha na primeira chamada.
+        from . import config as config_module
+        from .llm import unload_local_model
+        unload_local_model(
+            config_module.get_setting("llm_base_url", "LLM_BASE_URL") or "",
+            config_module.get_setting("llm_model", "LLM_MODEL") or "")
+
         kwargs = {
             "language": language,
             "diarize": transcribe_module.DEFAULT_DIARIZE_MODEL if diarize else None,

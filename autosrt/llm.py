@@ -174,6 +174,50 @@ def is_local_base_url(base_url: str) -> bool:
     return endereco.is_private
 
 
+def unload_local_model(base_url: str, model: str, *, timeout=10,
+                       session=None) -> bool:
+    """Pede pro servidor local (Ollama) descarregar o modelo da VRAM agora.
+
+    Existe por um caso real (05/out/2026): o autosrt roda Whisper e
+    diarização na mesma GPU que o Ollama usa para traduzir. Um Ollama
+    carregado e ocioso -- parado na VRAM esperando o próprio
+    ``keep_alive`` expirar sozinho, nem precisa estar processando nada --
+    já é o bastante para faltar memória e o Whisper morrer com "CUDA
+    failed with error out of memory" no meio da transcrição, sem nenhum
+    aviso antes. Chamar isto antes do Whisper começar libera o espaço; a
+    tradução, mais tarde no mesmo trabalho, recarrega o modelo sozinha na
+    primeira chamada (alguns segundos a mais, uma vez).
+
+    ``keep_alive: 0`` sem ``prompt`` é a forma documentada da API nativa
+    do Ollama (``/api/generate``, não a compatível com OpenAI em ``/v1``)
+    de descarregar um modelo sem rodar inferência nenhuma.
+
+    Só age quando ``base_url`` é local (:func:`is_local_base_url`) --
+    contra um provedor na nuvem (OpenRouter etc.) isto não faz sentido
+    nenhum, e nem deve tentar.
+
+    Nunca lança: é uma otimização de memória, não um pré-requisito. Melhor
+    tentar liberar e falhar (servidor não é Ollama, está fora do ar, nome
+    de modelo errado) do que travar a transcrição por causa disto -- o
+    pior caso sem liberar com sucesso é o mesmo de antes desta função
+    existir.
+
+    Returns:
+        ``True`` se o pedido foi aceito, ``False`` em qualquer outro caso.
+    """
+    if not is_local_base_url(base_url) or not model:
+        return False
+    raiz = base_url[:-len("/v1")] if base_url.endswith("/v1") else base_url
+    http = session or requests
+    try:
+        resposta = http.post(f"{raiz.rstrip('/')}/api/generate",
+                             json={"model": model, "keep_alive": 0},
+                             timeout=timeout)
+        return resposta.ok
+    except requests.RequestException:
+        return False
+
+
 def list_models(base_url=DEFAULT_BASE_URL, api_key=None,
                 timeout=DEFAULT_MODELS_TIMEOUT, session=None) -> list:
     """Lista os modelos disponíveis num endereço compatível com OpenAI.
