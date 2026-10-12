@@ -21,3 +21,9 @@ import tempfile
 
 os.environ.setdefault(
     "AUTOSRT_CONFIG_DIR", tempfile.mkdtemp(prefix="autosrt-tests-config-"))
+
+# O worker automático das ferramentas de filmes (ver web._worker_filmes_periodico)
+# sobe uma thread de verdade a cada create_app(). Nos testes isso só deixaria
+# threads dormindo pra trás sem rodar nada útil (o intervalo é de horas) --
+# "0" desliga a thread por completo.
+os.environ.setdefault("AUTOSRT_FILMES_WORKER_INTERVALO_S", "0")

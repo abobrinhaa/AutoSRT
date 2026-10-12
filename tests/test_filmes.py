@@ -165,5 +165,29 @@ class TestAvisarJellyfin(unittest.TestCase):
                 filmes.avisar_jellyfin()
 
 
+class TestUltimaExecucaoAutomatica(unittest.TestCase):
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self._patch = mock.patch.object(filmes.config, "app_directory", return_value=str(self.tmp))
+        self._patch.start()
+        self.addCleanup(self._patch.stop)
+
+    def test_nunca_rodou_devolve_none(self):
+        self.assertIsNone(filmes.ultima_execucao_automatica())
+
+    def test_registra_e_le_de_volta(self):
+        filmes.registrar_execucao_automatica({"atualizar_filmes": {"escritos": 3}})
+        dados = filmes.ultima_execucao_automatica()
+        self.assertIsNotNone(dados)
+        self.assertIn("quando", dados)
+        self.assertEqual(dados["resultados"]["atualizar_filmes"]["escritos"], 3)
+
+    def test_registro_novo_substitui_o_anterior(self):
+        filmes.registrar_execucao_automatica({"atualizar_filmes": {"escritos": 1}})
+        filmes.registrar_execucao_automatica({"atualizar_filmes": {"escritos": 2}})
+        dados = filmes.ultima_execucao_automatica()
+        self.assertEqual(dados["resultados"]["atualizar_filmes"]["escritos"], 2)
+
+
 if __name__ == "__main__":
     unittest.main()

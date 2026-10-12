@@ -14,11 +14,13 @@ import json
 import logging
 import os
 import tempfile
+import threading
+import time
 
 from flask import (Flask, jsonify, request, send_file)
 
 from . import config, filmes, historico, llm, pipeline, srt_io, sync, timing, tmdb, transcribe
-from .jobs import JobQueue
+from .jobs import FINAIS, JobQueue
 from .transcribe import TranscriptionError
 
 DEFAULT_MEDIA_DIR = "midia"
@@ -53,6 +55,15 @@ TETO_CARACTERES_POR_SEGUNDO = 40
 # para essa requisição eventualmente desistir em vez de travar para sempre
 # se o processo do Whisper pendurar.
 DEFAULT_TRANSCRIBE_API_TIMEOUT = 1800  # 30 minutos
+
+# De quanto em quanto tempo o worker das ferramentas de filmes roda
+# sozinho (ver _worker_filmes_periodico) -- pra filme novo no HD (vindo do
+# autosrt ou copiado na mão) ganhar .nfo e aparecer com o gênero certo no
+# Jellyfin sem ninguém precisar lembrar de clicar nos botões da tela.
+# "0" desliga o worker (usado pelos testes, ver tests/conftest.py) --
+# criar uma thread de verdade por create_app() nos testes não ajuda em
+# nada e só deixaria threads dormindo pra trás à toa.
+DEFAULT_FILMES_WORKER_INTERVALO_S = 2 * 60 * 60
 
 
 def create_app(media_dir=None, engine=pipeline.ENGINE_LLM, max_upload_gb=None,
@@ -90,9 +101,72 @@ def create_app(media_dir=None, engine=pipeline.ENGINE_LLM, max_upload_gb=None,
     fila_filmes = JobQueue(_executar_ferramenta_filme, max_workers=1)
     app.config["FILA_FILMES"] = fila_filmes
 
+    intervalo_worker = float(os.environ.get(
+        "AUTOSRT_FILMES_WORKER_INTERVALO_S", DEFAULT_FILMES_WORKER_INTERVALO_S))
+    parar_worker_filmes = threading.Event()
+    app.config["PARAR_WORKER_FILMES"] = parar_worker_filmes
+    if intervalo_worker > 0:
+        threading.Thread(
+            target=_worker_filmes_periodico,
+            args=(fila_filmes, parar_worker_filmes, intervalo_worker),
+            daemon=True,
+        ).start()
+
     _register_routes(app, fila, media_dir, engine)
     _register_rotas_filmes(app, fila_filmes)
     return app
+
+
+def _rodar_ferramenta_e_esperar(fila_filmes, ferramenta):
+    """Enfileira uma ferramenta de filmes e espera ela terminar, devolvendo
+    o relatório. Passa pela mesma fila que os botões da tela usam (nunca
+    direto pelas funções de :mod:`autosrt.filmes`) porque a fila é
+    sequencial de propósito -- rodar em paralelo com um clique manual
+    escreveria no mesmo ``filmes_review.json`` ao mesmo tempo."""
+    job = fila_filmes.enviar(FERRAMENTAS_FILMES[ferramenta], str(filmes.base_dir()),
+                             ferramenta=ferramenta, execute=True)
+    while job.estado not in FINAIS:
+        time.sleep(1)
+    if job.estado == "erro":
+        raise RuntimeError(job.erro or "falhou sem mensagem")
+    return job.detalhes.get("relatorio")
+
+
+def _worker_filmes_periodico(fila_filmes, parar_evento, intervalo_s):
+    """Roda as duas ferramentas de filmes e avisa o Jellyfin sozinho, de
+    tempos em tempos, pra filme novo não ficar esperando alguém lembrar de
+    clicar na tela. Guarda o resultado em disco (ver
+    :func:`autosrt.filmes.registrar_execucao_automatica`) pra tela mostrar
+    "atualizado em ..." mesmo depois de reiniciar o serviço.
+
+    Roda uma vez assim que o serviço sobe (não espera as 2 horas da
+    primeira vez -- senão um restart do serviço deixaria filme novo
+    esperando o resto do intervalo à toa) e depois disso, de novo a cada
+    ``intervalo_s``. ``parar_evento.wait(intervalo_s)`` é o próprio sono
+    entre rodadas -- devolve ``True`` (e para o loop) se alguém setar o
+    evento, sem precisar de um sleep solto que ignoraria um pedido de
+    desligar.
+    """
+    while True:
+        resultados = {}
+        try:
+            resultados["atualizar_filmes"] = _rodar_ferramenta_e_esperar(fila_filmes, "atualizar_filmes")
+        except Exception as exc:
+            resultados["atualizar_filmes"] = {"erro": str(exc)}
+            logging.getLogger(__name__).exception("worker de filmes: atualizar_filmes falhou")
+        try:
+            resultados["atualizar_generos"] = _rodar_ferramenta_e_esperar(fila_filmes, "atualizar_generos")
+        except Exception as exc:
+            resultados["atualizar_generos"] = {"erro": str(exc)}
+            logging.getLogger(__name__).exception("worker de filmes: atualizar_generos falhou")
+        try:
+            filmes.avisar_jellyfin()
+            resultados["jellyfin"] = {"ok": True}
+        except (filmes.JellyfinNaoConfigurado, filmes.JellyfinFalhou) as exc:
+            resultados["jellyfin"] = {"erro": str(exc)}
+        filmes.registrar_execucao_automatica(resultados)
+        if parar_evento.wait(intervalo_s):
+            return
 
 
 def _executar_ferramenta_filme(job):
@@ -167,6 +241,13 @@ def _register_rotas_filmes(app, fila_filmes):
         except (filmes.JellyfinNaoConfigurado, filmes.JellyfinFalhou) as exc:
             return jsonify({"erro": str(exc)}), 400
         return jsonify({"ok": True})
+
+    @app.get("/api/filmes/ultima_atualizacao")
+    def filmes_ultima_atualizacao():
+        """Quando o worker automático (roda sozinho de 2 em 2 horas, ver
+        ``_worker_filmes_periodico``) terminou a última rodada. ``None``
+        se ele ainda não rodou nenhuma vez."""
+        return jsonify(filmes.ultima_execucao_automatica())
 
 
 #: Cada operação existe sozinha. Nem sempre se quer a corrente inteira:
@@ -1651,10 +1732,15 @@ PAGINA = """<!doctype html>
               title="Fechar (Esc)" aria-label="Fechar filmes">&times;</button>
     </div>
     <p class="sub" style="padding: 0 20px 14px; margin: 0;">
-      Duas ferramentas para organizar os filmes guardados no HD (o HD de
-      filmes, n&atilde;o a pasta de legendas l&aacute; em cima). As duas t&ecirc;m
-      um bot&atilde;o para s&oacute; testar e mostrar o que mudaria, sem
-      alterar nada ainda, e outro para aplicar de verdade.
+      Tr&ecirc;s ferramentas para organizar os filmes guardados no HD (o HD
+      de filmes, n&atilde;o a pasta de legendas l&aacute; em cima). As duas
+      de baixo t&ecirc;m um bot&atilde;o para s&oacute; testar e mostrar o
+      que mudaria, sem alterar nada ainda, e outro para aplicar de verdade.
+    </p>
+    <p class="sub" id="filmes-status-automatico" style="padding: 0 20px 14px; margin: 0;">
+      Essas tr&ecirc;s tamb&eacute;m rodam sozinhas, a cada 2 horas &mdash;
+      n&atilde;o precisa clicar em nada pra filme novo ganhar ficha e
+      categoria certa. <span id="filmes-ultima-automatica">Carregando...</span>
     </p>
   </div>
   <div class="corpo-modal">
@@ -2190,6 +2276,22 @@ function pollFilmes() {
 }
 setInterval(pollFilmes, 1500);
 
+async function atualizarStatusAutomatico() {
+  const alvo = $('filmes-ultima-automatica');
+  try {
+    const r = await fetch('/api/filmes/ultima_atualizacao');
+    const dados = await r.json();
+    if (!dados) {
+      alvo.textContent = 'Ainda não rodou sozinha nenhuma vez (o servidor deve ter acabado de subir).';
+      return;
+    }
+    const quando = new Date(dados.quando).toLocaleString('pt-BR');
+    alvo.textContent = `Última vez: ${quando}.`;
+  } catch {
+    alvo.textContent = 'Não consegui checar a última vez que rodou.';
+  }
+}
+
 async function sincronizarFilmes() {
   // Reflete um trabalho que já estava rodando antes da página (re)abrir o
   // diálogo -- sem isso, fechar e abrir de novo (ou recarregar a página)
@@ -2218,7 +2320,7 @@ $('jellyfin-rodar').onclick = async () => {
   botao.disabled = false;
 };
 
-$('abrir-filmes').onclick = () => { dialogoFilmes.showModal(); sincronizarFilmes(); };
+$('abrir-filmes').onclick = () => { dialogoFilmes.showModal(); sincronizarFilmes(); atualizarStatusAutomatico(); };
 $('fechar-filmes').onclick = () => dialogoFilmes.close();
 dialogoFilmes.addEventListener('click', (e) => {
   if (e.target === dialogoFilmes) dialogoFilmes.close();

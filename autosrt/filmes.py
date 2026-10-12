@@ -28,9 +28,11 @@ import json
 import re
 import time
 import unicodedata
+from datetime import datetime
 from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Optional
+from zoneinfo import ZoneInfo
 
 import requests
 
@@ -362,9 +364,26 @@ def atualizar_filmes(execute: bool, job=None, sleep_s: float = 0.1) -> dict:
 
         extraido = extract_title_year(unit.name_source)
         if not extraido:
+            # Sem título/ano extraído do nome: grava um .nfo mínimo mesmo
+            # assim (só gênero = pasta + título bruto). O gênero de um
+            # filme tem que estar certo em TODO filme do acervo, com
+            # informação de sobra ou nenhuma -- não dá pra deixar o
+            # Jellyfin cair pro gênero da internet só porque faltou dado
+            # pra enriquecer com título/sinopse (ver autosrt-beta #ferramentas-filmes).
             relatorio["sem_extracao"] += 1
             review.append({"path": str(unit.video_path),
-                          "motivo": "não consegui extrair título/ano do nome"})
+                          "motivo": "não consegui extrair título/ano do nome -- nfo mínimo gravado (só gênero + título bruto)"})
+            nfo_content = nfo_xml(
+                title=unit.name_source, original_title=unit.name_source, plot="",
+                genres=[unit.genre_folder], premiered="", year=None, tmdb_id="")
+            if execute:
+                try:
+                    unit.nfo_path.write_text(nfo_content, encoding="utf-8")
+                    relatorio["escritos"] += 1
+                except OSError as exc:
+                    review.append({"path": str(unit.video_path), "motivo": f"erro ao escrever nfo mínimo: {exc}"})
+            else:
+                relatorio["escritos"] += 1
             continue
         title, year = extraido
 
@@ -373,14 +392,30 @@ def atualizar_filmes(execute: bool, job=None, sleep_s: float = 0.1) -> dict:
 
         min_ratio = TITLE_RATIO_MIN if year is not None else TITLE_RATIO_MIN_NO_YEAR
         if not candidato or ratio < min_ratio or (year is not None and not year_ok):
+            # Sem match confiável: mesma lógica -- grava o .nfo com o
+            # gênero certo e o título que deu pra extrair do nome do
+            # arquivo, sem sinopse/tmdbid. Fica no review pra revisão
+            # manual depois, mas o gênero não fica esperando essa revisão.
             relatorio["sem_match"] += 1
             review.append({
                 "path": str(unit.video_path),
                 "titulo_extraido": title, "ano_extraido": year,
                 "melhor_candidato": candidato.get("title") if candidato else None,
                 "ratio": round(ratio, 2),
-                "motivo": "sem match confiável no TMDB",
+                "motivo": "sem match confiável no TMDB -- nfo mínimo gravado (título do nome do arquivo, sem sinopse/tmdbid)",
             })
+            nfo_content = nfo_xml(
+                title=title, original_title=title, plot="",
+                genres=[unit.genre_folder], premiered=str(year) if year else "",
+                year=year, tmdb_id="")
+            if execute:
+                try:
+                    unit.nfo_path.write_text(nfo_content, encoding="utf-8")
+                    relatorio["escritos"] += 1
+                except OSError as exc:
+                    review.append({"path": str(unit.video_path), "motivo": f"erro ao escrever nfo mínimo: {exc}"})
+            else:
+                relatorio["escritos"] += 1
             time.sleep(sleep_s)
             continue
 
@@ -498,3 +533,46 @@ def atualizar_generos(execute: bool, job=None) -> dict:
 
     relatorio["simulado"] = not execute
     return relatorio
+
+
+#: Onde fica o registro de quando o worker automático (ver
+#: :func:`autosrt.web._worker_filmes_periodico`) rodou pela última vez.
+#: Fora do git de propósito, igual o cache do TMDB -- é estado, não código.
+ULTIMA_EXECUCAO_FILENAME = "filmes_worker_ultima_execucao.json"
+
+#: O container roda em UTC (``timedatectl`` confirma), mas quem lê a hora
+#: é gente no Brasil -- hora gravada já em horário local, pra bater com o
+#: resto do homelab (ver TZ em homelab-info/app.py) sem depender de quem
+#: olha o JSON cru saber converter fuso.
+_TZ = ZoneInfo("America/Sao_Paulo")
+
+
+def registrar_execucao_automatica(resultados: dict) -> None:
+    """Grava quando o worker de 2 em 2 horas rodou pela última vez, e o
+    resultado de cada ferramenta que ele chamou nessa rodada.
+
+    Em arquivo, não em memória: o processo da web reinicia (deploy, queda
+    de energia) e perderia isso se fosse só uma variável -- e é justamente
+    esse "quando foi a última vez" que a tela precisa mostrar pro usuário
+    confiar que o worker está rodando sozinho de verdade.
+    """
+    caminho = Path(config.app_directory()) / ULTIMA_EXECUCAO_FILENAME
+    caminho.parent.mkdir(parents=True, exist_ok=True)
+    dados = {
+        "quando": datetime.now(_TZ).isoformat(timespec="seconds"),
+        "resultados": resultados,
+    }
+    caminho.write_text(json.dumps(dados, ensure_ascii=False), encoding="utf-8")
+
+
+def ultima_execucao_automatica() -> Optional[dict]:
+    """Devolve o último registro de :func:`registrar_execucao_automatica`,
+    ou ``None`` se o worker ainda não rodou nenhuma vez (processo acabou
+    de subir, ou ainda não passaram as 2 horas da primeira rodada)."""
+    caminho = Path(config.app_directory()) / ULTIMA_EXECUCAO_FILENAME
+    if not caminho.exists():
+        return None
+    try:
+        return json.loads(caminho.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
