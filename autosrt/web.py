@@ -1433,7 +1433,7 @@ PAGINA = """<!doctype html>
     </span>
     <button type="button" id="abrir-filmes" class="botao-icone"
             aria-haspopup="dialog" aria-controls="painel-filmes"
-            title="Ferramentas do acervo de filmes" aria-label="Filmes">
+            title="Organizar os filmes do HD" aria-label="Filmes">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
              stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <path d="M3 7h18v13a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V7Z"></path>
@@ -1640,33 +1640,37 @@ PAGINA = """<!doctype html>
               title="Fechar (Esc)" aria-label="Fechar filmes">&times;</button>
     </div>
     <p class="sub" style="padding: 0 20px 14px; margin: 0;">
-      Ferramentas do acervo de filmes (HD separado, n&atilde;o a pasta de
-      legendas acima). Cada uma simula antes de gravar qualquer coisa.
+      Duas ferramentas para organizar os filmes guardados no HD (o HD de
+      filmes, n&atilde;o a pasta de legendas l&aacute; em cima). As duas t&ecirc;m
+      um bot&atilde;o para s&oacute; testar e mostrar o que mudaria, sem
+      alterar nada ainda, e outro para aplicar de verdade.
     </p>
   </div>
   <div class="corpo-modal">
     <div class="painel-ferramenta">
       <h3>Atualizar filmes</h3>
-      <p class="dica-config">Gera <code>.nfo</code> (t&iacute;tulo, sinopse,
-        ano) para todo filme do acervo que ainda n&atilde;o tem, buscando no
-        TMDB pelo nome do arquivo/pasta. N&atilde;o toca em quem j&aacute;
-        tem <code>.nfo</code>.</p>
+      <p class="dica-config">Olha todo filme do HD que ainda est&aacute;
+        sem ficha (sem nome certinho, resumo e ano) e completa essa ficha
+        sozinho, procurando o filme pelo nome numa base de dados de filmes
+        na internet. Filme que j&aacute; tem ficha completa fica como
+        est&aacute;, essa ferramenta n&atilde;o toca nele.</p>
       <div class="acoes-ferramenta">
-        <button type="button" class="fantasma" data-ferramenta="atualizar_filmes" data-execute="0">Simular</button>
-        <button type="button" class="executar" data-ferramenta="atualizar_filmes" data-execute="1">Executar</button>
+        <button type="button" class="fantasma" data-ferramenta="atualizar_filmes" data-execute="0">Só testar</button>
+        <button type="button" class="executar" data-ferramenta="atualizar_filmes" data-execute="1">Aplicar de verdade</button>
       </div>
       <div class="resultado-ferramenta" id="resultado-atualizar_filmes" hidden></div>
     </div>
     <div class="painel-ferramenta">
       <h3>Atualizar g&ecirc;neros</h3>
-      <p class="dica-config">Corrige o g&ecirc;nero (tag <code>&lt;genre&gt;</code>)
-        dos <code>.nfo</code> que j&aacute; existem, para o nome da pasta
-        onde cada filme est&aacute; &mdash; sem chamar o TMDB, s&oacute; essa
-        tag. &Eacute; para quem j&aacute; tem <code>.nfo</code> com
-        g&ecirc;nero errado ou desatualizado.</p>
+      <p class="dica-config">Corrige a categoria de cada filme (Terror,
+        Com&eacute;dia, Faroeste etc.) para ficar igual ao nome da pasta
+        onde o filme est&aacute; guardado no HD. &Eacute; para arrumar
+        filme que ficou com a categoria errada ou desatualizada &mdash;
+        n&atilde;o precisa buscar nada na internet para isso, s&oacute;
+        olha em qual pasta o filme est&aacute;.</p>
       <div class="acoes-ferramenta">
-        <button type="button" class="fantasma" data-ferramenta="atualizar_generos" data-execute="0">Simular</button>
-        <button type="button" class="executar" data-ferramenta="atualizar_generos" data-execute="1">Executar</button>
+        <button type="button" class="fantasma" data-ferramenta="atualizar_generos" data-execute="0">Só testar</button>
+        <button type="button" class="executar" data-ferramenta="atualizar_generos" data-execute="1">Aplicar de verdade</button>
       </div>
       <div class="resultado-ferramenta" id="resultado-atualizar_generos" hidden></div>
     </div>
@@ -2115,17 +2119,18 @@ function botoesFilmes() {
 
 function relatorioFilmesTexto(ferramenta, relatorio) {
   if (!relatorio) return '';
-  const prefixo = relatorio.simulado ? 'Simulação — ' : '';
+  const prefixo = relatorio.simulado ? 'Isso foi só um teste — ' : '';
   if (ferramenta === 'atualizar_filmes') {
     return prefixo +
-      `${relatorio.unidades_total} filme(s) no acervo, ${relatorio.ja_tinha_nfo} já tinham .nfo. ` +
-      `${relatorio.simulado ? 'Escreveria' : 'Escritos'}: ${relatorio.escritos}. ` +
-      `Sem título/ano: ${relatorio.sem_extracao}. Sem match confiável: ${relatorio.sem_match}.`;
+      `${relatorio.unidades_total} filme(s) no HD, ${relatorio.ja_tinha_nfo} já estavam com a ficha completa. ` +
+      `${relatorio.simulado ? 'Completaria' : 'Completados agora'}: ${relatorio.escritos}. ` +
+      `Não deu pra descobrir o nome de ${relatorio.sem_extracao}. ` +
+      `Não achei com certeza na base de dados: ${relatorio.sem_match}.`;
   }
   return prefixo +
-    `${relatorio.nfo_total} .nfo encontrados. ` +
-    `${relatorio.simulado ? 'Corrigiria' : 'Corrigidos'}: ${relatorio.corrigidos}. ` +
-    `Já estavam certos: ${relatorio.ja_corretos}. Ignorados: ${relatorio.ignorados}.`;
+    `${relatorio.nfo_total} filme(s) com ficha no HD. ` +
+    `${relatorio.simulado ? 'Corrigiria a categoria de' : 'Categoria corrigida em'}: ${relatorio.corrigidos}. ` +
+    `Já estavam certos: ${relatorio.ja_corretos}. Não consegui ler: ${relatorio.ignorados}.`;
 }
 
 async function atualizarCartaoFilme(ferramenta) {
@@ -2187,7 +2192,7 @@ botoesFilmes().forEach((botao) => {
   botao.onclick = async () => {
     const ferramenta = botao.dataset.ferramenta;
     const execute = botao.dataset.execute === '1';
-    if (execute && !confirm('Isso grava de verdade no HD de filmes.\\n\\nJá rodou "Simular" para essa ferramenta e confere com o resultado?')) {
+    if (execute && !confirm('Isso vai alterar de verdade os arquivos no HD de filmes.\\n\\nVocê já clicou em "Só testar" antes e viu que o resultado está certo?')) {
       return;
     }
     botoesFilmes().forEach((b) => b.disabled = true);

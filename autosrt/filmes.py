@@ -263,9 +263,9 @@ def _tmdb_client() -> _TMDBClient:
     chave = config.get_tmdb_api_key()
     if not chave:
         raise SemChaveTMDB(
-            "Sem chave TMDB configurada (aba Tradução das Configurações). "
-            "As duas ferramentas de filmes precisam dela para identificar "
-            "o filme pelo nome.")
+            "Falta configurar o acesso à base de dados de filmes (aba "
+            "Tradução, nas Configurações) -- sem isso não dá para "
+            "descobrir o nome, resumo e ano de cada filme.")
     return _TMDBClient(chave, Path(config.app_directory()) / CACHE_FILENAME)
 
 
