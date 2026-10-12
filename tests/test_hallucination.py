@@ -182,6 +182,54 @@ class TestFrasesExtras(unittest.TestCase):
         self.assertEqual(len(resultado), 5)
 
 
+class TestExtraColadaNoInicio(unittest.TestCase):
+    """Marca d'água de site pirata que o Whisper gruda na frente da fala
+    real, dentro da MESMA legenda -- caso real achado no acervo do
+    usuário (ver memória autosrt-container / incidente BF-WATCH)."""
+
+    def test_so_o_prefixo_sai_fala_real_fica(self):
+        cues = DIALOGO[:2] + [
+            cue(3, 5, 7, "© BF-WATCH TV 2021 Um pequeno intervalo...")] + DIALOGO[2:]
+        resultado = hallucination.filtrar_alucinacoes(
+            cues, extras=["© BF-WATCH TV 2021"])
+        # A legenda fica (não é removida) -- só o pedaço colado sai dela.
+        self.assertEqual(len(resultado), 6)
+        self.assertEqual(resultado[2].source_text, "Um pequeno intervalo...")
+
+    def test_ignora_acento_caixa_e_separador_entre_as_palavras(self):
+        cues = DIALOGO[:2] + [
+            cue(3, 5, 7, "bf watch tv 2021 Out where the friendly")] + DIALOGO[2:]
+        resultado = hallucination.filtrar_alucinacoes(
+            cues, extras=["© BF-WATCH TV 2021"])
+        self.assertEqual(resultado[2].source_text, "Out where the friendly")
+
+    def test_so_cola_no_comeco_nao_em_qualquer_lugar(self):
+        fala = "Ele falou: BF-WATCH TV 2021 e desligou o telefone."
+        cues = DIALOGO[:2] + [cue(3, 5, 7, fala)] + DIALOGO[2:]
+        resultado = hallucination.filtrar_alucinacoes(
+            cues, extras=["BF-WATCH TV 2021"])
+        self.assertIn(fala, textos(resultado))
+
+    def test_frase_embutida_nao_corta_prefixo(self):
+        """Só ``extras`` ganham o corte de prefixo -- "Obrigado" sozinho
+        podia abrir uma fala de verdade, risco que um crédito fixo de
+        acervo não tem."""
+        fala = "Obrigado, mas prefiro não comentar sobre isso agora."
+        cues = DIALOGO[:2] + [cue(3, 5, 7, fala)] + DIALOGO[2:]
+        self.assertIn(fala, textos(hallucination.filtrar_alucinacoes(cues)))
+
+    def test_cue_que_e_so_a_marca_continua_saindo_inteira(self):
+        """O corte de prefixo não compete com a remoção inteira -- a
+        legenda que é só o clichê (sem fala colada) ainda some, não fica
+        com um texto vazio."""
+        cues = DIALOGO[:2] + [
+            cue(3, 5, 7, "© BF-WATCH TV 2021")] + DIALOGO[2:]
+        resultado = hallucination.filtrar_alucinacoes(
+            cues, extras=["© BF-WATCH TV 2021"])
+        self.assertEqual(len(resultado), 5)
+        self.assertNotIn("", textos(resultado))
+
+
 class TestEscritaDiferenteDoArquivo(unittest.TestCase):
     """O Whisper também tem clichê de encerramento em chinês e japonês.
 

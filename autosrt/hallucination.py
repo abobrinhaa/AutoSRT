@@ -30,6 +30,17 @@ Em qualquer dos dois níveis, só sai a legenda que é **inteiramente** o
 clichê: a mesma frase dentro de uma fala maior ("Obrigado por assistir ao
 filme comigo ontem") é fala de verdade e fica.
 
+**Exceção, só pros ``extras`` do usuário.** Marca d'água de site pirata
+("© BF-WATCH TV 2021") às vezes não vem numa legenda própria -- o Whisper
+gruda ela na frente da fala real do mesmo trecho de áudio ("© BF-WATCH TV
+2021 Um pequeno intervalo..."). Juntas, a legenda não é mais *inteiramente*
+o clichê, e a regra acima deixaria a fala real contaminada passar. Pra esse
+caso, uma frase extra também é testada como **prefixo**: se ela abre a
+legenda, só esse pedaço sai, e a fala que vem depois fica (ver
+:func:`_cortar_prefixo_colado`). Vale só pra ``extras`` -- um crédito fixo
+de acervo, nunca fala de personagem -- não pras frases embutidas (um
+"Obrigado" solto também podia abrir uma fala de verdade).
+
 O clichê também vem em chinês e japonês ("请不吝点赞 订阅 转发", "字幕by
 索兰娅", "ご視聴ありがとうございました"), e esse não cabe em lista: a
 normalização reduz tudo a letras latinas e o ideograma some. O sinal ali é
@@ -169,6 +180,62 @@ def normalizar(texto: str) -> str:
     return _ESPACOS_RE.sub(" ", texto).strip()
 
 
+#: Qualquer coisa que não seja letra/número separa as "palavras" de uma
+#: frase extra, pra casar "BF-WATCH" com "BF WATCH" ou "bf_watch" do mesmo
+#: jeito que :func:`normalizar` já faz pro resto do filtro.
+_SEPARADOR_RE = re.compile(r"[^0-9A-Za-z]+", re.UNICODE)
+
+
+def _regex_prefixo_colado(frase: str):
+    """Regex que casa ``frase`` exatamente no COMEÇO de um texto, com
+    espaçamento/pontuação flexível entre as palavras e sem diferenciar
+    caixa -- pra achar o pedaço exato a cortar (ver
+    :func:`_cortar_prefixo_colado`), em vez de só comparar string igual
+    como o resto do filtro faz.
+
+    ``None`` se a frase não tiver nenhuma palavra (linha em branco) --
+    mesma cautela de :func:`filtrar_alucinacoes` com ``extras``.
+    """
+    palavras = [p for p in _SEPARADOR_RE.split(frase) if p]
+    if not palavras:
+        return None
+    pedacos = [re.escape(p) for p in palavras]
+    return re.compile(r"^\s*[^0-9A-Za-z]*" + r"[^0-9A-Za-z]+".join(pedacos)
+                      + r"[^0-9A-Za-z]*", re.IGNORECASE | re.UNICODE)
+
+
+def _cortar_prefixo_colado(cue, padroes_prefixo) -> str:
+    """Tira do começo da legenda uma marca d'água/crédito conhecido que o
+    Whisper colou na frente de uma fala real, na MESMA legenda -- caso que
+    :func:`classificar` não pega de propósito, porque a legenda não é
+    *inteiramente* o clichê (ver docstring do módulo).
+
+    Só os ``extras`` do usuário entram aqui, nunca as frases embutidas: são
+    um crédito/marca específico de um acervo, texto fixo que não varia --
+    diferente de "Obrigado", que é fala de personagem o tempo todo e correria
+    risco real de cortar início de diálogo de verdade.
+
+    Edita ``cue.source_text`` e ``cue.text`` (ainda iguais nesta altura do
+    pipeline, antes da tradução -- ver :mod:`autosrt.cue`) e devolve o
+    trecho cortado, só pro log dizer o que saiu; ``None`` se nada bateu ou
+    se cortar deixaria a legenda sem nenhuma letra/número (nesse caso a
+    legenda inteira era o clichê, e quem decide isso é :func:`classificar`,
+    não esta função).
+    """
+    texto = cue.source_text or ""
+    for padrao in padroes_prefixo:
+        match = padrao.match(texto)
+        if not match:
+            continue
+        resto = texto[match.end():]
+        if not any(c.isalnum() for c in resto):
+            continue
+        cue.source_text = resto
+        cue.text = resto
+        return texto[:match.end()]
+    return None
+
+
 def _classificar_texto(normalizado: str, inequivocas) -> str:
     """Diz se um texto já normalizado é clichê, e de qual nível."""
     if not normalizado:
@@ -255,10 +322,14 @@ def filtrar_alucinacoes(cues, *, extras=None) -> list:
         return list(cues)
 
     inequivocas = set(FRASES_INEQUIVOCAS)
+    padroes_prefixo = []
     for frase in extras or ():
         normalizada = normalizar(frase)
         if normalizada:
             inequivocas.add(normalizada)
+            padrao = _regex_prefixo_colado(frase)
+            if padrao:
+                padroes_prefixo.append(padrao)
 
     contagem = Counter(normalizar(cue.source_text) for cue in cues)
 
@@ -272,6 +343,10 @@ def filtrar_alucinacoes(cues, *, extras=None) -> list:
         classe = (INEQUIVOCA if escrita_estranha
                   else classificar(cue.source_text, inequivocas))
         if classe is None:
+            cortado = _cortar_prefixo_colado(cue, padroes_prefixo)
+            if cortado:
+                logger.info("marca d'água colada no início cortada (fala real mantida): %r",
+                           cortado.replace("\n", " "))
             mantidas.append(cue)
             continue
 
