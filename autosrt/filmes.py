@@ -66,6 +66,41 @@ class SemChaveTMDB(Exception):
     sem ela, já que ambas dependem de identificar o filme."""
 
 
+class JellyfinNaoConfigurado(Exception):
+    """Sem endereço/chave do Jellyfin configurados -- ver
+    :func:`avisar_jellyfin`."""
+
+
+class JellyfinFalhou(Exception):
+    """O Jellyfin recusou ou não respondeu ao pedido de reler a pasta."""
+
+
+def avisar_jellyfin() -> dict:
+    """Pede para o Jellyfin reler a pasta de filmes agora, em vez de
+    esperar ele notar sozinho (nem sempre nota -- é o motivo desta
+    ferramenta existir: filme jogado no HD que não aparecia na lista).
+
+    Só dispara o pedido; o próprio Jellyfin faz a releitura no fundo,
+    fora desta chamada -- por isso devolve na hora, sem fila de trabalho.
+    """
+    url = config.get_jellyfin_url()
+    chave = config.get_jellyfin_api_key()
+    if not url or not chave:
+        raise JellyfinNaoConfigurado(
+            "Falta configurar o endereço e a chave do Jellyfin "
+            "(jellyfin_url/jellyfin_api_key no config.json do servidor).")
+
+    try:
+        resposta = requests.post(f"{url.rstrip('/')}/Library/Refresh",
+                                 params={"api_key": chave}, timeout=10)
+    except requests.RequestException as exc:
+        raise JellyfinFalhou(f"Não consegui falar com o Jellyfin: {exc}") from exc
+
+    if resposta.status_code >= 300:
+        raise JellyfinFalhou(f"O Jellyfin recusou o pedido (HTTP {resposta.status_code}).")
+    return {"ok": True}
+
+
 def _strip_accents(s: str) -> str:
     return "".join(c for c in unicodedata.normalize("NFKD", s)
                    if not unicodedata.combining(c))

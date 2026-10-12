@@ -139,5 +139,31 @@ class TestAtualizarGeneros(unittest.TestCase):
         self.assertEqual(relatorio["ja_corretos"], 1)
 
 
+class TestAvisarJellyfin(unittest.TestCase):
+    def test_sem_configuracao_avisa_com_mensagem_clara(self):
+        with mock.patch.object(filmes.config, "get_jellyfin_url", return_value=None), \
+             mock.patch.object(filmes.config, "get_jellyfin_api_key", return_value="x"):
+            with self.assertRaises(filmes.JellyfinNaoConfigurado):
+                filmes.avisar_jellyfin()
+
+    def test_chama_library_refresh_com_a_chave(self):
+        resposta = mock.Mock(status_code=204)
+        with mock.patch.object(filmes.config, "get_jellyfin_url", return_value="http://jelly:8096"), \
+             mock.patch.object(filmes.config, "get_jellyfin_api_key", return_value="chave123"), \
+             mock.patch.object(filmes.requests, "post", return_value=resposta) as post:
+            resultado = filmes.avisar_jellyfin()
+        self.assertEqual(resultado, {"ok": True})
+        post.assert_called_once_with("http://jelly:8096/Library/Refresh",
+                                     params={"api_key": "chave123"}, timeout=10)
+
+    def test_erro_http_do_jellyfin_vira_jellyfin_falhou(self):
+        resposta = mock.Mock(status_code=500)
+        with mock.patch.object(filmes.config, "get_jellyfin_url", return_value="http://jelly:8096"), \
+             mock.patch.object(filmes.config, "get_jellyfin_api_key", return_value="chave123"), \
+             mock.patch.object(filmes.requests, "post", return_value=resposta):
+            with self.assertRaises(filmes.JellyfinFalhou):
+                filmes.avisar_jellyfin()
+
+
 if __name__ == "__main__":
     unittest.main()

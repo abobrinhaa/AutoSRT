@@ -157,6 +157,17 @@ def _register_rotas_filmes(app, fila_filmes):
             return jsonify({"erro": "Não dá para cancelar esse trabalho."}), 409
         return jsonify({"ok": True})
 
+    @app.post("/api/filmes/jellyfin")
+    def filmes_jellyfin():
+        # Só um pedido HTTP rápido (o Jellyfin relê a pasta por conta
+        # própria depois) -- não precisa da fila de trabalhos como as
+        # outras duas ferramentas, que ficam minutos rodando.
+        try:
+            filmes.avisar_jellyfin()
+        except (filmes.JellyfinNaoConfigurado, filmes.JellyfinFalhou) as exc:
+            return jsonify({"erro": str(exc)}), 400
+        return jsonify({"ok": True})
+
 
 #: Cada operação existe sozinha. Nem sempre se quer a corrente inteira:
 #: às vezes é só traduzir uma legenda que já se tem, às vezes só transcrever
@@ -1648,6 +1659,17 @@ PAGINA = """<!doctype html>
   </div>
   <div class="corpo-modal">
     <div class="painel-ferramenta">
+      <h3>Avisar o Jellyfin</h3>
+      <p class="dica-config">Jogou um filme novo no HD e ele n&atilde;o
+        apareceu no Jellyfin? Ele nem sempre percebe sozinho que tem
+        filme novo. Este bot&atilde;o pede pra ele olhar a pasta de novo
+        agora &mdash; o filme costuma aparecer em poucos minutos depois.</p>
+      <div class="acoes-ferramenta">
+        <button type="button" id="jellyfin-rodar">Atualizar agora</button>
+      </div>
+      <div class="resultado-ferramenta" id="resultado-jellyfin" hidden></div>
+    </div>
+    <div class="painel-ferramenta">
       <h3>Atualizar filmes</h3>
       <p class="dica-config">Olha todo filme do HD que ainda est&aacute;
         sem ficha (sem nome certinho, resumo e ano) e completa essa ficha
@@ -2181,6 +2203,20 @@ async function sincronizarFilmes() {
   if (Object.keys(jobsFilmesAtivos).length) botoesFilmes().forEach((b) => b.disabled = true);
   pollFilmes();
 }
+
+$('jellyfin-rodar').onclick = async () => {
+  const botao = $('jellyfin-rodar');
+  const alvo = $('resultado-jellyfin');
+  botao.disabled = true;
+  alvo.hidden = false;
+  alvo.innerHTML = '<div class="etapa">Avisando o Jellyfin...</div>';
+  const r = await fetch('/api/filmes/jellyfin', {method: 'POST'});
+  const dados = await r.json();
+  alvo.innerHTML = r.ok
+    ? '<div class="etapa ok">Pedido enviado! O Jellyfin já está relendo a pasta.</div>'
+    : `<div class="etapa erro">${dados.erro || 'Não consegui avisar o Jellyfin.'}</div>`;
+  botao.disabled = false;
+};
 
 $('abrir-filmes').onclick = () => { dialogoFilmes.showModal(); sincronizarFilmes(); };
 $('fechar-filmes').onclick = () => dialogoFilmes.close();

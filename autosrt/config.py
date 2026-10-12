@@ -48,6 +48,11 @@ EXAMPLE_CONFIG = {
     # trabalho do AutoSRT) que as ferramentas da tela "Filmes" catalogam.
     # Ver autosrt/filmes.py.
     "filmes_dir": "/mnt/filmes_storage",
+    # Opcional: endereço e chave de API do Jellyfin, para o botão "Avisar
+    # o Jellyfin" (pede pra ele reler a pasta de filmes). Chave criada em
+    # Painel administrativo > Chaves de API, dentro do próprio Jellyfin.
+    "jellyfin_url": "http://192.168.1.46:8096",
+    "jellyfin_api_key": "...",
     # Opcional: sensibilidade da VAD para toda transcrição feita pela fila
     # web (o CLI aceita os mesmos ajustes por linha de comando, que valem
     # só para aquela execução). Sem isso, usa o padrão do próprio Whisper.
@@ -176,6 +181,17 @@ def get_filmes_dir():
     ``filmes_dir`` no ``config.json`` apontam para o lugar certo.
     """
     return get_setting("filmes_dir", "AUTOSRT_FILMES_DIR", "/mnt/filmes_storage")
+
+
+def get_jellyfin_url():
+    """Endereço do Jellyfin (``http://host:8096``), ou ``None`` se não
+    estiver configurado."""
+    return get_setting("jellyfin_url", "JELLYFIN_URL")
+
+
+def get_jellyfin_api_key():
+    """Chave de API do Jellyfin, ou ``None`` se não estiver configurada."""
+    return get_setting("jellyfin_api_key", "JELLYFIN_API_KEY")
 
 
 def get_openrouter_api_key():
