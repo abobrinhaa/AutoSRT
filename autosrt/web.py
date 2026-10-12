@@ -10,13 +10,14 @@ Legenda tem alguns quilobytes e pode ser enviada direto pela página.
 """
 
 import io
+import json
 import logging
 import os
 import tempfile
 
 from flask import (Flask, jsonify, request, send_file)
 
-from . import config, historico, llm, pipeline, srt_io, sync, timing, tmdb, transcribe
+from . import config, filmes, historico, llm, pipeline, srt_io, sync, timing, tmdb, transcribe
 from .jobs import JobQueue
 from .transcribe import TranscriptionError
 
@@ -81,8 +82,80 @@ def create_app(media_dir=None, engine=pipeline.ENGINE_LLM, max_upload_gb=None,
                     on_final=historico.registrar)
     app.config["FILA"] = fila
 
+    # Fila separada da de transcrição: as ferramentas de filmes não usam
+    # GPU nem disputam Whisper, só rede (TMDB) e o HD do acervo -- não faz
+    # sentido elas competirem por `max_workers` com o que transcreve.
+    # Sequencial (1) de propósito: duas rodando juntas escreveriam no
+    # mesmo filmes_review.json uma por cima da outra.
+    fila_filmes = JobQueue(_executar_ferramenta_filme, max_workers=1)
+    app.config["FILA_FILMES"] = fila_filmes
+
     _register_routes(app, fila, media_dir, engine)
+    _register_rotas_filmes(app, fila_filmes)
     return app
+
+
+def _executar_ferramenta_filme(job):
+    """Roda uma das ferramentas de :mod:`autosrt.filmes`. Chamado pelo
+    operário de ``fila_filmes``."""
+    ferramenta = job.detalhes.get("ferramenta")
+    execute = bool(job.detalhes.get("execute"))
+    if ferramenta == "atualizar_filmes":
+        resultado = filmes.atualizar_filmes(execute, job=job)
+    elif ferramenta == "atualizar_generos":
+        resultado = filmes.atualizar_generos(execute, job=job)
+    else:
+        raise ValueError(f"ferramenta desconhecida: {ferramenta}")
+    job.resultado = json.dumps(resultado, ensure_ascii=False)
+    job.detalhes["relatorio"] = resultado
+
+
+#: As duas ferramentas da tela "Filmes" (ver PAGINA, painel-filmes). Cada
+#: uma tem rótulo e nome de ``detalhes["ferramenta"]`` esperado por
+#: ``_executar_ferramenta_filme``.
+FERRAMENTAS_FILMES = {
+    "atualizar_filmes": "Atualizar filmes",
+    "atualizar_generos": "Atualizar gêneros",
+}
+
+
+def _register_rotas_filmes(app, fila_filmes):
+    """Rotas da tela de ferramentas do acervo de filmes (``/mnt/filmes_storage``
+    ou o que ``AUTOSRT_FILMES_DIR`` apontar) -- separada da fila/rotas de
+    transcrição em :func:`_register_routes` porque não trabalha com o
+    ``media_dir`` da legenda, e sim com o HD de filmes."""
+
+    @app.post("/api/filmes/<ferramenta>")
+    def filmes_rodar(ferramenta):
+        if ferramenta not in FERRAMENTAS_FILMES:
+            return jsonify({"erro": "Ferramenta desconhecida."}), 404
+        if fila_filmes.ocupado:
+            return jsonify({"erro": "Já tem uma ferramenta de filmes rodando. "
+                                    "Espere terminar antes de rodar outra."}), 409
+
+        execute = bool((request.json or {}).get("execute"))
+        job = fila_filmes.enviar(FERRAMENTAS_FILMES[ferramenta], str(filmes.base_dir()),
+                                 ferramenta=ferramenta, execute=execute)
+        return jsonify(job.para_json()), 202
+
+    @app.get("/api/filmes/trabalhos")
+    def filmes_trabalhos():
+        return jsonify([j.para_json() for j in fila_filmes.listar()])
+
+    @app.get("/api/filmes/trabalho/<job_id>")
+    def filmes_trabalho(job_id):
+        job = fila_filmes.buscar(job_id)
+        if not job:
+            return jsonify({"erro": "Trabalho não encontrado."}), 404
+        resposta = job.para_json()
+        resposta["relatorio"] = job.detalhes.get("relatorio")
+        return jsonify(resposta)
+
+    @app.post("/api/filmes/trabalho/<job_id>/cancelar")
+    def filmes_cancelar(job_id):
+        if not fila_filmes.cancelar(job_id):
+            return jsonify({"erro": "Não dá para cancelar esse trabalho."}), 409
+        return jsonify({"ok": True})
 
 
 #: Cada operação existe sozinha. Nem sempre se quer a corrente inteira:
@@ -1157,6 +1230,14 @@ PAGINA = """<!doctype html>
   }
   .rodape { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
   .dica-config { flex: 1; font-size: 13px; color: var(--text-muted); }
+  .painel-ferramenta { border: 1px solid var(--border); border-radius: var(--radius-sm);
+                       padding: 14px; margin-bottom: 14px; }
+  .painel-ferramenta h3 { margin: 0 0 6px; }
+  .acoes-ferramenta { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+  .acoes-ferramenta .executar { background: none; border: 1px solid var(--danger-soft);
+                                color: var(--danger); }
+  .acoes-ferramenta .executar:hover:enabled { background: var(--danger-soft); }
+  .resultado-ferramenta { margin-top: 12px; }
   .selo { font-size: 12px; padding: 2px 8px; border-radius: 999px;
           background: var(--surface-2); }
   .selo.ok { color: var(--success); }
@@ -1350,6 +1431,16 @@ PAGINA = """<!doctype html>
       <span class="indicador-gpu-ponto" aria-hidden="true"></span>
       <span id="indicador-gpu-texto"></span>
     </span>
+    <button type="button" id="abrir-filmes" class="botao-icone"
+            aria-haspopup="dialog" aria-controls="painel-filmes"
+            title="Ferramentas do acervo de filmes" aria-label="Filmes">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+             stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M3 7h18v13a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V7Z"></path>
+          <path d="M3 7l2.5-4h3L6 7H3Z"></path>
+          <path d="M9 7l2.5-4h3L12 7H9Z"></path>
+          <path d="M15 7l2.5-4h3L18 7h-3Z"></path></svg>
+    </button>
     <button type="button" id="abrir-historico" class="botao-icone"
             aria-haspopup="dialog" aria-controls="painel-historico"
             title="Hist&oacute;rico de trabalhos" aria-label="Hist&oacute;rico de trabalhos">
@@ -1538,6 +1629,47 @@ PAGINA = """<!doctype html>
       </div>
     </div>
   </section>
+  </div>
+  </dialog>
+
+  <dialog id="painel-filmes" class="modal-config" aria-labelledby="titulo-painel-filmes">
+  <div class="topo-modal">
+    <div class="titulo-modal">
+      <h2 id="titulo-painel-filmes">Filmes</h2>
+      <button type="button" id="fechar-filmes" class="fantasma"
+              title="Fechar (Esc)" aria-label="Fechar filmes">&times;</button>
+    </div>
+    <p class="sub" style="padding: 0 20px 14px; margin: 0;">
+      Ferramentas do acervo de filmes (HD separado, n&atilde;o a pasta de
+      legendas acima). Cada uma simula antes de gravar qualquer coisa.
+    </p>
+  </div>
+  <div class="corpo-modal">
+    <div class="painel-ferramenta">
+      <h3>Atualizar filmes</h3>
+      <p class="dica-config">Gera <code>.nfo</code> (t&iacute;tulo, sinopse,
+        ano) para todo filme do acervo que ainda n&atilde;o tem, buscando no
+        TMDB pelo nome do arquivo/pasta. N&atilde;o toca em quem j&aacute;
+        tem <code>.nfo</code>.</p>
+      <div class="acoes-ferramenta">
+        <button type="button" class="fantasma" data-ferramenta="atualizar_filmes" data-execute="0">Simular</button>
+        <button type="button" class="executar" data-ferramenta="atualizar_filmes" data-execute="1">Executar</button>
+      </div>
+      <div class="resultado-ferramenta" id="resultado-atualizar_filmes" hidden></div>
+    </div>
+    <div class="painel-ferramenta">
+      <h3>Atualizar g&ecirc;neros</h3>
+      <p class="dica-config">Corrige o g&ecirc;nero (tag <code>&lt;genre&gt;</code>)
+        dos <code>.nfo</code> que j&aacute; existem, para o nome da pasta
+        onde cada filme est&aacute; &mdash; sem chamar o TMDB, s&oacute; essa
+        tag. &Eacute; para quem j&aacute; tem <code>.nfo</code> com
+        g&ecirc;nero errado ou desatualizado.</p>
+      <div class="acoes-ferramenta">
+        <button type="button" class="fantasma" data-ferramenta="atualizar_generos" data-execute="0">Simular</button>
+        <button type="button" class="executar" data-ferramenta="atualizar_generos" data-execute="1">Executar</button>
+      </div>
+      <div class="resultado-ferramenta" id="resultado-atualizar_generos" hidden></div>
+    </div>
   </div>
   </dialog>
 
@@ -1968,6 +2100,110 @@ $('fechar-config').onclick = () => dialogoConfig.close();
 // num filho. So o primeiro conta como pedido de sair.
 dialogoConfig.addEventListener('click', (e) => {
   if (e.target === dialogoConfig) dialogoConfig.close();
+});
+
+// Filmes: ferramentas do acervo em HD separado (autosrt.filmes), cada uma
+// na própria fila do servidor -- sequencial de propósito (ver create_app),
+// então só uma roda por vez e os botões das duas ficam travados juntos
+// enquanto isso, em vez de deixar tentar e receber um 409 do servidor.
+const dialogoFilmes = $('painel-filmes');
+const jobsFilmesAtivos = {}; // ferramenta -> job_id em andamento
+
+function botoesFilmes() {
+  return dialogoFilmes.querySelectorAll('button[data-ferramenta]');
+}
+
+function relatorioFilmesTexto(ferramenta, relatorio) {
+  if (!relatorio) return '';
+  const prefixo = relatorio.simulado ? 'Simulação — ' : '';
+  if (ferramenta === 'atualizar_filmes') {
+    return prefixo +
+      `${relatorio.unidades_total} filme(s) no acervo, ${relatorio.ja_tinha_nfo} já tinham .nfo. ` +
+      `${relatorio.simulado ? 'Escreveria' : 'Escritos'}: ${relatorio.escritos}. ` +
+      `Sem título/ano: ${relatorio.sem_extracao}. Sem match confiável: ${relatorio.sem_match}.`;
+  }
+  return prefixo +
+    `${relatorio.nfo_total} .nfo encontrados. ` +
+    `${relatorio.simulado ? 'Corrigiria' : 'Corrigidos'}: ${relatorio.corrigidos}. ` +
+    `Já estavam certos: ${relatorio.ja_corretos}. Ignorados: ${relatorio.ignorados}.`;
+}
+
+async function atualizarCartaoFilme(ferramenta) {
+  const jobId = jobsFilmesAtivos[ferramenta];
+  if (!jobId) return;
+  const alvo = $('resultado-' + ferramenta);
+
+  const r = await fetch('/api/filmes/trabalho/' + jobId);
+  if (!r.ok) { delete jobsFilmesAtivos[ferramenta]; return; }
+  const job = await r.json();
+
+  alvo.hidden = false;
+  if (job.estado === 'erro') {
+    alvo.innerHTML = `<div class="etapa erro">${job.erro || 'Falhou.'}</div>`;
+  } else if (job.pronto) {
+    const classe = job.estado === 'cancelado' ? '' : 'ok';
+    const texto = job.estado === 'cancelado' ? 'Cancelado.' : relatorioFilmesTexto(ferramenta, job.relatorio);
+    alvo.innerHTML = `<div class="etapa ${classe}">${texto}</div>`;
+  } else {
+    const semNumero = job.estado === 'rodando' && !job.progresso;
+    alvo.innerHTML = `<div class="etapa">${job.etapa}</div>
+      <div class="barra${semNumero ? ' indefinida' : ''}"><div style="width:${semNumero ? 100 : job.progresso}%"></div></div>
+      <div class="acoes-ferramenta"><button type="button" class="fantasma" id="cancelar-${ferramenta}">Cancelar</button></div>`;
+    $('cancelar-' + ferramenta).onclick = () => fetch('/api/filmes/trabalho/' + jobId + '/cancelar', {method: 'POST'});
+  }
+
+  if (job.pronto) {
+    delete jobsFilmesAtivos[ferramenta];
+    if (!Object.keys(jobsFilmesAtivos).length) botoesFilmes().forEach((b) => b.disabled = false);
+  }
+}
+
+function pollFilmes() {
+  Object.keys(jobsFilmesAtivos).forEach(atualizarCartaoFilme);
+}
+setInterval(pollFilmes, 1500);
+
+async function sincronizarFilmes() {
+  // Reflete um trabalho que já estava rodando antes da página (re)abrir o
+  // diálogo -- sem isso, fechar e abrir de novo (ou recarregar a página)
+  // no meio de uma ferramenta de 13 TB fazia parecer que nada rodava.
+  const r = await fetch('/api/filmes/trabalhos');
+  const jobs = await r.json();
+  for (const job of jobs) {
+    const ferramenta = (job.detalhes || {}).ferramenta;
+    if (ferramenta && !job.pronto) jobsFilmesAtivos[ferramenta] = job.id;
+  }
+  if (Object.keys(jobsFilmesAtivos).length) botoesFilmes().forEach((b) => b.disabled = true);
+  pollFilmes();
+}
+
+$('abrir-filmes').onclick = () => { dialogoFilmes.showModal(); sincronizarFilmes(); };
+$('fechar-filmes').onclick = () => dialogoFilmes.close();
+dialogoFilmes.addEventListener('click', (e) => {
+  if (e.target === dialogoFilmes) dialogoFilmes.close();
+});
+
+botoesFilmes().forEach((botao) => {
+  botao.onclick = async () => {
+    const ferramenta = botao.dataset.ferramenta;
+    const execute = botao.dataset.execute === '1';
+    if (execute && !confirm('Isso grava de verdade no HD de filmes.\\n\\nJá rodou "Simular" para essa ferramenta e confere com o resultado?')) {
+      return;
+    }
+    botoesFilmes().forEach((b) => b.disabled = true);
+    const r = await fetch('/api/filmes/' + ferramenta, {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({execute}),
+    });
+    const dados = await r.json();
+    if (!r.ok) {
+      alert(dados.erro || 'Não consegui iniciar.');
+      botoesFilmes().forEach((b) => b.disabled = false);
+      return;
+    }
+    jobsFilmesAtivos[ferramenta] = dados.id;
+    atualizarCartaoFilme(ferramenta);
+  };
 });
 
 // Histórico: mesmo padrão do diálogo de configuração acima, mas o

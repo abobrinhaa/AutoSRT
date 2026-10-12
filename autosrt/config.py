@@ -44,6 +44,10 @@ EXAMPLE_CONFIG = {
     # Opcional: reconhece o filme pelo nome do arquivo na lista do servidor.
     # Chave gratuita em https://www.themoviedb.org/settings/api
     "tmdb_api_key": "...",
+    # Opcional: onde está o acervo de filmes (HD separado da pasta de
+    # trabalho do AutoSRT) que as ferramentas da tela "Filmes" catalogam.
+    # Ver autosrt/filmes.py.
+    "filmes_dir": "/mnt/filmes_storage",
     # Opcional: sensibilidade da VAD para toda transcrição feita pela fila
     # web (o CLI aceita os mesmos ajustes por linha de comando, que valem
     # só para aquela execução). Sem isso, usa o padrão do próprio Whisper.
@@ -162,6 +166,16 @@ def get_setting(name: str, env_var: str = None, default=None):
 def get_tmdb_api_key():
     """Chave da API do TMDb, ou ``None`` se não estiver configurada."""
     return get_setting("tmdb_api_key", TMDB_ENV_VAR)
+
+
+def get_filmes_dir():
+    """Onde está o acervo de filmes que a tela "Filmes" cataloga.
+
+    ``/mnt/filmes_storage`` como padrão porque é onde o HD está montado
+    neste servidor -- em outra instalação, ``AUTOSRT_FILMES_DIR`` ou
+    ``filmes_dir`` no ``config.json`` apontam para o lugar certo.
+    """
+    return get_setting("filmes_dir", "AUTOSRT_FILMES_DIR", "/mnt/filmes_storage")
 
 
 def get_openrouter_api_key():
