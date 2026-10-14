@@ -178,18 +178,21 @@ def _executar_ferramenta_filme(job):
         resultado = filmes.atualizar_filmes(execute, job=job)
     elif ferramenta == "atualizar_generos":
         resultado = filmes.atualizar_generos(execute, job=job)
+    elif ferramenta == "atualizar_sinopses":
+        resultado = filmes.atualizar_sinopses(execute, job=job)
     else:
         raise ValueError(f"ferramenta desconhecida: {ferramenta}")
     job.resultado = json.dumps(resultado, ensure_ascii=False)
     job.detalhes["relatorio"] = resultado
 
 
-#: As duas ferramentas da tela "Filmes" (ver PAGINA, painel-filmes). Cada
-#: uma tem rótulo e nome de ``detalhes["ferramenta"]`` esperado por
+#: As ferramentas da tela "Filmes" (ver PAGINA, painel-filmes). Cada uma
+#: tem rótulo e nome de ``detalhes["ferramenta"]`` esperado por
 #: ``_executar_ferramenta_filme``.
 FERRAMENTAS_FILMES = {
     "atualizar_filmes": "Atualizar filmes",
     "atualizar_generos": "Atualizar gêneros",
+    "atualizar_sinopses": "Atualizar sinopses",
 }
 
 
@@ -1732,15 +1735,17 @@ PAGINA = """<!doctype html>
               title="Fechar (Esc)" aria-label="Fechar filmes">&times;</button>
     </div>
     <p class="sub" style="padding: 0 20px 14px; margin: 0;">
-      Tr&ecirc;s ferramentas para organizar os filmes guardados no HD (o HD
-      de filmes, n&atilde;o a pasta de legendas l&aacute; em cima). As duas
-      de baixo t&ecirc;m um bot&atilde;o para s&oacute; testar e mostrar o
+      Quatro ferramentas para organizar os filmes guardados no HD (o HD
+      de filmes, n&atilde;o a pasta de legendas l&aacute; em cima). As de
+      baixo t&ecirc;m um bot&atilde;o para s&oacute; testar e mostrar o
       que mudaria, sem alterar nada ainda, e outro para aplicar de verdade.
     </p>
     <p class="sub" id="filmes-status-automatico" style="padding: 0 20px 14px; margin: 0;">
-      Essas tr&ecirc;s tamb&eacute;m rodam sozinhas, a cada 2 horas &mdash;
-      n&atilde;o precisa clicar em nada pra filme novo ganhar ficha e
-      categoria certa. <span id="filmes-ultima-automatica">Carregando...</span>
+      Avisar o Jellyfin, Atualizar filmes e Atualizar g&ecirc;neros rodam
+      sozinhas, a cada 2 horas &mdash; n&atilde;o precisa clicar em nada
+      pra filme novo ganhar ficha e categoria certa. Atualizar sinopses
+      &eacute; s&oacute; manual (pode demorar, chama a internet pra cada
+      filme incompleto). <span id="filmes-ultima-automatica">Carregando...</span>
     </p>
   </div>
   <div class="corpo-modal">
@@ -1781,6 +1786,20 @@ PAGINA = """<!doctype html>
         <button type="button" class="executar" data-ferramenta="atualizar_generos" data-execute="1">Aplicar de verdade</button>
       </div>
       <div class="resultado-ferramenta" id="resultado-atualizar_generos" hidden></div>
+    </div>
+    <div class="painel-ferramenta">
+      <h3>Atualizar sinopses</h3>
+      <p class="dica-config">Completa a ficha (resumo, t&iacute;tulo certo,
+        ano) de filme que j&aacute; tem ficha no HD mas ficou incompleta
+        &mdash; sem resumo nenhum, por exemplo. Busca de novo na base de
+        dados de filmes na internet. <strong>N&atilde;o mexe na
+        categoria</strong> do filme de jeito nenhum, s&oacute; no resto da
+        ficha.</p>
+      <div class="acoes-ferramenta">
+        <button type="button" class="fantasma" data-ferramenta="atualizar_sinopses" data-execute="0">Só testar</button>
+        <button type="button" class="executar" data-ferramenta="atualizar_sinopses" data-execute="1">Aplicar de verdade</button>
+      </div>
+      <div class="resultado-ferramenta" id="resultado-atualizar_sinopses" hidden></div>
     </div>
   </div>
   </dialog>
@@ -2235,10 +2254,17 @@ function relatorioFilmesTexto(ferramenta, relatorio) {
       `Não deu pra descobrir o nome de ${relatorio.sem_extracao}. ` +
       `Não achei com certeza na base de dados: ${relatorio.sem_match}.`;
   }
+  if (ferramenta === 'atualizar_generos') {
+    return prefixo +
+      `${relatorio.nfo_total} filme(s) com ficha no HD. ` +
+      `${relatorio.simulado ? 'Corrigiria a categoria de' : 'Categoria corrigida em'}: ${relatorio.corrigidos}. ` +
+      `Já estavam certos: ${relatorio.ja_corretos}. Não consegui ler: ${relatorio.ignorados}.`;
+  }
   return prefixo +
-    `${relatorio.nfo_total} filme(s) com ficha no HD. ` +
-    `${relatorio.simulado ? 'Corrigiria a categoria de' : 'Categoria corrigida em'}: ${relatorio.corrigidos}. ` +
-    `Já estavam certos: ${relatorio.ja_corretos}. Não consegui ler: ${relatorio.ignorados}.`;
+    `${relatorio.fichas_incompletas} filme(s) com ficha incompleta. ` +
+    `${relatorio.simulado ? 'Completaria' : 'Completados agora'}: ${relatorio.atualizados}. ` +
+    `Não deu pra descobrir o nome de ${relatorio.sem_extracao}. ` +
+    `Não achei com certeza na base de dados: ${relatorio.sem_match}.`;
 }
 
 async function atualizarCartaoFilme(ferramenta) {

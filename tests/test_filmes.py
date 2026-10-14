@@ -139,6 +139,101 @@ class TestAtualizarGeneros(unittest.TestCase):
         self.assertEqual(relatorio["ja_corretos"], 1)
 
 
+class TestNfoSemSinopse(unittest.TestCase):
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+
+    def _escrever(self, texto):
+        caminho = self.tmp / "a.nfo"
+        caminho.write_text(texto, encoding="utf-8")
+        return caminho
+
+    def test_plot_vazio_conta_como_sem_sinopse(self):
+        caminho = self._escrever("<movie>\n  <plot></plot>\n</movie>\n")
+        self.assertTrue(filmes._nfo_sem_sinopse(caminho))
+
+    def test_sem_tag_plot_conta_como_sem_sinopse(self):
+        caminho = self._escrever("<movie>\n  <title>X</title>\n</movie>\n")
+        self.assertTrue(filmes._nfo_sem_sinopse(caminho))
+
+    def test_plot_preenchido_nao_conta(self):
+        caminho = self._escrever("<movie>\n  <plot>Um resumo qualquer.</plot>\n</movie>\n")
+        self.assertFalse(filmes._nfo_sem_sinopse(caminho))
+
+
+class _TMDBFalso:
+    """Dublê de :class:`filmes._TMDBClient`, só com o que
+    ``atualizar_sinopses``/``best_match`` chamam."""
+
+    def __init__(self, resultados_busca=(), detalhes=None):
+        self.resultados_busca = list(resultados_busca)
+        self.detalhes = detalhes or {}
+
+    def search_movie(self, query, year=None):
+        return self.resultados_busca
+
+    def get_movie_details(self, movie_id, language="pt-BR"):
+        return self.detalhes
+
+
+class TestAtualizarSinopses(unittest.TestCase):
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        pasta = self.tmp / "TERROR"
+        pasta.mkdir(parents=True)
+        self.video = pasta / "O Lobo - 1975.mkv"
+        self.video.write_bytes(b"")
+        self.nfo = pasta / "O Lobo - 1975.nfo"
+        self.nfo.write_text(
+            "<movie>\n  <title>O Lobo</title>\n  <plot></plot>\n"
+            "  <genre>CULT</genre>\n  <year>1975</year>\n  <tmdbid></tmdbid>\n</movie>\n",
+            encoding="utf-8")
+
+    def _rodar(self, execute, tmdb):
+        with mock.patch.object(filmes, "base_dir", return_value=self.tmp), \
+             mock.patch.object(filmes, "_tmdb_client", return_value=tmdb):
+            return filmes.atualizar_sinopses(execute=execute)
+
+    def test_preenche_sinopse_e_mantem_genero_da_pasta_nao_do_arquivo_antigo(self):
+        tmdb = _TMDBFalso(
+            resultados_busca=[{"id": 42, "title": "O Lobo", "original_title": "The Wolf",
+                               "release_date": "1975-01-01"}],
+            detalhes={"title": "O Lobo", "original_title": "The Wolf",
+                     "overview": "Um resumo de verdade.", "release_date": "1975-01-01",
+                     "genres": [{"name": "Horror"}]})
+        relatorio = self._rodar(execute=True, tmdb=tmdb)
+        self.assertEqual(relatorio["atualizados"], 1)
+        texto = self.nfo.read_text(encoding="utf-8")
+        self.assertIn("<plot>Um resumo de verdade.</plot>", texto)
+        # Gênero vem da PASTA (TERROR), nunca do que já tava no arquivo (CULT).
+        self.assertIn("<genre>TERROR</genre>", texto)
+        self.assertNotIn("CULT", texto)
+
+    def test_ja_tem_sinopse_nao_e_tocado(self):
+        self.nfo.write_text(
+            "<movie>\n  <plot>Já tem.</plot>\n  <genre>TERROR</genre>\n</movie>\n",
+            encoding="utf-8")
+        relatorio = self._rodar(execute=True, tmdb=_TMDBFalso())
+        self.assertEqual(relatorio["fichas_incompletas"], 0)
+        self.assertEqual(relatorio["atualizados"], 0)
+
+    def test_simulacao_nao_grava(self):
+        original = self.nfo.read_text(encoding="utf-8")
+        tmdb = _TMDBFalso(
+            resultados_busca=[{"id": 42, "title": "O Lobo", "release_date": "1975-01-01"}],
+            detalhes={"title": "O Lobo", "overview": "Resumo.", "release_date": "1975-01-01"})
+        relatorio = self._rodar(execute=False, tmdb=tmdb)
+        self.assertEqual(relatorio["atualizados"], 1)
+        self.assertTrue(relatorio["simulado"])
+        self.assertEqual(self.nfo.read_text(encoding="utf-8"), original)
+
+    def test_sem_match_confiavel_vai_pro_review_e_mantem_vazio(self):
+        relatorio = self._rodar(execute=True, tmdb=_TMDBFalso(resultados_busca=[]))
+        self.assertEqual(relatorio["sem_match"], 1)
+        self.assertEqual(relatorio["atualizados"], 0)
+        self.assertIn("<plot></plot>", self.nfo.read_text(encoding="utf-8"))
+
+
 class TestAvisarJellyfin(unittest.TestCase):
     def test_sem_configuracao_avisa_com_mensagem_clara(self):
         with mock.patch.object(filmes.config, "get_jellyfin_url", return_value=None), \

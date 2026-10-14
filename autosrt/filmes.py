@@ -535,6 +535,114 @@ def atualizar_generos(execute: bool, job=None) -> dict:
     return relatorio
 
 
+_PLOT_RE = re.compile(r"<plot>(.*?)</plot>", re.IGNORECASE | re.DOTALL)
+
+
+def _nfo_sem_sinopse(caminho: Path) -> bool:
+    """Diz se o ``.nfo`` não tem sinopse -- ``<plot>`` ausente, vazio, ou
+    arquivo que não deu pra ler (nesse caso não mexe, então conta como
+    "tem", pra não tentar de novo toda vez)."""
+    try:
+        texto = caminho.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return False
+    match = _PLOT_RE.search(texto)
+    return not match or not match.group(1).strip()
+
+
+def atualizar_sinopses(execute: bool, job=None, sleep_s: float = 0.1) -> dict:
+    """Preenche sinopse, título e ano de filme que já tem ``.nfo`` mas
+    ficou incompleto -- gerado sem TMDB (``atualizar_generos`` corrige só
+    o gênero desses, nunca mexeu na sinopse) ou com um match que falhou na
+    época e nunca foi tentado de novo.
+
+    NUNCA mexe no gênero: o `.nfo` é reescrito inteiro, mas o ``<genre>``
+    vem de novo de ``unit.genre_folder`` (a pasta onde o filme está hoje),
+    nunca lido do arquivo antigo -- é a mesma fonte da verdade que
+    :func:`atualizar_generos` usa, só que aplicada aqui de propósito pra
+    um reescrever não arriscar perder o que o outro corrigiu.
+    """
+    def etapa(msg):
+        if job is not None:
+            job.etapa = msg
+
+    def cancelado() -> bool:
+        return job is not None and job.cancelar.is_set()
+
+    etapa("Procurando filmes com ficha incompleta...")
+    tmdb = _tmdb_client()
+    units, _ = discover_units()
+    pendentes = [u for u in units
+                if u.nfo_path.exists() and _nfo_sem_sinopse(u.nfo_path)]
+
+    relatorio = {"fichas_incompletas": len(pendentes), "processados": 0,
+                "atualizados": 0, "sem_extracao": 0, "sem_match": 0}
+    review = []
+
+    for i, unit in enumerate(pendentes):
+        if cancelado():
+            break
+        etapa(f"[{unit.genre_folder}] {unit.name_source}")
+        if job is not None:
+            job.progresso = int(i * 100 / len(pendentes)) if pendentes else 100
+
+        extraido = extract_title_year(unit.name_source)
+        if not extraido:
+            relatorio["sem_extracao"] += 1
+            continue
+        title, year = extraido
+
+        candidato, ratio, year_ok = best_match(tmdb, title, year)
+        relatorio["processados"] += 1
+
+        min_ratio = TITLE_RATIO_MIN if year is not None else TITLE_RATIO_MIN_NO_YEAR
+        if not candidato or ratio < min_ratio or (year is not None and not year_ok):
+            relatorio["sem_match"] += 1
+            review.append({
+                "path": str(unit.video_path),
+                "titulo_extraido": title, "ano_extraido": year,
+                "melhor_candidato": candidato.get("title") if candidato else None,
+                "ratio": round(ratio, 2),
+                "motivo": "sem match confiável no TMDB -- sinopse continua vazia",
+            })
+            time.sleep(sleep_s)
+            continue
+
+        detalhes = tmdb.get_movie_details(candidato["id"], "pt-BR")
+        if not detalhes.get("overview"):
+            detalhes_en = tmdb.get_movie_details(candidato["id"], "en-US")
+            detalhes = {**detalhes_en, **{k: v for k, v in detalhes.items() if v}}
+
+        nfo_content = nfo_xml(
+            title=detalhes.get("title") or candidato.get("title") or title,
+            original_title=detalhes.get("original_title") or candidato.get("original_title") or title,
+            plot=detalhes.get("overview", ""),
+            genres=[unit.genre_folder],
+            tmdb_genres=[g["name"] for g in detalhes.get("genres", [])],
+            premiered=detalhes.get("release_date", ""),
+            year=year or (detalhes.get("release_date", "")[:4] or None),
+            tmdb_id=candidato["id"],
+        )
+
+        if execute:
+            try:
+                unit.nfo_path.write_text(nfo_content, encoding="utf-8")
+                relatorio["atualizados"] += 1
+            except OSError as exc:
+                review.append({"path": str(unit.video_path), "motivo": f"erro ao escrever nfo: {exc}"})
+        else:
+            relatorio["atualizados"] += 1
+
+        time.sleep(sleep_s)
+
+    if review:
+        Path(config.app_directory(), "filmes_sinopses_review.json").write_text(
+            json.dumps(review, ensure_ascii=False, indent=2), encoding="utf-8")
+    relatorio["revisao"] = len(review)
+    relatorio["simulado"] = not execute
+    return relatorio
+
+
 #: Onde fica o registro de quando o worker automático (ver
 #: :func:`autosrt.web._worker_filmes_periodico`) rodou pela última vez.
 #: Fora do git de propósito, igual o cache do TMDB -- é estado, não código.
