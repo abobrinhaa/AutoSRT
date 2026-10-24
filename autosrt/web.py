@@ -1780,7 +1780,8 @@ PAGINA = """<!doctype html>
         onde o filme est&aacute; guardado no HD. &Eacute; para arrumar
         filme que ficou com a categoria errada ou desatualizada &mdash;
         n&atilde;o precisa buscar nada na internet para isso, s&oacute;
-        olha em qual pasta o filme est&aacute;.</p>
+        olha em qual pasta o filme est&aacute;. Corrige na ficha do HD e
+        tamb&eacute;m direto no Jellyfin.</p>
       <div class="acoes-ferramenta">
         <button type="button" class="fantasma" data-ferramenta="atualizar_generos" data-execute="0">Só testar</button>
         <button type="button" class="executar" data-ferramenta="atualizar_generos" data-execute="1">Aplicar de verdade</button>
@@ -2255,10 +2256,18 @@ function relatorioFilmesTexto(ferramenta, relatorio) {
       `Não achei com certeza na base de dados: ${relatorio.sem_match}.`;
   }
   if (ferramenta === 'atualizar_generos') {
+    let jellyfin = '';
+    if (relatorio.jellyfin_erro) {
+      jellyfin = ` Jellyfin não conferido: ${relatorio.jellyfin_erro}`;
+    } else if (relatorio.jellyfin_filmes !== undefined) {
+      jellyfin = ` No Jellyfin: ${relatorio.jellyfin_filmes} filme(s) conferidos, ` +
+        `${relatorio.simulado ? 'corrigiria' : 'corrigidos agora'}: ${relatorio.jellyfin_corrigidos}.` +
+        (relatorio.jellyfin_falhas ? ` Não consegui corrigir: ${relatorio.jellyfin_falhas}.` : '');
+    }
     return prefixo +
       `${relatorio.nfo_total} filme(s) com ficha no HD. ` +
       `${relatorio.simulado ? 'Corrigiria a categoria de' : 'Categoria corrigida em'}: ${relatorio.corrigidos}. ` +
-      `Já estavam certos: ${relatorio.ja_corretos}. Não consegui ler: ${relatorio.ignorados}.`;
+      `Já estavam certos: ${relatorio.ja_corretos}. Não consegui ler: ${relatorio.ignorados}.` + jellyfin;
   }
   return prefixo +
     `${relatorio.fichas_incompletas} filme(s) com ficha incompleta. ` +

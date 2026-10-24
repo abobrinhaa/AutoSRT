@@ -1,6 +1,7 @@
 """Testes das ferramentas do acervo de filmes (autosrt.filmes)."""
 
 import tempfile
+import unicodedata
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -105,6 +106,10 @@ class TestDiscoverUnits(unittest.TestCase):
 class TestAtualizarGeneros(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp())
+        # Nenhum teste daqui fala com um Jellyfin de verdade.
+        sem_jellyfin = mock.patch.object(filmes.config, "get_jellyfin_url", return_value=None)
+        sem_jellyfin.start()
+        self.addCleanup(sem_jellyfin.stop)
 
     def _nfo(self, genero_pasta, nome_arquivo, genero_atual):
         pasta = self.tmp / genero_pasta
@@ -137,6 +142,82 @@ class TestAtualizarGeneros(unittest.TestCase):
             relatorio = filmes.atualizar_generos(execute=True)
         self.assertEqual(relatorio["corrigidos"], 0)
         self.assertEqual(relatorio["ja_corretos"], 1)
+
+    def test_sem_jellyfin_configurado_corrige_so_o_nfo(self):
+        self._nfo("TERROR", "a.nfo", "CULT")
+        with mock.patch.object(filmes, "base_dir", return_value=self.tmp):
+            relatorio = filmes.atualizar_generos(execute=True)
+        self.assertEqual(relatorio["corrigidos"], 1)
+        self.assertIn("jellyfin_erro", relatorio)
+
+
+class TestCorrigirGenerosJellyfin(unittest.TestCase):
+    BASE = Path("/mnt/filmes_storage")
+
+    def _resposta(self, dados=None, status=200):
+        r = mock.Mock(status_code=status)
+        r.json.return_value = dados
+        r.raise_for_status.return_value = None
+        return r
+
+    def _rodar(self, execute, itens, item_completo):
+        gets = {
+            "/Users": self._resposta([{"Id": "adm", "Policy": {"IsAdministrator": True}}]),
+            "/Items": self._resposta({"Items": itens}),
+        }
+
+        def get(url, **kwargs):
+            for fim, resposta in gets.items():
+                if url.endswith(fim):
+                    return resposta
+            return self._resposta(dict(item_completo))
+
+        post = mock.Mock(return_value=self._resposta(status=204))
+        with mock.patch.object(filmes.config, "get_jellyfin_url", return_value="http://jf:8096"), \
+             mock.patch.object(filmes.config, "get_jellyfin_api_key", return_value="chave"), \
+             mock.patch.object(filmes.requests, "get", side_effect=get), \
+             mock.patch.object(filmes.requests, "post", post):
+            relatorio = filmes._corrigir_generos_jellyfin(
+                execute, self.BASE, lambda msg: None, lambda: False)
+        return relatorio, post
+
+    def test_corrige_genero_e_tira_so_a_trava_de_genero(self):
+        itens = [{"Id": "a1", "Path": "/mnt/filmes_storage/TERROR/x/x.mkv", "Genres": ["Drama"]}]
+        completo = {"Id": "a1", "Path": itens[0]["Path"], "Genres": ["Drama"],
+                    "GenreItems": [{"Name": "Drama"}], "LockedFields": ["Genres", "Tags"],
+                    "Overview": "sinopse"}
+        relatorio, post = self._rodar(True, itens, completo)
+        self.assertEqual(relatorio["jellyfin_corrigidos"], 1)
+        enviado = post.call_args.kwargs["json"]
+        self.assertEqual(enviado["Genres"], ["TERROR"])
+        self.assertEqual(enviado["LockedFields"], ["Tags"])
+        self.assertNotIn("GenreItems", enviado)
+        self.assertEqual(enviado["Overview"], "sinopse")
+
+    def test_simulacao_so_conta(self):
+        itens = [{"Id": "a1", "Path": "/mnt/filmes_storage/TERROR/x.mkv", "Genres": ["Drama"]},
+                 {"Id": "a2", "Path": "/mnt/filmes_storage/CULT/y.mkv", "Genres": ["CULT"]}]
+        relatorio, post = self._rodar(False, itens, {})
+        self.assertEqual(relatorio["jellyfin_filmes"], 2)
+        self.assertEqual(relatorio["jellyfin_corrigidos"], 1)
+        post.assert_not_called()
+
+    def test_ignora_filme_fora_do_hd(self):
+        itens = [{"Id": "a1", "Path": "/mnt/outro_disco/DESENHOS/x.mkv", "Genres": ["Kids"]}]
+        relatorio, post = self._rodar(True, itens, {})
+        self.assertEqual(relatorio["jellyfin_filmes"], 0)
+        post.assert_not_called()
+
+    def test_listagem_atrasada_nao_regrava_quem_ja_esta_certo(self):
+        itens = [{"Id": "a1", "Path": "/mnt/filmes_storage/TERROR/x.mkv", "Genres": ["Drama"]}]
+        completo = {"Id": "a1", "Genres": ["TERROR"], "LockedFields": []}
+        relatorio, post = self._rodar(True, itens, completo)
+        self.assertEqual(relatorio["jellyfin_corrigidos"], 0)
+        post.assert_not_called()
+
+    def test_nome_da_pasta_com_acento_em_bytes_diferentes(self):
+        nfd = unicodedata.normalize("NFD", "/mnt/filmes_storage/TRADUÇÃO ANITEC/x.mkv")
+        self.assertEqual(filmes._pasta_genero(nfd, self.BASE), "TRADUÇÃO ANITEC")
 
 
 class TestNfoSemSinopse(unittest.TestCase):

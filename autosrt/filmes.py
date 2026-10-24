@@ -15,7 +15,9 @@ sistema de arquivos NTFS do HD) para caber numa requisição só:
     taxonomia real do acervo, não o que o TMDB chama de gênero -- ver
     comentário em :func:`nfo_xml`). Varre os ``.nfo`` que já existem e
     corrige só a tag ``<genre>`` de quem estiver com o gênero errado ou
-    faltando, sem tocar no resto do arquivo.
+    faltando, sem tocar no resto do arquivo. Depois confere o gênero no
+    próprio Jellyfin e corrige lá também (ver
+    :func:`_corrigir_generos_jellyfin`) -- só o ``.nfo`` não basta.
 
 Esta lógica é uma adaptação de ``batch_filmes.py``/``fix_genero_pendentes.py``
 (``/root/jeannie-organizer``), que rodavam à mão no host. Reaproveitada aqui
@@ -531,7 +533,103 @@ def atualizar_generos(execute: bool, job=None) -> dict:
         if execute:
             caminho.write_text(novo_texto, encoding="utf-8")
 
+    if not cancelado():
+        try:
+            relatorio.update(_corrigir_generos_jellyfin(execute, diretorio, etapa, cancelado))
+        except (JellyfinNaoConfigurado, JellyfinFalhou) as exc:
+            relatorio["jellyfin_erro"] = str(exc)
+
     relatorio["simulado"] = not execute
+    return relatorio
+
+
+def _pasta_genero(caminho: str, diretorio: Path) -> Optional[str]:
+    """Nome da pasta de gênero de um filme, a partir do caminho que o
+    Jellyfin guarda (``/mnt/filmes_storage/TERROR/x/x.mkv`` -> ``TERROR``).
+    ``None`` se o filme não é do HD. Normaliza para NFC dos dois lados: o
+    mesmo "Ç" pode vir em bytes diferentes e o nome parecer igual sem ser."""
+    base = unicodedata.normalize("NFC", str(diretorio)).rstrip("/") + "/"
+    caminho = unicodedata.normalize("NFC", caminho or "")
+    if not caminho.startswith(base):
+        return None
+    pasta = caminho[len(base):].split("/")[0]
+    return pasta if pasta and pasta not in SKIP_DIRS else None
+
+
+def _corrigir_generos_jellyfin(execute: bool, diretorio: Path, etapa, cancelado) -> dict:
+    """Deixa o gênero de cada filme *no Jellyfin* igual ao nome da pasta.
+
+    Corrigir o ``.nfo`` não basta: o Jellyfin não troca um gênero que o
+    filme já tem só porque o ``.nfo`` mudou (nem na releitura normal), não
+    lê ``movie.nfo`` em pasta com dois vídeos, e ignora o ``.nfo`` de vez
+    no filme com o campo Gênero travado -- e milhares estavam travados.
+    Por isso grava direto pela API: tira a trava de Gênero (as outras
+    travas ficam) e põe o nome da pasta. O resto do item volta como veio.
+    """
+    url = config.get_jellyfin_url()
+    chave = config.get_jellyfin_api_key()
+    if not url or not chave:
+        raise JellyfinNaoConfigurado(
+            "Falta configurar o endereço e a chave do Jellyfin "
+            "(jellyfin_url/jellyfin_api_key no config.json do servidor).")
+    url = url.rstrip("/")
+    cabecalho = {"X-Emby-Token": chave}
+
+    etapa("Conferindo os gêneros no Jellyfin...")
+    try:
+        usuarios = requests.get(f"{url}/Users", headers=cabecalho, timeout=30)
+        usuarios.raise_for_status()
+        admin = next((u["Id"] for u in usuarios.json()
+                      if u.get("Policy", {}).get("IsAdministrator")), None)
+        lista = requests.get(f"{url}/Items", headers=cabecalho, timeout=300, params={
+            "Recursive": "true", "IncludeItemTypes": "Movie", "Fields": "Path,Genres"})
+        lista.raise_for_status()
+        itens = lista.json().get("Items", [])
+    except (requests.RequestException, ValueError) as exc:
+        raise JellyfinFalhou(f"Não consegui falar com o Jellyfin: {exc}") from exc
+    if admin is None:
+        raise JellyfinFalhou("A chave do Jellyfin não enxerga nenhum usuário administrador.")
+
+    errados = []
+    filmes_hd = 0
+    for item in itens:
+        pasta = _pasta_genero(item.get("Path"), diretorio)
+        if pasta is None:
+            continue
+        filmes_hd += 1
+        if item.get("Genres") != [pasta]:
+            errados.append((item["Id"], pasta))
+
+    relatorio = {"jellyfin_filmes": filmes_hd, "jellyfin_corrigidos": 0, "jellyfin_falhas": 0}
+    if not execute:
+        relatorio["jellyfin_corrigidos"] = len(errados)
+        return relatorio
+
+    for i, (item_id, pasta) in enumerate(errados):
+        if cancelado():
+            break
+        etapa(f"Jellyfin: corrigindo gênero ({i + 1}/{len(errados)})")
+        try:
+            # Item completo (com LockedFields): é ele que volta no POST.
+            atual = requests.get(f"{url}/Items/{item_id}", headers=cabecalho,
+                                 params={"userId": admin}, timeout=60)
+            atual.raise_for_status()
+            item = atual.json()
+            travas = [f for f in item.get("LockedFields", []) if f != "Genres"]
+            # A listagem geral do Jellyfin às vezes vem atrasada; o item
+            # sozinho é a verdade, então não regrava quem já está certo.
+            if item.get("Genres") == [pasta] and travas == item.get("LockedFields", []):
+                continue
+            item["Genres"] = [pasta]
+            item["LockedFields"] = travas
+            item.pop("GenreItems", None)  # ainda traz os gêneros antigos
+            resposta = requests.post(f"{url}/Items/{item_id}", headers=cabecalho,
+                                     json=item, timeout=60)
+            resposta.raise_for_status()
+        except (requests.RequestException, ValueError):
+            relatorio["jellyfin_falhas"] += 1
+            continue
+        relatorio["jellyfin_corrigidos"] += 1
     return relatorio
 
 
