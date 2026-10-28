@@ -19,6 +19,17 @@ sistema de arquivos NTFS do HD) para caber numa requisição só:
     próprio Jellyfin e corrige lá também (ver
     :func:`_corrigir_generos_jellyfin`) -- só o ``.nfo`` não basta.
 
+``atualizar_legendas``
+    Gera, ao lado de cada ``.srt`` do acervo, uma cópia ``.pt.ass`` com
+    estilo fixo (cor e tamanho -- ver :data:`LEGENDA_COR`/:data:`LEGENDA_TAMANHO`).
+    Existe porque o cliente Jellyfin do Fire Stick novo (Vega OS, app
+    "Astra") ainda não tem tela de aparência de legenda, e a configuração de
+    legenda do servidor só vale para quem lê essa configuração -- o Astra
+    não lê. ``.ass`` carrega o estilo dentro do próprio arquivo, então
+    funciona em qualquer cliente decente, sem depender de nada no servidor
+    nem no app. O ``.srt`` original nunca é tocado nem removido -- os dois
+    ficam como opções de legenda no Jellyfin.
+
 Esta lógica é uma adaptação de ``batch_filmes.py``/``fix_genero_pendentes.py``
 (``/root/jeannie-organizer``), que rodavam à mão no host. Reaproveitada aqui
 porque o AutoSRT já tem fila de trabalhos com progresso/cancelamento, chave
@@ -782,3 +793,158 @@ def ultima_execucao_automatica() -> Optional[dict]:
         return json.loads(caminho.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return None
+
+
+#: Amarelo, tamanho grande -- o que o usuário pediu depois de testar no
+#: Astra (Fire Stick / Vega OS). Mude aqui se quiser outro padrão; já
+#: existente não é regerado, então um valor novo só vale para o que for
+#: convertido dali em diante (ver :func:`atualizar_legendas`).
+LEGENDA_COR = "FFFF00"
+LEGENDA_TAMANHO = 64
+
+_SRT_TEMPO_RE = re.compile(
+    r"(\d\d:\d\d:\d\d,\d{3})\s*-->\s*(\d\d:\d\d:\d\d,\d{3})")
+_SRT_TAG_RE = re.compile(r"</?[ibu]>", re.IGNORECASE)
+#: Ordem de tentativa para abrir um .srt de origem desconhecida -- a
+#: maioria do acervo é utf-8, mas tem gente antiga em cp1252/latin-1 (ver
+#: comentário em :func:`_ler_srt`). latin-1 nunca falha (mapeia todo byte),
+#: por isso fica por último, como rede de segurança.
+_SRT_ENCODINGS = ("utf-8-sig", "cp1252", "latin-1")
+
+
+def _ler_srt(caminho: Path) -> Optional[str]:
+    """Lê um ``.srt`` testando as codificações de :data:`_SRT_ENCODINGS`
+    em ordem. ``None`` só se o arquivo não puder nem ser aberto (latin-1
+    sempre decodifica algo, mesmo que errado)."""
+    for codificacao in _SRT_ENCODINGS:
+        try:
+            return caminho.read_text(encoding=codificacao)
+        except (UnicodeDecodeError, OSError):
+            continue
+    return None
+
+
+def _tempo_srt_para_ass(tempo: str) -> str:
+    """``00:00:04,770`` -> ``0:00:04.77`` (.ass usa centésimos, não
+    milésimos, e não tem zero à esquerda na hora)."""
+    h, m, resto = tempo.split(":")
+    s, ms = resto.split(",")
+    cs = round(int(ms) / 10)
+    return f"{int(h)}:{m}:{s}.{cs:02d}"
+
+
+def _cor_ass(rgb_hex: str) -> str:
+    """``RRGGBB`` -> ``&H00BBGGRR``, a ordem (e o alfa invertido, 00 =
+    opaco) que o formato .ass usa para cor."""
+    r, g, b = rgb_hex[0:2], rgb_hex[2:4], rgb_hex[4:6]
+    return f"&H00{b}{g}{r}".upper()
+
+
+def _srt_para_ass(texto_srt: str, cor_hex: str, tamanho: int) -> tuple[str, int]:
+    """Converte o texto de um ``.srt`` para ``.ass`` com estilo fixo.
+    Devolve ``(texto_ass, quantidade_de_falas)`` -- 0 falas quer dizer que
+    não achou nenhum bloco reconhecível (arquivo vazio ou formato
+    inesperado), e quem chama trata isso como "não deu pra converter"."""
+    falas = []
+    for bloco in re.split(r"\r?\n\r?\n+", texto_srt.strip()):
+        linhas = bloco.strip("\ufeff \r\n").splitlines()
+        if len(linhas) < 2:
+            continue
+        # a 1a linha é o número sequencial do srt; às vezes falta
+        i = 1 if linhas[0].strip().isdigit() else 0
+        if i >= len(linhas):
+            continue
+        tempos = _SRT_TEMPO_RE.search(linhas[i])
+        if not tempos:
+            continue
+        corpo = "\\N".join(linhas[i + 1:]).strip()
+        corpo = _SRT_TAG_RE.sub("", corpo)
+        if corpo:
+            falas.append((_tempo_srt_para_ass(tempos.group(1)),
+                          _tempo_srt_para_ass(tempos.group(2)), corpo))
+
+    cabecalho = f"""[Script Info]
+Title: Legenda estilizada (gerada por atualizar_legendas)
+ScriptType: v4.00+
+WrapStyle: 0
+ScaledBorderAndShadow: yes
+PlayResX: 1920
+PlayResY: 1080
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Default,Arial,{tamanho},{_cor_ass(cor_hex)},&H000000FF,&H00000000,&H64000000,0,0,0,0,100,100,0,0,1,3,1,2,30,30,40,1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+"""
+    linhas_evento = "".join(
+        f"Dialogue: 0,{ini},{fim},Default,,0,0,0,,{corpo}\n"
+        for ini, fim, corpo in falas)
+    return cabecalho + linhas_evento, len(falas)
+
+
+def atualizar_legendas(execute: bool, job=None,
+                       cor: str = LEGENDA_COR, tamanho: int = LEGENDA_TAMANHO) -> dict:
+    """Gera, ao lado de cada ``.srt`` do acervo, uma cópia ``.pt.ass`` com
+    estilo fixo -- ver o comentário no topo do módulo. Pula quem já tem
+    ``.pt.ass`` (não regera: se você já ajustou um filme na mão, ou já
+    rodou essa ferramenta antes, ela não desfaz). No fim, se o Jellyfin
+    estiver configurado, pede pra ele reler o acervo -- diferente de
+    :func:`atualizar_generos`, aqui não precisa mexer item por item: o
+    Jellyfin descobre o ``.pt.ass`` novo sozinho, como faz com qualquer
+    legenda externa.
+    """
+    def etapa(msg):
+        if job is not None:
+            job.etapa = msg
+
+    def cancelado() -> bool:
+        return job is not None and job.cancelar.is_set()
+
+    diretorio = base_dir()
+    etapa("Procurando .srt no acervo...")
+    arquivos = []
+    if diretorio.is_dir():
+        for genre_dir in sorted(diretorio.iterdir()):
+            if not genre_dir.is_dir() or genre_dir.name in SKIP_DIRS:
+                continue
+            arquivos.extend(genre_dir.rglob("*.srt"))
+
+    relatorio = {"srt_total": len(arquivos), "gerados": 0, "ja_existia": 0, "ignorados": 0}
+
+    for i, caminho in enumerate(arquivos):
+        if cancelado():
+            break
+        etapa(caminho.name)
+        if job is not None:
+            job.progresso = int(i * 100 / len(arquivos)) if arquivos else 100
+
+        destino = caminho.parent / f"{caminho.stem}.pt.ass"
+        if destino.is_file():
+            relatorio["ja_existia"] += 1
+            continue
+
+        texto = _ler_srt(caminho)
+        if texto is None:
+            relatorio["ignorados"] += 1
+            continue
+
+        texto_ass, n_falas = _srt_para_ass(texto, cor, tamanho)
+        if n_falas == 0:
+            relatorio["ignorados"] += 1
+            continue
+
+        relatorio["gerados"] += 1
+        if execute:
+            destino.write_text(texto_ass, encoding="utf-8")
+
+    if execute and relatorio["gerados"] and not cancelado():
+        try:
+            avisar_jellyfin()
+            relatorio["jellyfin"] = {"ok": True}
+        except (JellyfinNaoConfigurado, JellyfinFalhou) as exc:
+            relatorio["jellyfin_erro"] = str(exc)
+
+    relatorio["simulado"] = not execute
+    return relatorio

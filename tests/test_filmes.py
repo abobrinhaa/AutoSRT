@@ -365,5 +365,125 @@ class TestUltimaExecucaoAutomatica(unittest.TestCase):
         self.assertEqual(dados["resultados"]["atualizar_filmes"]["escritos"], 2)
 
 
+_SRT_EXEMPLO = (
+    "1\n00:00:04,770 --> 00:00:06,270\nMiau!\n\n"
+    "2\n00:01:47,000 --> 00:01:48,400\nPrimeira linha\nSegunda linha\n\n"
+)
+
+
+class TestSrtParaAss(unittest.TestCase):
+    def test_converte_duas_falas(self):
+        texto, n = filmes._srt_para_ass(_SRT_EXEMPLO, "FFFF00", 64)
+        self.assertEqual(n, 2)
+        self.assertIn("Dialogue: 0,0:00:04.77,0:00:06.27,Default,,0,0,0,,Miau!", texto)
+        self.assertIn(r"Primeira linha\NSegunda linha", texto)
+
+    def test_cor_e_tamanho_vao_pro_estilo(self):
+        texto, _ = filmes._srt_para_ass(_SRT_EXEMPLO, "FFFF00", 64)
+        self.assertIn("Fontsize", texto.split("[Events]")[0])
+        linha_estilo = next(l for l in texto.splitlines() if l.startswith("Style:"))
+        self.assertIn(",64,", linha_estilo)
+        self.assertIn("&H0000FFFF", linha_estilo)  # amarelo em BGR invertido
+
+    def test_remove_tags_de_italico(self):
+        texto, n = filmes._srt_para_ass(
+            "1\n00:00:01,000 --> 00:00:02,000\n<i>Sussurrando</i>\n\n", "FFFF00", 64)
+        self.assertEqual(n, 1)
+        self.assertIn("Dialogue: 0,0:00:01.00,0:00:02.00,Default,,0,0,0,,Sussurrando", texto)
+
+    def test_arquivo_vazio_devolve_zero_falas(self):
+        texto, n = filmes._srt_para_ass("", "FFFF00", 64)
+        self.assertEqual(n, 0)
+
+    def test_sem_numero_sequencial_tambem_funciona(self):
+        texto, n = filmes._srt_para_ass(
+            "00:00:01,000 --> 00:00:02,000\nSem número antes\n\n", "FFFF00", 64)
+        self.assertEqual(n, 1)
+
+
+class TestCorAss(unittest.TestCase):
+    def test_amarelo(self):
+        self.assertEqual(filmes._cor_ass("FFFF00"), "&H0000FFFF")
+
+    def test_vermelho(self):
+        self.assertEqual(filmes._cor_ass("FF0000"), "&H000000FF")
+
+
+class TestTempoSrtParaAss(unittest.TestCase):
+    def test_arredonda_milesimos_para_centesimos(self):
+        self.assertEqual(filmes._tempo_srt_para_ass("00:00:04,770"), "0:00:04.77")
+
+    def test_tira_zero_a_esquerda_da_hora(self):
+        self.assertEqual(filmes._tempo_srt_para_ass("01:02:03,500"), "1:02:03.50")
+
+
+class TestAtualizarLegendas(unittest.TestCase):
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        sem_jellyfin = mock.patch.object(filmes.config, "get_jellyfin_url", return_value=None)
+        sem_jellyfin.start()
+        self.addCleanup(sem_jellyfin.stop)
+
+    def _srt(self, genero_pasta, nome_arquivo, conteudo=_SRT_EXEMPLO, encoding="utf-8"):
+        pasta = self.tmp / genero_pasta
+        pasta.mkdir(parents=True, exist_ok=True)
+        caminho = pasta / nome_arquivo
+        caminho.write_bytes(conteudo.encode(encoding))
+        return caminho
+
+    def test_simulacao_nao_grava(self):
+        self._srt("TERROR", "a.srt")
+        with mock.patch.object(filmes, "base_dir", return_value=self.tmp):
+            relatorio = filmes.atualizar_legendas(execute=False)
+        self.assertEqual(relatorio["gerados"], 1)
+        self.assertTrue(relatorio["simulado"])
+        self.assertFalse((self.tmp / "TERROR" / "a.pt.ass").exists())
+
+    def test_execucao_cria_o_ass_do_lado(self):
+        caminho = self._srt("TERROR", "a.srt")
+        with mock.patch.object(filmes, "base_dir", return_value=self.tmp):
+            relatorio = filmes.atualizar_legendas(execute=True)
+        self.assertEqual(relatorio["gerados"], 1)
+        destino = caminho.parent / "a.pt.ass"
+        self.assertTrue(destino.exists())
+        self.assertIn("Dialogue:", destino.read_text(encoding="utf-8"))
+        # o .srt original continua do jeito que estava
+        self.assertEqual(caminho.read_text(encoding="utf-8"), _SRT_EXEMPLO)
+
+    def test_nao_regera_quem_ja_tem(self):
+        caminho = self._srt("TERROR", "a.srt")
+        destino = caminho.parent / "a.pt.ass"
+        destino.write_text("já existia", encoding="utf-8")
+        with mock.patch.object(filmes, "base_dir", return_value=self.tmp):
+            relatorio = filmes.atualizar_legendas(execute=True)
+        self.assertEqual(relatorio["ja_existia"], 1)
+        self.assertEqual(relatorio["gerados"], 0)
+        self.assertEqual(destino.read_text(encoding="utf-8"), "já existia")
+
+    def test_srt_em_cp1252_tambem_converte(self):
+        conteudo = "1\n00:00:01,000 --> 00:00:02,000\nAção, coração\n\n"
+        self._srt("TERROR", "a.srt", conteudo, encoding="cp1252")
+        with mock.patch.object(filmes, "base_dir", return_value=self.tmp):
+            relatorio = filmes.atualizar_legendas(execute=True)
+        self.assertEqual(relatorio["gerados"], 1)
+        texto = (self.tmp / "TERROR" / "a.pt.ass").read_text(encoding="utf-8")
+        self.assertIn("Ação, coração", texto)
+
+    def test_avisa_jellyfin_quando_configurado_e_gerou_algo(self):
+        self._srt("TERROR", "a.srt")
+        with mock.patch.object(filmes, "base_dir", return_value=self.tmp), \
+             mock.patch.object(filmes, "avisar_jellyfin") as aviso:
+            relatorio = filmes.atualizar_legendas(execute=True)
+        aviso.assert_called_once()
+        self.assertEqual(relatorio["jellyfin"], {"ok": True})
+
+    def test_nao_avisa_jellyfin_na_simulacao(self):
+        self._srt("TERROR", "a.srt")
+        with mock.patch.object(filmes, "base_dir", return_value=self.tmp), \
+             mock.patch.object(filmes, "avisar_jellyfin") as aviso:
+            filmes.atualizar_legendas(execute=False)
+        aviso.assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main()

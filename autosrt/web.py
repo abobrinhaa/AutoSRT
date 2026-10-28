@@ -180,6 +180,8 @@ def _executar_ferramenta_filme(job):
         resultado = filmes.atualizar_generos(execute, job=job)
     elif ferramenta == "atualizar_sinopses":
         resultado = filmes.atualizar_sinopses(execute, job=job)
+    elif ferramenta == "atualizar_legendas":
+        resultado = filmes.atualizar_legendas(execute, job=job)
     else:
         raise ValueError(f"ferramenta desconhecida: {ferramenta}")
     job.resultado = json.dumps(resultado, ensure_ascii=False)
@@ -193,6 +195,7 @@ FERRAMENTAS_FILMES = {
     "atualizar_filmes": "Atualizar filmes",
     "atualizar_generos": "Atualizar gêneros",
     "atualizar_sinopses": "Atualizar sinopses",
+    "atualizar_legendas": "Atualizar legendas",
 }
 
 
@@ -1802,6 +1805,21 @@ PAGINA = """<!doctype html>
       </div>
       <div class="resultado-ferramenta" id="resultado-atualizar_sinopses" hidden></div>
     </div>
+    <div class="painel-ferramenta">
+      <h3>Atualizar legendas</h3>
+      <p class="dica-config">Cria, do lado de cada legenda (.srt) do
+        acervo, uma c&oacute;pia amarela e grande (.pt.ass) &mdash; para
+        quem assiste no Fire Stick novo (app Astra), que ainda n&atilde;o
+        tem tela pra ajustar isso e ignora a configura&ccedil;&atilde;o de
+        legenda do Jellyfin. A legenda original nunca &eacute; apagada,
+        as duas ficam dispon&iacute;veis pra escolher. Quem j&aacute; tem
+        a c&oacute;pia amarela n&atilde;o &eacute; refeito.</p>
+      <div class="acoes-ferramenta">
+        <button type="button" class="fantasma" data-ferramenta="atualizar_legendas" data-execute="0">Só testar</button>
+        <button type="button" class="executar" data-ferramenta="atualizar_legendas" data-execute="1">Aplicar de verdade</button>
+      </div>
+      <div class="resultado-ferramenta" id="resultado-atualizar_legendas" hidden></div>
+    </div>
   </div>
   </dialog>
 
@@ -2268,6 +2286,18 @@ function relatorioFilmesTexto(ferramenta, relatorio) {
       `${relatorio.nfo_total} filme(s) com ficha no HD. ` +
       `${relatorio.simulado ? 'Corrigiria a categoria de' : 'Categoria corrigida em'}: ${relatorio.corrigidos}. ` +
       `Já estavam certos: ${relatorio.ja_corretos}. Não consegui ler: ${relatorio.ignorados}.` + jellyfin;
+  }
+  if (ferramenta === 'atualizar_legendas') {
+    let jellyfin = '';
+    if (relatorio.jellyfin_erro) {
+      jellyfin = ' Jellyfin não avisado: ' + relatorio.jellyfin_erro;
+    } else if (relatorio.jellyfin && relatorio.jellyfin.ok) {
+      jellyfin = ' Jellyfin avisado para reler o acervo.';
+    }
+    return prefixo +
+      `${relatorio.srt_total} legenda(s) no HD. ` +
+      `${relatorio.simulado ? 'Criaria a versão amarela de' : 'Criada a versão amarela de'}: ${relatorio.gerados}. ` +
+      `Já tinham: ${relatorio.ja_existia}. Não consegui converter: ${relatorio.ignorados}.` + jellyfin;
   }
   return prefixo +
     `${relatorio.fichas_incompletas} filme(s) com ficha incompleta. ` +
