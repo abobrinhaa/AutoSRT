@@ -10,14 +10,17 @@ Legenda tem alguns quilobytes e pode ser enviada direto pela página.
 """
 
 import io
+import json
 import logging
 import os
 import tempfile
+import threading
+import time
 
 from flask import (Flask, jsonify, request, send_file)
 
-from . import config, historico, llm, pipeline, srt_io, sync, timing, tmdb, transcribe
-from .jobs import JobQueue
+from . import config, filmes, historico, llm, pipeline, srt_io, sync, timing, tmdb, transcribe
+from .jobs import FINAIS, JobQueue
 from .transcribe import TranscriptionError
 
 DEFAULT_MEDIA_DIR = "midia"
@@ -53,6 +56,15 @@ TETO_CARACTERES_POR_SEGUNDO = 40
 # se o processo do Whisper pendurar.
 DEFAULT_TRANSCRIBE_API_TIMEOUT = 1800  # 30 minutos
 
+# De quanto em quanto tempo o worker das ferramentas de filmes roda
+# sozinho (ver _worker_filmes_periodico) -- pra filme novo no HD (vindo do
+# autosrt ou copiado na mão) ganhar .nfo e aparecer com o gênero certo no
+# Jellyfin sem ninguém precisar lembrar de clicar nos botões da tela.
+# "0" desliga o worker (usado pelos testes, ver tests/conftest.py) --
+# criar uma thread de verdade por create_app() nos testes não ajuda em
+# nada e só deixaria threads dormindo pra trás à toa.
+DEFAULT_FILMES_WORKER_INTERVALO_S = 2 * 60 * 60
+
 
 def create_app(media_dir=None, engine=pipeline.ENGINE_LLM, max_upload_gb=None,
                transcribe_api_timeout=None):
@@ -81,8 +93,167 @@ def create_app(media_dir=None, engine=pipeline.ENGINE_LLM, max_upload_gb=None,
                     on_final=historico.registrar)
     app.config["FILA"] = fila
 
+    # Fila separada da de transcrição: as ferramentas de filmes não usam
+    # GPU nem disputam Whisper, só rede (TMDB) e o HD do acervo -- não faz
+    # sentido elas competirem por `max_workers` com o que transcreve.
+    # Sequencial (1) de propósito: duas rodando juntas escreveriam no
+    # mesmo filmes_review.json uma por cima da outra.
+    fila_filmes = JobQueue(_executar_ferramenta_filme, max_workers=1)
+    app.config["FILA_FILMES"] = fila_filmes
+
+    intervalo_worker = float(os.environ.get(
+        "AUTOSRT_FILMES_WORKER_INTERVALO_S", DEFAULT_FILMES_WORKER_INTERVALO_S))
+    parar_worker_filmes = threading.Event()
+    app.config["PARAR_WORKER_FILMES"] = parar_worker_filmes
+    if intervalo_worker > 0:
+        threading.Thread(
+            target=_worker_filmes_periodico,
+            args=(fila_filmes, parar_worker_filmes, intervalo_worker),
+            daemon=True,
+        ).start()
+
     _register_routes(app, fila, media_dir, engine)
+    _register_rotas_filmes(app, fila_filmes)
     return app
+
+
+def _rodar_ferramenta_e_esperar(fila_filmes, ferramenta):
+    """Enfileira uma ferramenta de filmes e espera ela terminar, devolvendo
+    o relatório. Passa pela mesma fila que os botões da tela usam (nunca
+    direto pelas funções de :mod:`autosrt.filmes`) porque a fila é
+    sequencial de propósito -- rodar em paralelo com um clique manual
+    escreveria no mesmo ``filmes_review.json`` ao mesmo tempo."""
+    job = fila_filmes.enviar(FERRAMENTAS_FILMES[ferramenta], str(filmes.base_dir()),
+                             ferramenta=ferramenta, execute=True)
+    while job.estado not in FINAIS:
+        time.sleep(1)
+    if job.estado == "erro":
+        raise RuntimeError(job.erro or "falhou sem mensagem")
+    return job.detalhes.get("relatorio")
+
+
+def _worker_filmes_periodico(fila_filmes, parar_evento, intervalo_s):
+    """Roda as duas ferramentas de filmes e avisa o Jellyfin sozinho, de
+    tempos em tempos, pra filme novo não ficar esperando alguém lembrar de
+    clicar na tela. Guarda o resultado em disco (ver
+    :func:`autosrt.filmes.registrar_execucao_automatica`) pra tela mostrar
+    "atualizado em ..." mesmo depois de reiniciar o serviço.
+
+    Roda uma vez assim que o serviço sobe (não espera as 2 horas da
+    primeira vez -- senão um restart do serviço deixaria filme novo
+    esperando o resto do intervalo à toa) e depois disso, de novo a cada
+    ``intervalo_s``. ``parar_evento.wait(intervalo_s)`` é o próprio sono
+    entre rodadas -- devolve ``True`` (e para o loop) se alguém setar o
+    evento, sem precisar de um sleep solto que ignoraria um pedido de
+    desligar.
+    """
+    while True:
+        resultados = {}
+        try:
+            resultados["atualizar_filmes"] = _rodar_ferramenta_e_esperar(fila_filmes, "atualizar_filmes")
+        except Exception as exc:
+            resultados["atualizar_filmes"] = {"erro": str(exc)}
+            logging.getLogger(__name__).exception("worker de filmes: atualizar_filmes falhou")
+        try:
+            resultados["atualizar_generos"] = _rodar_ferramenta_e_esperar(fila_filmes, "atualizar_generos")
+        except Exception as exc:
+            resultados["atualizar_generos"] = {"erro": str(exc)}
+            logging.getLogger(__name__).exception("worker de filmes: atualizar_generos falhou")
+        try:
+            filmes.avisar_jellyfin()
+            resultados["jellyfin"] = {"ok": True}
+        except (filmes.JellyfinNaoConfigurado, filmes.JellyfinFalhou) as exc:
+            resultados["jellyfin"] = {"erro": str(exc)}
+        filmes.registrar_execucao_automatica(resultados)
+        if parar_evento.wait(intervalo_s):
+            return
+
+
+def _executar_ferramenta_filme(job):
+    """Roda uma das ferramentas de :mod:`autosrt.filmes`. Chamado pelo
+    operário de ``fila_filmes``."""
+    ferramenta = job.detalhes.get("ferramenta")
+    execute = bool(job.detalhes.get("execute"))
+    if ferramenta == "atualizar_filmes":
+        resultado = filmes.atualizar_filmes(execute, job=job)
+    elif ferramenta == "atualizar_generos":
+        resultado = filmes.atualizar_generos(execute, job=job)
+    elif ferramenta == "atualizar_sinopses":
+        resultado = filmes.atualizar_sinopses(execute, job=job)
+    elif ferramenta == "atualizar_legendas":
+        resultado = filmes.atualizar_legendas(execute, job=job)
+    else:
+        raise ValueError(f"ferramenta desconhecida: {ferramenta}")
+    job.resultado = json.dumps(resultado, ensure_ascii=False)
+    job.detalhes["relatorio"] = resultado
+
+
+#: As ferramentas da tela "Filmes" (ver PAGINA, painel-filmes). Cada uma
+#: tem rótulo e nome de ``detalhes["ferramenta"]`` esperado por
+#: ``_executar_ferramenta_filme``.
+FERRAMENTAS_FILMES = {
+    "atualizar_filmes": "Atualizar filmes",
+    "atualizar_generos": "Atualizar gêneros",
+    "atualizar_sinopses": "Atualizar sinopses",
+    "atualizar_legendas": "Atualizar legendas",
+}
+
+
+def _register_rotas_filmes(app, fila_filmes):
+    """Rotas da tela de ferramentas do acervo de filmes (``/mnt/filmes_storage``
+    ou o que ``AUTOSRT_FILMES_DIR`` apontar) -- separada da fila/rotas de
+    transcrição em :func:`_register_routes` porque não trabalha com o
+    ``media_dir`` da legenda, e sim com o HD de filmes."""
+
+    @app.post("/api/filmes/<ferramenta>")
+    def filmes_rodar(ferramenta):
+        if ferramenta not in FERRAMENTAS_FILMES:
+            return jsonify({"erro": "Ferramenta desconhecida."}), 404
+        if fila_filmes.ocupado:
+            return jsonify({"erro": "Já tem uma ferramenta de filmes rodando. "
+                                    "Espere terminar antes de rodar outra."}), 409
+
+        execute = bool((request.json or {}).get("execute"))
+        job = fila_filmes.enviar(FERRAMENTAS_FILMES[ferramenta], str(filmes.base_dir()),
+                                 ferramenta=ferramenta, execute=execute)
+        return jsonify(job.para_json()), 202
+
+    @app.get("/api/filmes/trabalhos")
+    def filmes_trabalhos():
+        return jsonify([j.para_json() for j in fila_filmes.listar()])
+
+    @app.get("/api/filmes/trabalho/<job_id>")
+    def filmes_trabalho(job_id):
+        job = fila_filmes.buscar(job_id)
+        if not job:
+            return jsonify({"erro": "Trabalho não encontrado."}), 404
+        resposta = job.para_json()
+        resposta["relatorio"] = job.detalhes.get("relatorio")
+        return jsonify(resposta)
+
+    @app.post("/api/filmes/trabalho/<job_id>/cancelar")
+    def filmes_cancelar(job_id):
+        if not fila_filmes.cancelar(job_id):
+            return jsonify({"erro": "Não dá para cancelar esse trabalho."}), 409
+        return jsonify({"ok": True})
+
+    @app.post("/api/filmes/jellyfin")
+    def filmes_jellyfin():
+        # Só um pedido HTTP rápido (o Jellyfin relê a pasta por conta
+        # própria depois) -- não precisa da fila de trabalhos como as
+        # outras duas ferramentas, que ficam minutos rodando.
+        try:
+            filmes.avisar_jellyfin()
+        except (filmes.JellyfinNaoConfigurado, filmes.JellyfinFalhou) as exc:
+            return jsonify({"erro": str(exc)}), 400
+        return jsonify({"ok": True})
+
+    @app.get("/api/filmes/ultima_atualizacao")
+    def filmes_ultima_atualizacao():
+        """Quando o worker automático (roda sozinho de 2 em 2 horas, ver
+        ``_worker_filmes_periodico``) terminou a última rodada. ``None``
+        se ele ainda não rodou nenhuma vez."""
+        return jsonify(filmes.ultima_execucao_automatica())
 
 
 #: Cada operação existe sozinha. Nem sempre se quer a corrente inteira:
@@ -1157,6 +1328,14 @@ PAGINA = """<!doctype html>
   }
   .rodape { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
   .dica-config { flex: 1; font-size: 13px; color: var(--text-muted); }
+  .painel-ferramenta { border: 1px solid var(--border); border-radius: var(--radius-sm);
+                       padding: 14px; margin-bottom: 14px; }
+  .painel-ferramenta h3 { margin: 0 0 6px; }
+  .acoes-ferramenta { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+  .acoes-ferramenta .executar { background: none; border: 1px solid var(--danger-soft);
+                                color: var(--danger); }
+  .acoes-ferramenta .executar:hover:enabled { background: var(--danger-soft); }
+  .resultado-ferramenta { margin-top: 12px; }
   .selo { font-size: 12px; padding: 2px 8px; border-radius: 999px;
           background: var(--surface-2); }
   .selo.ok { color: var(--success); }
@@ -1350,6 +1529,16 @@ PAGINA = """<!doctype html>
       <span class="indicador-gpu-ponto" aria-hidden="true"></span>
       <span id="indicador-gpu-texto"></span>
     </span>
+    <button type="button" id="abrir-filmes" class="botao-icone"
+            aria-haspopup="dialog" aria-controls="painel-filmes"
+            title="Organizar os filmes do HD" aria-label="Filmes">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+             stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M3 7h18v13a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V7Z"></path>
+          <path d="M3 7l2.5-4h3L6 7H3Z"></path>
+          <path d="M9 7l2.5-4h3L12 7H9Z"></path>
+          <path d="M15 7l2.5-4h3L18 7h-3Z"></path></svg>
+    </button>
     <button type="button" id="abrir-historico" class="botao-icone"
             aria-haspopup="dialog" aria-controls="painel-historico"
             title="Hist&oacute;rico de trabalhos" aria-label="Hist&oacute;rico de trabalhos">
@@ -1538,6 +1727,99 @@ PAGINA = """<!doctype html>
       </div>
     </div>
   </section>
+  </div>
+  </dialog>
+
+  <dialog id="painel-filmes" class="modal-config" aria-labelledby="titulo-painel-filmes">
+  <div class="topo-modal">
+    <div class="titulo-modal">
+      <h2 id="titulo-painel-filmes">Filmes</h2>
+      <button type="button" id="fechar-filmes" class="fantasma"
+              title="Fechar (Esc)" aria-label="Fechar filmes">&times;</button>
+    </div>
+    <p class="sub" style="padding: 0 20px 14px; margin: 0;">
+      Quatro ferramentas para organizar os filmes guardados no HD (o HD
+      de filmes, n&atilde;o a pasta de legendas l&aacute; em cima). As de
+      baixo t&ecirc;m um bot&atilde;o para s&oacute; testar e mostrar o
+      que mudaria, sem alterar nada ainda, e outro para aplicar de verdade.
+    </p>
+    <p class="sub" id="filmes-status-automatico" style="padding: 0 20px 14px; margin: 0;">
+      Avisar o Jellyfin, Atualizar filmes e Atualizar g&ecirc;neros rodam
+      sozinhas, a cada 2 horas &mdash; n&atilde;o precisa clicar em nada
+      pra filme novo ganhar ficha e categoria certa. Atualizar sinopses
+      &eacute; s&oacute; manual (pode demorar, chama a internet pra cada
+      filme incompleto). <span id="filmes-ultima-automatica">Carregando...</span>
+    </p>
+  </div>
+  <div class="corpo-modal">
+    <div class="painel-ferramenta">
+      <h3>Avisar o Jellyfin</h3>
+      <p class="dica-config">Jogou um filme novo no HD e ele n&atilde;o
+        apareceu no Jellyfin? Ele nem sempre percebe sozinho que tem
+        filme novo. Este bot&atilde;o pede pra ele olhar a pasta de novo
+        agora &mdash; o filme costuma aparecer em poucos minutos depois.</p>
+      <div class="acoes-ferramenta">
+        <button type="button" id="jellyfin-rodar">Atualizar agora</button>
+      </div>
+      <div class="resultado-ferramenta" id="resultado-jellyfin" hidden></div>
+    </div>
+    <div class="painel-ferramenta">
+      <h3>Atualizar filmes</h3>
+      <p class="dica-config">Olha todo filme do HD que ainda est&aacute;
+        sem ficha (sem nome certinho, resumo e ano) e completa essa ficha
+        sozinho, procurando o filme pelo nome numa base de dados de filmes
+        na internet. Filme que j&aacute; tem ficha completa fica como
+        est&aacute;, essa ferramenta n&atilde;o toca nele.</p>
+      <div class="acoes-ferramenta">
+        <button type="button" class="fantasma" data-ferramenta="atualizar_filmes" data-execute="0">Só testar</button>
+        <button type="button" class="executar" data-ferramenta="atualizar_filmes" data-execute="1">Aplicar de verdade</button>
+      </div>
+      <div class="resultado-ferramenta" id="resultado-atualizar_filmes" hidden></div>
+    </div>
+    <div class="painel-ferramenta">
+      <h3>Atualizar g&ecirc;neros</h3>
+      <p class="dica-config">Corrige a categoria de cada filme (Terror,
+        Com&eacute;dia, Faroeste etc.) para ficar igual ao nome da pasta
+        onde o filme est&aacute; guardado no HD. &Eacute; para arrumar
+        filme que ficou com a categoria errada ou desatualizada &mdash;
+        n&atilde;o precisa buscar nada na internet para isso, s&oacute;
+        olha em qual pasta o filme est&aacute;. Corrige na ficha do HD e
+        tamb&eacute;m direto no Jellyfin.</p>
+      <div class="acoes-ferramenta">
+        <button type="button" class="fantasma" data-ferramenta="atualizar_generos" data-execute="0">Só testar</button>
+        <button type="button" class="executar" data-ferramenta="atualizar_generos" data-execute="1">Aplicar de verdade</button>
+      </div>
+      <div class="resultado-ferramenta" id="resultado-atualizar_generos" hidden></div>
+    </div>
+    <div class="painel-ferramenta">
+      <h3>Atualizar sinopses</h3>
+      <p class="dica-config">Completa a ficha (resumo, t&iacute;tulo certo,
+        ano) de filme que j&aacute; tem ficha no HD mas ficou incompleta
+        &mdash; sem resumo nenhum, por exemplo. Busca de novo na base de
+        dados de filmes na internet. <strong>N&atilde;o mexe na
+        categoria</strong> do filme de jeito nenhum, s&oacute; no resto da
+        ficha.</p>
+      <div class="acoes-ferramenta">
+        <button type="button" class="fantasma" data-ferramenta="atualizar_sinopses" data-execute="0">Só testar</button>
+        <button type="button" class="executar" data-ferramenta="atualizar_sinopses" data-execute="1">Aplicar de verdade</button>
+      </div>
+      <div class="resultado-ferramenta" id="resultado-atualizar_sinopses" hidden></div>
+    </div>
+    <div class="painel-ferramenta">
+      <h3>Atualizar legendas</h3>
+      <p class="dica-config">Cria, do lado de cada legenda (.srt) do
+        acervo, uma c&oacute;pia amarela e grande (.pt.ass) &mdash; para
+        quem assiste no Fire Stick novo (app Astra), que ainda n&atilde;o
+        tem tela pra ajustar isso e ignora a configura&ccedil;&atilde;o de
+        legenda do Jellyfin. A legenda original nunca &eacute; apagada,
+        as duas ficam dispon&iacute;veis pra escolher. Quem j&aacute; tem
+        a c&oacute;pia amarela n&atilde;o &eacute; refeito.</p>
+      <div class="acoes-ferramenta">
+        <button type="button" class="fantasma" data-ferramenta="atualizar_legendas" data-execute="0">Só testar</button>
+        <button type="button" class="executar" data-ferramenta="atualizar_legendas" data-execute="1">Aplicar de verdade</button>
+      </div>
+      <div class="resultado-ferramenta" id="resultado-atualizar_legendas" hidden></div>
+    </div>
   </div>
   </dialog>
 
@@ -1968,6 +2250,168 @@ $('fechar-config').onclick = () => dialogoConfig.close();
 // num filho. So o primeiro conta como pedido de sair.
 dialogoConfig.addEventListener('click', (e) => {
   if (e.target === dialogoConfig) dialogoConfig.close();
+});
+
+// Filmes: ferramentas do acervo em HD separado (autosrt.filmes), cada uma
+// na própria fila do servidor -- sequencial de propósito (ver create_app),
+// então só uma roda por vez e os botões das duas ficam travados juntos
+// enquanto isso, em vez de deixar tentar e receber um 409 do servidor.
+const dialogoFilmes = $('painel-filmes');
+const jobsFilmesAtivos = {}; // ferramenta -> job_id em andamento
+
+function botoesFilmes() {
+  return dialogoFilmes.querySelectorAll('button[data-ferramenta]');
+}
+
+function relatorioFilmesTexto(ferramenta, relatorio) {
+  if (!relatorio) return '';
+  const prefixo = relatorio.simulado ? 'Isso foi só um teste — ' : '';
+  if (ferramenta === 'atualizar_filmes') {
+    return prefixo +
+      `${relatorio.unidades_total} filme(s) no HD, ${relatorio.ja_tinha_nfo} já estavam com a ficha completa. ` +
+      `${relatorio.simulado ? 'Completaria' : 'Completados agora'}: ${relatorio.escritos}. ` +
+      `Não deu pra descobrir o nome de ${relatorio.sem_extracao}. ` +
+      `Não achei com certeza na base de dados: ${relatorio.sem_match}.`;
+  }
+  if (ferramenta === 'atualizar_generos') {
+    let jellyfin = '';
+    if (relatorio.jellyfin_erro) {
+      jellyfin = ` Jellyfin não conferido: ${relatorio.jellyfin_erro}`;
+    } else if (relatorio.jellyfin_filmes !== undefined) {
+      jellyfin = ` No Jellyfin: ${relatorio.jellyfin_filmes} filme(s) conferidos, ` +
+        `${relatorio.simulado ? 'corrigiria' : 'corrigidos agora'}: ${relatorio.jellyfin_corrigidos}.` +
+        (relatorio.jellyfin_falhas ? ` Não consegui corrigir: ${relatorio.jellyfin_falhas}.` : '');
+    }
+    return prefixo +
+      `${relatorio.nfo_total} filme(s) com ficha no HD. ` +
+      `${relatorio.simulado ? 'Corrigiria a categoria de' : 'Categoria corrigida em'}: ${relatorio.corrigidos}. ` +
+      `Já estavam certos: ${relatorio.ja_corretos}. Não consegui ler: ${relatorio.ignorados}.` + jellyfin;
+  }
+  if (ferramenta === 'atualizar_legendas') {
+    let jellyfin = '';
+    if (relatorio.jellyfin_erro) {
+      jellyfin = ' Jellyfin não avisado: ' + relatorio.jellyfin_erro;
+    } else if (relatorio.jellyfin && relatorio.jellyfin.ok) {
+      jellyfin = ' Jellyfin avisado para reler o acervo.';
+    }
+    return prefixo +
+      `${relatorio.srt_total} legenda(s) no HD. ` +
+      `${relatorio.simulado ? 'Criaria a versão amarela de' : 'Criada a versão amarela de'}: ${relatorio.gerados}. ` +
+      `Já tinham: ${relatorio.ja_existia}. Não consegui converter: ${relatorio.ignorados}.` + jellyfin;
+  }
+  return prefixo +
+    `${relatorio.fichas_incompletas} filme(s) com ficha incompleta. ` +
+    `${relatorio.simulado ? 'Completaria' : 'Completados agora'}: ${relatorio.atualizados}. ` +
+    `Não deu pra descobrir o nome de ${relatorio.sem_extracao}. ` +
+    `Não achei com certeza na base de dados: ${relatorio.sem_match}.`;
+}
+
+async function atualizarCartaoFilme(ferramenta) {
+  const jobId = jobsFilmesAtivos[ferramenta];
+  if (!jobId) return;
+  const alvo = $('resultado-' + ferramenta);
+
+  const r = await fetch('/api/filmes/trabalho/' + jobId);
+  if (!r.ok) { delete jobsFilmesAtivos[ferramenta]; return; }
+  const job = await r.json();
+
+  alvo.hidden = false;
+  if (job.estado === 'erro') {
+    alvo.innerHTML = `<div class="etapa erro">${job.erro || 'Falhou.'}</div>`;
+  } else if (job.pronto) {
+    const classe = job.estado === 'cancelado' ? '' : 'ok';
+    const texto = job.estado === 'cancelado' ? 'Cancelado.' : relatorioFilmesTexto(ferramenta, job.relatorio);
+    alvo.innerHTML = `<div class="etapa ${classe}">${texto}</div>`;
+  } else {
+    const semNumero = job.estado === 'rodando' && !job.progresso;
+    alvo.innerHTML = `<div class="etapa">${job.etapa}</div>
+      <div class="barra${semNumero ? ' indefinida' : ''}"><div style="width:${semNumero ? 100 : job.progresso}%"></div></div>
+      <div class="acoes-ferramenta"><button type="button" class="fantasma" id="cancelar-${ferramenta}">Cancelar</button></div>`;
+    $('cancelar-' + ferramenta).onclick = () => fetch('/api/filmes/trabalho/' + jobId + '/cancelar', {method: 'POST'});
+  }
+
+  if (job.pronto) {
+    delete jobsFilmesAtivos[ferramenta];
+    if (!Object.keys(jobsFilmesAtivos).length) botoesFilmes().forEach((b) => b.disabled = false);
+  }
+}
+
+function pollFilmes() {
+  Object.keys(jobsFilmesAtivos).forEach(atualizarCartaoFilme);
+}
+setInterval(pollFilmes, 1500);
+
+async function atualizarStatusAutomatico() {
+  const alvo = $('filmes-ultima-automatica');
+  try {
+    const r = await fetch('/api/filmes/ultima_atualizacao');
+    const dados = await r.json();
+    if (!dados) {
+      alvo.textContent = 'Ainda não rodou sozinha nenhuma vez (o servidor deve ter acabado de subir).';
+      return;
+    }
+    const quando = new Date(dados.quando).toLocaleString('pt-BR');
+    alvo.textContent = `Última vez: ${quando}.`;
+  } catch {
+    alvo.textContent = 'Não consegui checar a última vez que rodou.';
+  }
+}
+
+async function sincronizarFilmes() {
+  // Reflete um trabalho que já estava rodando antes da página (re)abrir o
+  // diálogo -- sem isso, fechar e abrir de novo (ou recarregar a página)
+  // no meio de uma ferramenta de 13 TB fazia parecer que nada rodava.
+  const r = await fetch('/api/filmes/trabalhos');
+  const jobs = await r.json();
+  for (const job of jobs) {
+    const ferramenta = (job.detalhes || {}).ferramenta;
+    if (ferramenta && !job.pronto) jobsFilmesAtivos[ferramenta] = job.id;
+  }
+  if (Object.keys(jobsFilmesAtivos).length) botoesFilmes().forEach((b) => b.disabled = true);
+  pollFilmes();
+}
+
+$('jellyfin-rodar').onclick = async () => {
+  const botao = $('jellyfin-rodar');
+  const alvo = $('resultado-jellyfin');
+  botao.disabled = true;
+  alvo.hidden = false;
+  alvo.innerHTML = '<div class="etapa">Avisando o Jellyfin...</div>';
+  const r = await fetch('/api/filmes/jellyfin', {method: 'POST'});
+  const dados = await r.json();
+  alvo.innerHTML = r.ok
+    ? '<div class="etapa ok">Pedido enviado! O Jellyfin já está relendo a pasta.</div>'
+    : `<div class="etapa erro">${dados.erro || 'Não consegui avisar o Jellyfin.'}</div>`;
+  botao.disabled = false;
+};
+
+$('abrir-filmes').onclick = () => { dialogoFilmes.showModal(); sincronizarFilmes(); atualizarStatusAutomatico(); };
+$('fechar-filmes').onclick = () => dialogoFilmes.close();
+dialogoFilmes.addEventListener('click', (e) => {
+  if (e.target === dialogoFilmes) dialogoFilmes.close();
+});
+
+botoesFilmes().forEach((botao) => {
+  botao.onclick = async () => {
+    const ferramenta = botao.dataset.ferramenta;
+    const execute = botao.dataset.execute === '1';
+    if (execute && !confirm('Isso vai alterar de verdade os arquivos no HD de filmes.\\n\\nVocê já clicou em "Só testar" antes e viu que o resultado está certo?')) {
+      return;
+    }
+    botoesFilmes().forEach((b) => b.disabled = true);
+    const r = await fetch('/api/filmes/' + ferramenta, {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({execute}),
+    });
+    const dados = await r.json();
+    if (!r.ok) {
+      alert(dados.erro || 'Não consegui iniciar.');
+      botoesFilmes().forEach((b) => b.disabled = false);
+      return;
+    }
+    jobsFilmesAtivos[ferramenta] = dados.id;
+    atualizarCartaoFilme(ferramenta);
+  };
 });
 
 // Histórico: mesmo padrão do diálogo de configuração acima, mas o
