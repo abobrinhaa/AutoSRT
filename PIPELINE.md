@@ -76,9 +76,32 @@ Nada disso ainda está empacotado como ferramenta — são scripts soltos em `/o
 - Criar uma pasta própria por item em `/mnt/filmes_storage/<nome da pasta>/<arquivo>.mkv` — **o Jellyfin usa o nome da PASTA como título**, não o nome do arquivo
 - Monitoramento em tempo real da biblioteca pode não pegar mudança de arquivo sozinho depois de um crash do serviço — às vezes precisa forçar scan manual
 
+### 7b. Correção da causa raiz do dessincronismo (resolvido)
+A montagem por concatenação sequencial (pedaço atrás de pedaço) deixava a duração
+total **flutuar** em vez de bater exatamente com a duração do trecho original (ex:
+240s virou 241.2s). Esse erro pequeno se acumula ao longo do vídeo e explica o
+sintoma de "ora atrasa, ora adianta" relatado em testes diferentes.
+
+**Correção**: cada fala agora ocupa um slot de duração **fixa e exata**, igual ao
+`end - start` original daquela fala — nunca mais, nunca menos:
+- Se a fala dublada (já com ajuste de velocidade) for mais curta que o slot, completa com fundo (`apad`)
+- Se ainda for mais longa, corta no limite do slot (`atrim`)
+- O cursor sempre avança exatamente `end` da fala original, nunca o fim real do áudio gerado
+
+Resultado validado: trilha de 150s de entrada saiu com exatamente `150.000000s` de saída (era `241.2s` para um alvo de `240s` antes da correção).
+
 ## Problemas ainda em aberto (para quando for sistematizar)
 1. Erro de diarização pontual mesmo diarizando só a cena (personagem não detectado)
 2. Frases curtas ainda geram áudio desproporcional às vezes, mesmo com retry
 3. Ritmo/cadência da fala não combina com a cena (zero-shot não tem esse controle — fine-tuning de peso é o caminho mais provável, ainda não feito)
-4. Vazamento percebido de inglês sob a dublagem em português — causa não confirmada
+4. Vazamento percebido de inglês sob a dublagem em português — causa não confirmada (pode ter sido só sintoma do dessincronismo, já corrigido no passo 7b — reavaliar depois dessa correção)
 5. Nada disso está automatizado ainda — é tudo script manual, rodado passo a passo
+
+## Segundo teste de validação (série, não filme)
+Testado também com um episódio de série ("Cannon", 1976, sem legenda PT embutida —
+validou a tradução via Ollama pela primeira vez de verdade, não só a legenda já pronta
+usada nos testes com filme). Confirma que o pipeline generaliza além do caso de teste
+original. Descoberta à parte: a biblioteca de séries real do Jellyfin fica em
+`/mnt/jellyfin_storage/SERIADOS/` — storage **diferente** de `/mnt/filmes_storage`
+onde todo teste deste documento rodou. Pra dublar conteúdo de série de verdade no
+futuro, o arquivo final precisa ir pra esse outro storage.
