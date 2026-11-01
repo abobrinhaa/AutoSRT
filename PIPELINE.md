@@ -88,7 +88,19 @@ sintoma de "ora atrasa, ora adianta" relatado em testes diferentes.
 - Se ainda for mais longa, corta no limite do slot (`atrim`)
 - O cursor sempre avança exatamente `end` da fala original, nunca o fim real do áudio gerado
 
-Resultado validado: trilha de 150s de entrada saiu com exatamente `150.000000s` de saída (era `241.2s` para um alvo de `240s` antes da correção).
+Resultado validado: trilha de 150s de entrada saiu com exatamente `150.000000s` de saída (era `241.2s` para um alvo de `240s` antes da correção). Confirmado pelo usuário: sincronismo ficou bom depois dessa correção.
+
+### 7c. Resto de palavra em inglês no fim da fala dublada (resolvido)
+Mesmo com o sincronismo corrigido, sobrava um pedacinho de palavra em inglês logo
+depois de cada fala dublada. Causa: o timestamp de **fim** da legenda/transcrição
+quase sempre vem um pouco antes do áudio original realmente silenciar (a pessoa
+ainda está terminando de falar quando a legenda já "acabou"). Como a brecha seguinte
+começa exatamente nesse ponto e usa o áudio original como fallback, ela pegava esse
+restinho.
+
+**Correção**: as primeiras `250ms` de cada brecha agora tocam o fundo (sem voz,
+`no_vocals.wav`) em vez do áudio original completo — um "colchão" curto que mascara
+a cauda da palavra em inglês sem comprometer a duração total (que continua exata).
 
 ## Problemas ainda em aberto (para quando for sistematizar)
 1. Erro de diarização pontual mesmo diarizando só a cena (personagem não detectado)
