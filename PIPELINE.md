@@ -125,12 +125,15 @@ falas, não só em casos raros.
    de ~1.2-2 segundos. Encurtar o texto não resolve esses casos — é piso do modelo,
    não da tradução.
 
-**Mitigação final**: em vez de cortar no limite exato do slot original, a fala pode
-usar o espaço livre **até o início da próxima fala** (a brecha que teria ficado em
-inglês) antes de cortar. Resultado no episódio de teste: caiu de ~30 falas cortando
-para **8 de 47**. As 8 restantes são casos onde não há brecha nenhuma disponível
-(diálogo em sequência direta, sem pausa) — ainda sem solução melhor que cortar ou
-fine-tuning real.
+**Tentativa de mitigação (rejeitada pelo usuário)**: tradução concisa (orçamento de
+palavras) + fala podendo usar o espaço livre até a próxima fala começar antes de
+cortar. Tecnicamente reduziu de ~30 falas cortando pra 8 de 47, mas o usuário ouviu
+o resultado e achou pior ("ficou uma merda") — a tradução mais curta deve ter
+sacrificado naturalidade/sentido demais, ou o efeito do espaço "emprestado" da
+próxima fala soou estranho. **Revertido** pra versão anterior (7c: slot fixo exato,
+aceita cortar no meio de palavra em casos raros) como melhor estado conhecido.
+Lição: nem toda correção tecnicamente "melhor" nos números soa melhor ouvindo —
+sempre validar ouvindo antes de assumir que resolveu.
 
 ## Segundo teste de validação (série, não filme)
 Testado também com um episódio de série ("Cannon", 1976, sem legenda PT embutida —
