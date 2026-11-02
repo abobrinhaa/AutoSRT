@@ -109,6 +109,29 @@ a cauda da palavra em inglês sem comprometer a duração total (que continua ex
 4. Vazamento percebido de inglês sob a dublagem em português — causa não confirmada (pode ter sido só sintoma do dessincronismo, já corrigido no passo 7b — reavaliar depois dessa correção)
 5. Nada disso está automatizado ainda — é tudo script manual, rodado passo a passo
 
+### 7d. Falas cortando no meio da palavra (resolvido parcialmente)
+A correção 7b (slot de duração fixa) trouxe de volta um problema antigo: quando a
+fala dublada ainda é mais longa que o slot mesmo depois de acelerada (`MAX_SPEEDUP`),
+o `atrim` corta no meio da palavra. Em conteúdo com diálogo muito rápido (testado
+com episódio de série, falas de 0.4-0.8s no original) isso acontecia na maioria das
+falas, não só em casos raros.
+
+**Duas causas identificadas e atacadas**:
+1. Tradução livre do Ollama não considerava o tempo disponível → pedido explícito
+   de tradução **concisa com orçamento de palavras** (`~2.8 palavras/segundo em
+   português`, calculado a partir da duração original de cada fala). Ajuda bastante
+   nas falas médias/longas.
+2. **Limite técnico do XTTS**: mesmo com 1-2 palavras, o modelo não gera áudio abaixo
+   de ~1.2-2 segundos. Encurtar o texto não resolve esses casos — é piso do modelo,
+   não da tradução.
+
+**Mitigação final**: em vez de cortar no limite exato do slot original, a fala pode
+usar o espaço livre **até o início da próxima fala** (a brecha que teria ficado em
+inglês) antes de cortar. Resultado no episódio de teste: caiu de ~30 falas cortando
+para **8 de 47**. As 8 restantes são casos onde não há brecha nenhuma disponível
+(diálogo em sequência direta, sem pausa) — ainda sem solução melhor que cortar ou
+fine-tuning real.
+
 ## Segundo teste de validação (série, não filme)
 Testado também com um episódio de série ("Cannon", 1976, sem legenda PT embutida —
 validou a tradução via Ollama pela primeira vez de verdade, não só a legenda já pronta
