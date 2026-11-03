@@ -135,6 +135,34 @@ aceita cortar no meio de palavra em casos raros) como melhor estado conhecido.
 Lição: nem toda correção tecnicamente "melhor" nos números soa melhor ouvindo —
 sempre validar ouvindo antes de assumir que resolveu.
 
+### 7e. Pesquisa de projetos abertos existentes + técnica de desacelerar vídeo
+Antes de continuar remendando, pesquisamos se já existe ferramenta open-source pronta
+pra isso (Linly-Dubbing, pyvideotrans, open-dubbing, Python-Autodub). Conclusão: usam
+a mesma técnica de fundo (acelerar áudio até ~1.5-2x, tradução pensando no tempo) —
+não existe solução mágica pronta, é limite real do problema. Mas o **pyvideotrans**
+documenta uma técnica que não tínhamos usado: **desacelerar o vídeo** (não só acelerar
+o áudio) para absorver o excesso, dividindo o ajuste entre os dois lados.
+
+**Implementado**: quando a fala dublada não cabe mesmo depois de acelerada (até 1.6x),
+em vez de cortar, o vídeo daquele trecho específico é desacelerado (`setpts`) até a
+fala caber. Limite de desaceleração do vídeo elevado pra `4.0x` a pedido do usuário
+("prefiro demorar e ficar perfeito do que rápido e cortado" — ver
+[[feedback-qualidade-sobre-velocidade]]). Resultado: **0 de 47 falas cortando**
+(eram 14 mesmo depois da primeira tentativa com limite de vídeo em 1.6x). O vídeo
+final fica mais longo que o original (162s vs 150s no teste) — isso é esperado e
+aceito, é a troca consciente: vídeo mais longo/com variação de ritmo, mas sem perder
+nenhuma palavra.
+
+**Bug de tradução encontrado e corrigido à parte**: uma fala (índice 9) estava com
+6.8x de estouro — não era problema de voz nem de tempo, era a tradução duplicando o
+conteúdo: o Whisper cortou uma frase em inglês em dois cues ("I can't take that
+chance..." + "...of their cases"), e a tradução por LLM, sem contexto de que eram a
+mesma frase, traduziu os DOIS cues como a frase inteira. Corrigido mesclando os dois
+cues num só antes de sintetizar, em vez de forçar a dublagem a caber artificialmente
+num espaço de 0.6s. Vale ficar de olho nesse tipo de bug ao automatizar: cues muito
+curtos (<1s) com texto desproporcional ao original valem uma checagem antes de ir
+pra síntese.
+
 ## Segundo teste de validação (série, não filme)
 Testado também com um episódio de série ("Cannon", 1976, sem legenda PT embutida —
 validou a tradução via Ollama pela primeira vez de verdade, não só a legenda já pronta
