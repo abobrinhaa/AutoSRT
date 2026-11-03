@@ -163,6 +163,26 @@ num espaço de 0.6s. Vale ficar de olho nesse tipo de bug ao automatizar: cues m
 curtos (<1s) com texto desproporcional ao original valem uma checagem antes de ir
 pra síntese.
 
+## Feedback do usuário sobre a UI (mockups comparados)
+Dois mockups de interface foram gerados pra comparar abordagens de unificar "Legendas"
+e "Dublagem IA" na mesma ferramenta. O usuário preferiu a versão que reaproveita o
+visual real do autosrt (extraído do CSS/componentes reais do app, não um tema
+genérico): https://claude.ai/artifact/XcxHYPqQsYCBYLuS2XZDcA
+
+Decisões de produto confirmadas pelo usuário:
+1. **Legenda e dublagem são operações independentes** — precisa dar pra gerar só a
+   legenda, só a dublagem, ou os dois juntos. Não forçar o fluxo completo sempre.
+2. **Banco de vozes por ATOR, não por filme** (feature importante pra quando
+   escalar pro acervo inteiro, ~85 mil itens): o Jellyfin já cataloga o elenco de
+   cada filme (confirmado no banco: tabela de pessoas com nomes reais, ex.
+   "J.D. Cannon", "Dyan Cannon"). Em vez de clonar/treinar a voz do zero a cada
+   filme, a voz de um ator deveria ser reaproveitada entre todos os filmes em que
+   ele aparece — muitos atores se repetem num acervo desse tamanho. Isso economiza
+   processamento (não repete Demucs+treino por filme) e melhora a qualidade com o
+   tempo (mais material acumulado = referência melhor). Ainda não implementado,
+   mas é a próxima peça importante de arquitetura a desenhar antes de automatizar
+   de verdade.
+
 ## Segundo teste de validação (série, não filme)
 Testado também com um episódio de série ("Cannon", 1976, sem legenda PT embutida —
 validou a tradução via Ollama pela primeira vez de verdade, não só a legenda já pronta
