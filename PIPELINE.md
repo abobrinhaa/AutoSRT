@@ -191,3 +191,115 @@ original. Descoberta à parte: a biblioteca de séries real do Jellyfin fica em
 `/mnt/jellyfin_storage/SERIADOS/` — storage **diferente** de `/mnt/filmes_storage`
 onde todo teste deste documento rodou. Pra dublar conteúdo de série de verdade no
 futuro, o arquivo final precisa ir pra esse outro storage.
+
+---
+
+# Virou serviço: porta 8002 (2026-11-04)
+
+Os scripts soltos dos pilotos viraram um processo só e ganharam tela. O que
+está escrito acima continua valendo — é a origem de cada decisão do código.
+
+## Como está montado
+
+| Porta | Serviço | Pasta | Papel |
+|-------|---------|-------|-------|
+| 8000 | `autosrt` | `/opt/autosrt` (main) | Produção: legenda + ferramentas do HD. **Não mudou.** |
+| 8001 | `autosrt-beta` | `/opt/autosrt-beta` | Beta de legendas. **Não mudou.** |
+| 8002 | `autosrt-dublagem` | `/opt/autosrt-dub` (`claude/dublagem-ia`) | Dublagem + tela nova |
+
+Nada de novo sobe sem `AUTOSRT_DUBLAGEM=1`. Sem essa variável, `create_app()`
+monta exatamente o app de antes — é o que garante que um merge para a `main`
+não muda a produção sozinho.
+
+- Unidade: `/etc/systemd/system/autosrt-dublagem.service`
+- Configuração: `/root/.config/autosrt-dub/` (separada de produção e beta)
+- Web roda no venv leve (`/opt/autosrt/venv`); a dublagem roda noutro
+  processo, no venv pesado (`/opt/autosrt-dub/venv`, com torch/TTS/Demucs).
+  A memória da placa volta inteira quando o processo termina.
+
+## Módulos novos
+
+- **`autosrt/dublagem.py`** — o pipeline inteiro, na ordem descrita neste
+  documento. Conversa com a fila por uma linha JSON por evento no stdout.
+- **`autosrt/vozes.py`** — banco de vozes por ator (tabela `locutores` nova).
+- **`autosrt/web_dublagem.py`** — fila de dublagem, rotas de ator/locutor,
+  índice do acervo.
+- **`autosrt/pagina_v2.html`** — a tela (barra lateral, Arquivos, Trabalhos,
+  Filmes no HD, Atores, Configurações em 4 abas).
+
+## Decisões que o código tomou, e por quê
+
+**A legenda tem prioridade na placa de vídeo.** Antes de cada etapa pesada, e
+a cada 15 falas sintetizadas, a dublagem consulta `/api/trabalhos` do 8000 e
+do 8001. Havendo legenda rodando ou na fila, ela descarrega o XTTS e espera.
+Com as filas vazias e ainda faltando memória, quem está segurando é o Ollama
+ocioso, e aí sim ele é descarregado. Ver `[[autosrt-nao-pode-cair]]`.
+
+**Retomar de onde parou.** Cada etapa grava o resultado numa pasta de
+trabalho fixa por arquivo (`/opt/autosrt-dub/trabalho/<nome>-<hash>`), e pula
+o que já está pronto. Filme de 2h interrompido no meio não recomeça do zero.
+
+**Vídeo num encoder só.** A montagem final decodifica trecho a trecho e
+escreve quadro a quadro num `ffmpeg` único, em vez de gerar vários .mkv e
+emendar. Emendar era o que produzia timestamps quebrados (o "erro fatal do
+player" do Jellyfin). A posição de cada amostra na trilha é calculada a
+partir do total acumulado, nunca somando arredondamentos — é isso que impede
+o áudio de escorregar ao longo de um filme de horas.
+
+**Frases partidas são juntadas antes de traduzir.** O bug da fala 9 do piloto
+do "Cannon" (6,8x de estouro) virou regra: falas seguidas do mesmo locutor,
+quando a primeira não termina a frase, são mescladas antes de ir pro
+tradutor.
+
+**Demucs em pedaços de 10 minutos**, com 2s de contexto nas pontas. O filme
+inteiro de uma vez estoura os 16 GB do CT104 (OOM confirmado).
+
+**Referência de 30s por locutor**, montada com as falas mais longas entre
+1,5s e 15s. O XTTS só aproveita os primeiros 30s (`max_ref_len`), então
+mandar mais é desperdício.
+
+**Latente calculado uma vez por locutor.** Os pilotos usavam `tts_to_file`,
+que recalcula a "impressão" da voz a cada fala. Agora é uma vez por voz.
+
+**Silêncio das pontas aparado.** O `tts_to_file` ainda somava ~0,4s de
+silêncio no fim de cada fala, o que forçava acelerar à toa.
+
+## Banco de vozes por ator — como funciona na prática
+
+1. Dublou um filme: cada locutor encontrado é salvo com um trecho da voz e o
+   vetor do XTTS (512 números).
+2. Na tela **Atores**, o locutor aparece esperando identificação, com o áudio
+   para ouvir e o elenco do filme vindo do TMDB (foto e personagem).
+3. Escolhido o ator, a voz entra no acervo dele (ficha com foto, biografia,
+   nascimento) e passa a ser reaproveitada nos filmes seguintes.
+4. Num próximo filme com esse ator no elenco, um locutor com voz parecida o
+   bastante (cosseno ≥ 0,85) é reconhecido **sozinho**.
+
+Semeado com o que os pilotos já tinham: Henry Fonda, 33s de referência limpa
+do "12 Homens e uma Sentença" (do `dataset_henry_fonda`, que é o SPEAKER_10
+da diarização do filme inteiro). Os três locutores da cena do `piloto2`
+ficaram esperando identificação de propósito — não há como afirmar quem são.
+
+## Duas entradas, mesma regra da produção
+
+- **Do computador**: fica numa área temporária **dentro do container**
+  (`/opt/autosrt-dub/midia`), esperando você escolher o que fazer. **Nunca**
+  é gravado no HD.
+- **Do acervo em HD** (`/mnt/filmes_storage`): só de leitura. Nada é gravado
+  nem apagado lá por esta tela.
+
+O acervo é navegado por um índice em memória, montado em segundo plano e
+refeito a cada 30 min: a listagem normal varre 85 mil itens e consulta o TMDB
+um a um, o que nessa pasta nunca termina. Com o índice, abrir uma pasta leva
+0,02s e a busca ~1s (as consultas ao TMDB da página visível vão em paralelo).
+
+## O que ainda falta
+
+1. **Rodar um filme inteiro de ponta a ponta** — o pipeline foi validado em
+   trechos; o serviço ainda não processou um filme completo.
+2. **Fine-tuning por ator** (entonação). O dataset do Henry Fonda está pronto
+   (1024 trechos) e o `treinar_henry_fonda.py` também; a primeira tentativa
+   parou por falta de memória na placa, disputando com uma tradução do
+   autosrt. Só dá pra retomar com as filas de legenda vazias.
+3. Os problemas em aberto da lista lá de cima (diarização pontual, frases
+   muito curtas) continuam valendo.
