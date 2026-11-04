@@ -78,6 +78,11 @@ TRADUZIR_EM_BLOCOS_DE = 60   # falas por rodada de tradução (confere as filas 
 VRAM_WHISPER = 5500
 VRAM_DEMUCS = 3500
 VRAM_XTTS = 4000
+TEXTO_TESTE_VOZ = (
+    "Oi! Esta é uma amostra da minha voz em português, pra você "
+    "conferir antes de dublar o filme todo"
+)  # sem ponto final de propósito -- mesmo motivo do resto da síntese (ver
+   # Sintetizador.falar): evita o XTTS "falar a palavra ponto" em voz alta.
 
 PASTA_SAIDA_PADRAO = "/mnt/filmes_storage/DUBLAGEM IA"
 RAIZ_TRABALHO_PADRAO = "/opt/autosrt-dub/trabalho"
@@ -815,6 +820,40 @@ class Sintetizador:
         return np.concatenate(pedacos[:-1]) if pedacos else np.zeros(0, dtype=np.float32)
 
 
+def teste_voz(referencia_wav, destino_wav, temperatura=None):
+    """Sintetiza :data:`TEXTO_TESTE_VOZ` em português com a referência de um
+    ator e grava em ``destino_wav``. Usado pela tela Atores pra deixar o
+    usuário ouvir como a voz clonada vai falar em pt-BR -- antes disso, o
+    botão de teste só reproduzia o trecho de referência original (que pode
+    estar em outro idioma, ex. filme não dublado), o que não respondia à
+    pergunta "como essa voz vai ficar dublando".
+
+    Não entra na fila da dublagem de verdade: é uma síntese única e curta,
+    então só espera a placa estar livre uma vez (sem o loop de
+    :func:`aguardar_vez`, que é pensado pra um trabalho longo) e aborta com
+    :class:`ErroDublagem` se achar as filas de legenda/dublagem ocupadas,
+    em vez de ficar pendurado numa requisição HTTP.
+    """
+    import numpy as np
+    import soundfile as sf
+
+    ocupadas = filas_ocupadas()
+    if ocupadas:
+        raise ErroDublagem(
+            "A placa de vídeo está ocupada agora (" + ", ".join(ocupadas) +
+            "). Espera terminar e tenta de novo.")
+
+    temperatura = opcoes()["temperatura"] if temperatura is None else temperatura
+    sint = Sintetizador()
+    sint.carregar()
+    try:
+        onda = sint.falar(TEXTO_TESTE_VOZ, "teste", referencia_wav, temperatura)
+    finally:
+        sint.descarregar()
+    sf.write(destino_wav, np.asarray(onda, dtype=np.float32), TAXA_XTTS, subtype="PCM_16")
+    return destino_wav
+
+
 def _aparar_silencio(onda):
     """Tira o silêncio das pontas (o ``tts_to_file`` ainda somava 0,4 s de
     silêncio no fim de cada fala, o que forçava acelerar à toa), mantendo
@@ -1332,19 +1371,30 @@ def dublar(entrada, *, inicio=None, fim=None, raiz_trabalho=None, saida=None,
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description="Dubla um vídeo para português com IA.")
-    parser.add_argument("entrada")
+    parser.add_argument("entrada", nargs="?",
+                        help="vídeo a dublar (omitido quando usando --teste-voz-referencia)")
     parser.add_argument("--inicio", type=float, help="segundo inicial (teste com trecho)")
     parser.add_argument("--fim", type=float, help="segundo final (teste com trecho)")
     parser.add_argument("--trabalho", help="pasta raiz dos intermediários")
     parser.add_argument("--saida", help="arquivo .mkv de saída")
     parser.add_argument("--verificacao-rapida", action="store_true",
                         help="não decodifica o arquivo final inteiro para conferir")
+    parser.add_argument("--teste-voz-referencia",
+                        help="em vez de dublar, sintetiza a frase de teste em pt-BR com "
+                             "essa referência de voz (.wav) e grava em --saida")
     args = parser.parse_args(argv)
 
     _isolar_stdout()
     try:
-        dublar(args.entrada, inicio=args.inicio, fim=args.fim, raiz_trabalho=args.trabalho,
-               saida=args.saida, verificacao_completa=not args.verificacao_rapida)
+        if args.teste_voz_referencia:
+            if not args.saida:
+                raise ErroDublagem("--teste-voz-referencia precisa de --saida.")
+            teste_voz(args.teste_voz_referencia, args.saida)
+        else:
+            if not args.entrada:
+                raise ErroDublagem("Falta o vídeo de entrada.")
+            dublar(args.entrada, inicio=args.inicio, fim=args.fim, raiz_trabalho=args.trabalho,
+                   saida=args.saida, verificacao_completa=not args.verificacao_rapida)
     except ErroDublagem as exc:
         emitir(erro=str(exc))
         return 2

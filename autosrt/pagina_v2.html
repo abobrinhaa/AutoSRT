@@ -1856,7 +1856,11 @@ function cartaoAtor(ator) {
       <p class="etapa resumo-voz"></p>
       <p class="etapa filmes-ator"></p>
     </div>
-    <div class="acoes-item"><audio controls preload="none" style="max-width:240px;"></audio></div>`;
+    <div class="acoes-item acoes-voz-ator">
+      <audio controls preload="none" style="max-width:240px;"></audio>
+      <button type="button" class="fantasma testar-voz-pt">Testar em pt-BR</button>
+      <p class="etapa erro-teste-voz" hidden></p>
+    </div>`;
   div.querySelector('.item-titulo').textContent = ator.nome;
   const bio = div.querySelector('.bio-ator');
   bio.textContent = ator.bio ? ator.bio.slice(0, 280) + (ator.bio.length > 280 ? '…' : '') : '';
@@ -1870,7 +1874,33 @@ function cartaoAtor(ator) {
   div.querySelector('.resumo-voz').textContent =
     `${Math.round(ator.duracao_total_segundos)}s de referência limpa · ${ator.filmes.length} filme(s)`;
   div.querySelector('.filmes-ator').textContent = ator.filmes.map((f) => f.filme).join(' · ');
+  // Toca o trecho original de referência (pode estar em outro idioma --
+  // é só a "impressão digital" da voz, não uma amostra do resultado final).
   div.querySelector('audio').src = `/api/atores/${encodeURIComponent(ator.id)}/previa`;
+  const botaoTeste = div.querySelector('.testar-voz-pt');
+  const erroTeste = div.querySelector('.erro-teste-voz');
+  botaoTeste.onclick = async () => {
+    botaoTeste.disabled = true;
+    botaoTeste.textContent = 'Sintetizando...';
+    erroTeste.hidden = true;
+    try {
+      const resposta = await fetch(`/api/atores/${encodeURIComponent(ator.id)}/teste_voz`);
+      if (!resposta.ok) {
+        const corpo = await resposta.json().catch(() => ({}));
+        throw new Error(corpo.erro || 'Não consegui sintetizar o teste de voz.');
+      }
+      const blob = await resposta.blob();
+      const audio = div.querySelector('audio');
+      audio.src = URL.createObjectURL(blob);
+      audio.play();
+    } catch (e) {
+      erroTeste.textContent = e.message;
+      erroTeste.hidden = false;
+    } finally {
+      botaoTeste.disabled = false;
+      botaoTeste.textContent = 'Testar em pt-BR';
+    }
+  };
   return div;
 }
 

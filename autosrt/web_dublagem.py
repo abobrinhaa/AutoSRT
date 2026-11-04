@@ -551,6 +551,40 @@ def registrar(app, fila_legendas, media_dir, auto_enfileirar_legenda):
             return jsonify({"erro": "Esse ator não tem voz guardada."}), 404
         return send_file(destino, mimetype="audio/wav")
 
+    @app.get("/api/atores/<ator_id>/teste_voz")
+    def teste_voz_do_ator(ator_id):
+        """Sintetiza a frase de teste em português com a voz clonada do ator,
+        em vez de só reproduzir o trecho de referência original (que pode
+        estar no idioma original do filme, não em português)."""
+        pasta_ref = os.path.join(config.app_directory(), "vozes", "previas")
+        pasta_teste = os.path.join(config.app_directory(), "vozes", "testes")
+        os.makedirs(pasta_ref, exist_ok=True)
+        os.makedirs(pasta_teste, exist_ok=True)
+        referencia = os.path.join(pasta_ref, f"{ator_id}.wav")
+        destino = os.path.join(pasta_teste, f"{ator_id}.wav")
+        try:
+            vozes.montar_referencia_combinada(ator_id, referencia, max_segundos=30)
+        except ValueError:
+            return jsonify({"erro": "Esse ator não tem voz guardada."}), 404
+
+        python = os.environ.get("AUTOSRT_DUB_PYTHON", PYTHON_DUBLAGEM_PADRAO)
+        comando = [python, "-m", "autosrt.dublagem",
+                  "--teste-voz-referencia", referencia, "--saida", destino]
+        try:
+            resultado = subprocess.run(comando, cwd=RAIZ_REPO, capture_output=True,
+                                       text=True, timeout=120)
+        except subprocess.TimeoutExpired:
+            return jsonify({"erro": "Demorou demais pra sintetizar o teste. Tenta de novo."}), 504
+        if resultado.returncode != 0 or not os.path.exists(destino):
+            erro = (resultado.stdout or "").strip().splitlines()
+            mensagem = erro[-1] if erro else "Não consegui sintetizar o teste de voz."
+            try:
+                mensagem = json.loads(mensagem).get("erro", mensagem)
+            except (ValueError, AttributeError):
+                pass
+            return jsonify({"erro": mensagem}), 502
+        return send_file(destino, mimetype="audio/wav")
+
     @app.get("/api/locutores")
     def locutores():
         pendentes = request.args.get("todos") != "1"
