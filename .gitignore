@@ -19,3 +19,30 @@ __pycache__/
 
 # Pasta de trabalho do servidor web (filmes e legendas do usuário)
 midia/
+
+# --- projeto de dublagem com IA (branch claude/dublagem-ia) ---
+# Ambiente e material pesado: o código fica, os GB de teste não.
+venv/
+trabalho/
+dataset_henry_fonda/
+treino_henry_fonda/
+piloto*/**/*.wav
+piloto*/**/*.mkv
+piloto*/**/*.mp4
+piloto*/**/*.srt
+piloto*/**/*.json
+piloto*/**/*.txt
+piloto*/refs_bruto/
+piloto*/refs_limpas/
+piloto*/refs_cena/
+piloto*/separado/
+piloto*/synth*/
+piloto*/segmentos*/
+
+# Scripts de verificação rodados à mão durante o desenvolvimento.
+_teste_*.py
+_semear_vozes.py
+_identificar.py
+_ajustar_fonda.py
+_instalar_8002.sh
+_corrigir_config.py
