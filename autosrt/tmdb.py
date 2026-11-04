@@ -200,6 +200,7 @@ def _lookup_movie(path, api_key, *, session=None, timeout=DEFAULT_TIMEOUT):
     idioma = resultado.get("original_language")
     return {
         "tipo": "filme",
+        "tmdb_id": resultado.get("id"),
         "titulo": resultado.get("title") or titulo_bruto,
         "ano": _release_year(resultado.get("release_date")),
         "poster": _poster_url(resultado.get("poster_path")),
@@ -220,6 +221,7 @@ def _lookup_series(path, titulo_bruto, temporada, episodio, api_key, *,
     idioma = resultado.get("original_language")
     return {
         "tipo": "serie",
+        "tmdb_id": resultado.get("id"),
         "titulo": resultado.get("name") or titulo_bruto,
         "poster": _poster_url(resultado.get("poster_path")),
         "sinopse": resultado.get("overview") or None,
@@ -277,3 +279,82 @@ def limpar_cache() -> None:
     renomear o arquivo para o nome certo depois de um reconhecimento errado."""
     _cache.clear()
     _tv_details_cache.clear()
+
+
+# --------------------------------------------------------------------------
+# Elenco e ficha de ator (tela Atores da dublagem)
+# --------------------------------------------------------------------------
+
+PERFIL_BASE = "https://image.tmdb.org/t/p/w185"
+
+
+def _get_json(url, api_key, params=None, timeout=8):
+    try:
+        resposta = requests.get(url, params={"api_key": api_key, **(params or {})},
+                                timeout=timeout)
+        if resposta.status_code != 200:
+            return None
+        return resposta.json()
+    except (requests.RequestException, ValueError):
+        return None
+
+
+def elenco_do_arquivo(path, api_key, limite=25):
+    """Elenco principal do filme/série reconhecido pelo nome do arquivo:
+    ``[{"nome", "personagem", "foto", "tmdb_id"}]``. Lista vazia se não
+    reconhecer ou sem chave."""
+    if not api_key:
+        return []
+    info = lookup_for_file(path, api_key, timeout=8)
+    if not info or not info.get("tmdb_id"):
+        return []
+    if info["tipo"] == "serie":
+        dados = _get_json(f"https://api.themoviedb.org/3/tv/{info['tmdb_id']}/aggregate_credits",
+                          api_key, {"language": "pt-BR"})
+    else:
+        dados = _get_json(f"https://api.themoviedb.org/3/movie/{info['tmdb_id']}/credits",
+                          api_key, {"language": "pt-BR"})
+    elenco = []
+    for pessoa in (dados or {}).get("cast", [])[:limite]:
+        personagem = pessoa.get("character")
+        if not personagem and pessoa.get("roles"):
+            personagem = pessoa["roles"][0].get("character")
+        elenco.append({
+            "nome": pessoa.get("name"),
+            "personagem": personagem or "",
+            "foto": PERFIL_BASE + pessoa["profile_path"] if pessoa.get("profile_path") else None,
+            "tmdb_id": pessoa.get("id"),
+        })
+    return elenco
+
+
+def pessoa(tmdb_id, api_key):
+    """Ficha de um ator: nome, foto, biografia (em português quando o TMDB
+    tem, senão em inglês), nascimento e local de nascimento."""
+    if not api_key or not tmdb_id:
+        return None
+    url = f"https://api.themoviedb.org/3/person/{int(tmdb_id)}"
+    dados = _get_json(url, api_key, {"language": "pt-BR"})
+    if not dados:
+        return None
+    bio = dados.get("biography")
+    if not bio:
+        bio = (_get_json(url, api_key, {"language": "en-US"}) or {}).get("biography")
+    return {
+        "nome": dados.get("name"),
+        "foto": PERFIL_BASE + dados["profile_path"] if dados.get("profile_path") else None,
+        "bio": bio or None,
+        "nascimento": dados.get("birthday"),
+        "local_nascimento": dados.get("place_of_birth"),
+        "tmdb_id": dados.get("id"),
+    }
+
+
+def buscar_pessoa(nome, api_key):
+    """Primeira pessoa no TMDB com esse nome (ator digitado à mão)."""
+    if not api_key or not nome:
+        return None
+    dados = _get_json("https://api.themoviedb.org/3/search/person", api_key,
+                      {"query": nome, "language": "pt-BR"})
+    resultados = (dados or {}).get("results") or []
+    return pessoa(resultados[0]["id"], api_key) if resultados else None

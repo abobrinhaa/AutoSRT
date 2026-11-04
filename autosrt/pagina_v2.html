@@ -1,0 +1,2116 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AutoSRT — Dublagem</title>
+<style>
+
+  :root {
+    color-scheme: light dark;
+    --bg-grad: linear-gradient(180deg, #f8f9fb 0%, #eef0f4 100%);
+    --bg-solid: #eef0f4;
+    --surface: #ffffff;
+    --surface-2: #eef0f4;
+    --surface-hover: #e6e9ef;
+    --border: #dfe2e8;
+    --text: #16161c;
+    --text-muted: #666a75;
+    --accent: #3b82f6;
+    --accent-hover: #2f6fd8;
+    --accent-soft: #e6efff;
+    --success: #16a34a;
+    --success-soft: #e5f7ec;
+    --danger: #dc2626;
+    --danger-soft: #fdebea;
+    --warning: #b45309;
+    --shadow-sm: 0 1px 2px rgba(20, 22, 30, .05);
+    --shadow-md: 0 10px 30px rgba(20, 22, 30, .10);
+    --radius: 14px;
+    --radius-sm: 9px;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-tema="claro"]) {
+      --bg-grad: linear-gradient(180deg, #1b1b1f 0%, #17171b 100%);
+      --bg-solid: #17171b;
+      --surface: #212129; --surface-2: #26262f; --surface-hover: #2c2c36;
+      --border: #313139; --text: #ecedf1; --text-muted: #9a9aa2;
+      --accent-hover: #5c9bfc; --accent-soft: #1e2c47;
+      --success: #4ade80; --success-soft: #16311f;
+      --danger: #f87171; --danger-soft: #3a1c1c; --warning: #fbbf24;
+      --shadow-sm: 0 1px 2px rgba(0, 0, 0, .35);
+      --shadow-md: 0 10px 30px rgba(0, 0, 0, .45);
+    }
+  }
+  :root[data-tema="escuro"] {
+    --bg-grad: linear-gradient(180deg, #1b1b1f 0%, #17171b 100%);
+    --bg-solid: #17171b;
+    --surface: #212129; --surface-2: #26262f; --surface-hover: #2c2c36;
+    --border: #313139; --text: #ecedf1; --text-muted: #9a9aa2;
+    --accent-hover: #5c9bfc; --accent-soft: #1e2c47;
+    --success: #4ade80; --success-soft: #16311f;
+    --danger: #f87171; --danger-soft: #3a1c1c; --warning: #fbbf24;
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, .35);
+    --shadow-md: 0 10px 30px rgba(0, 0, 0, .45);
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 16px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif;
+         min-height: 100vh; color: var(--text);
+         background-color: var(--bg-solid);
+         background-image: var(--bg-grad);
+         background-attachment: fixed;
+         background-repeat: no-repeat;
+         transition: background-color .2s ease, color .2s ease; }
+  .layout { display: flex; gap: 24px; justify-content: center; align-items: flex-start;
+            max-width: 1180px; margin: 0 auto; padding: 24px 16px 64px; }
+  main { flex: 1 1 560px; max-width: 820px; min-width: 0; margin: 0; padding: 0; }
+  .barra-lateral { display: flex; flex-direction: column; align-items: stretch; gap: 4px;
+                   flex: 0 0 280px; width: 280px; padding: 16px 12px; position: sticky; top: 24px;
+                   align-self: flex-start; height: calc(100vh - 48px); overflow-y: auto;
+                   border: 1px solid var(--border); border-radius: var(--radius);
+                   background: var(--surface); box-shadow: var(--shadow-sm); }
+  .barra-lateral-espaco { flex: 1; min-height: 8px; }
+  .barra-marca { display: flex; align-items: center; gap: 10px; padding: 4px 8px 12px;
+                 margin-bottom: 4px; border-bottom: 1px solid var(--border); }
+  .barra-marca-icone { display: flex; width: 28px; height: 28px; border-radius: 8px;
+                        align-items: center; justify-content: center; flex-shrink: 0;
+                        background: var(--accent-soft); color: var(--accent); }
+  .barra-marca-icone svg { width: 17px; height: 17px; }
+  .barra-marca-nome { font-weight: 700; font-size: 15px; flex: 1; }
+  .fechar-barra { display: none; width: 30px; height: 30px; padding: 0; flex-shrink: 0;
+                  background: var(--surface-2); color: var(--text-muted); border: 1px solid var(--border);
+                  font-size: 18px; line-height: 1; border-radius: var(--radius-sm); }
+  .fechar-barra:hover:enabled { background: var(--surface-hover); color: var(--text); }
+  .barra-busca { display: flex; align-items: center; gap: 8px; margin: 0 4px 14px;
+                 padding: 7px 10px; border-radius: var(--radius-sm); background: var(--surface-2);
+                 border: 1px solid var(--border); color: var(--text-muted); }
+  .barra-busca svg { width: 15px; height: 15px; flex-shrink: 0; }
+  .barra-busca input { flex: 1; min-width: 0; border: 0; background: none; color: var(--text);
+                        font: inherit; font-size: 13px; padding: 0; }
+  .barra-busca input:focus { outline: none; }
+  .barra-busca input::placeholder { color: var(--text-muted); }
+  .nav-grupo { margin-bottom: 6px; }
+  .nav-grupo-titulo { margin: 10px 8px 6px; font-size: 11px; font-weight: 700;
+                       text-transform: uppercase; letter-spacing: .08em; color: var(--text-muted); }
+  .nav-item { display: flex; align-items: center; gap: 10px; width: 100%; text-align: left;
+              background: none; border: 0; border-radius: var(--radius-sm); color: var(--text);
+              padding: 8px 10px; font-size: 14px; font-weight: 500; }
+  .nav-item:hover:enabled { background: var(--surface-2); transform: none; }
+  .nav-item svg:not(.chevron-nav) { width: 17px; height: 17px; flex-shrink: 0; color: var(--text-muted); }
+  .rotulo-nav { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .nav-item.ativo { background: var(--accent-soft); color: var(--text); font-weight: 600; }
+  .nav-item.ativo svg:not(.chevron-nav) { color: var(--accent); }
+  .nav-contador { flex-shrink: 0; font-size: 11px; font-weight: 700; color: var(--text-muted);
+                  background: var(--surface-2); border-radius: 999px; padding: 1px 7px; }
+  .ponto-aviso-inline { flex-shrink: 0; width: 8px; height: 8px; border-radius: 50%; background: var(--warning); }
+  .chevron-nav { width: 14px; height: 14px; flex-shrink: 0; color: var(--text-muted);
+                 transition: transform .15s ease; }
+  .nav-item-expandivel[aria-expanded="true"] .chevron-nav { transform: rotate(90deg); }
+  .nav-item-expandivel.ativo { background: var(--accent-soft); }
+  .nav-sub { display: flex; flex-direction: column; gap: 2px; margin: 2px 0 6px 19px;
+             padding-left: 14px; border-left: 1px solid var(--border); }
+  .nav-sub[hidden] { display: none; }
+  .nav-subitem { display: flex; align-items: center; gap: 8px; width: 100%; text-align: left;
+                 background: none; border: 0; border-radius: var(--radius-sm); color: var(--text-muted);
+                 padding: 7px 10px; font-size: 13px; }
+  .nav-subitem:hover:enabled { background: var(--surface-2); color: var(--text); transform: none; }
+  .nav-subitem.ativo { background: var(--accent-soft); color: var(--text); font-weight: 600; }
+  .barra-rodape { border-top: 1px solid var(--border); padding-top: 8px; margin-top: 4px; }
+  .botao-hamburguer { display: none; position: fixed; top: 20px; left: 16px; z-index: 50;
+                       width: 42px; height: 42px; padding: 0; border-radius: 999px;
+                       background: var(--surface); border: 1px solid var(--border); color: var(--text);
+                       box-shadow: var(--shadow-md); align-items: center; justify-content: center; }
+  .botao-hamburguer svg { width: 20px; height: 20px; }
+  @media (max-width: 900px) {
+    .botao-hamburguer { display: flex; }
+    .barra-lateral { position: fixed; top: 0; left: 0; height: 100%; width: min(280px, 86vw);
+                      max-width: 280px; border-radius: 0; border-right: 1px solid var(--border);
+                      border-left: 0; box-shadow: var(--shadow-md); transform: translateX(-105%);
+                      transition: transform .2s ease; z-index: 60; }
+    .barra-lateral.aberta { transform: translateX(0); }
+    .fechar-barra { display: flex; }
+    main { padding-top: 56px; }
+  }
+  .cabecalho { display: flex; align-items: flex-start; justify-content: space-between;
+               gap: 16px; flex-wrap: wrap; }
+  h1 { font-size: 26px; margin: 8px 0 4px; letter-spacing: -.01em; }
+  p.sub { color: var(--text-muted); margin: 0 0 28px; }
+  h2 { font-size: 14px; text-transform: uppercase; letter-spacing: .07em;
+       color: var(--text-muted); margin: 32px 0 12px; }
+  .nota-mockup { font-size: 12px; color: var(--text-muted); background: var(--accent-soft);
+                 border: 1px solid var(--border); border-radius: var(--radius-sm);
+                 padding: 8px 12px; margin: 0 0 20px; }
+  .nota-mockup strong { color: var(--text); }
+  .acoes-cabecalho { display: flex; gap: 8px; margin-top: 4px; }
+  .botao-icone { position: relative; flex-shrink: 0; width: 40px; height: 40px; padding: 0;
+                 border-radius: 999px; background: var(--surface);
+                 border: 1px solid var(--border); color: var(--text);
+                 display: flex; align-items: center; justify-content: center;
+                 box-shadow: var(--shadow-sm); transition: transform .15s ease, background .15s ease; }
+  .botao-icone:hover { background: var(--surface-hover); transform: translateY(-1px); }
+  .botao-icone svg { width: 19px; height: 19px; }
+  .ponto-aviso { position: absolute; top: 5px; right: 5px; width: 10px; height: 10px;
+                 border-radius: 50%; background: var(--warning);
+                 border: 2px solid var(--surface); }
+  .alternar-tema .icone-lua { display: none; }
+  :root[data-tema="escuro"] .alternar-tema .icone-sol { display: none; }
+  :root[data-tema="escuro"] .alternar-tema .icone-lua { display: block; }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-tema="claro"]) .alternar-tema .icone-sol { display: none; }
+    :root:not([data-tema="claro"]) .alternar-tema .icone-lua { display: block; }
+  }
+  .drop { border: 2px dashed var(--border); border-radius: var(--radius); padding: 30px 16px;
+          text-align: center; color: var(--text-muted); cursor: pointer; background: var(--surface);
+          transition: border-color .15s, background .15s, transform .15s; }
+  .drop:hover { border-color: var(--accent); background: var(--accent-soft); }
+  .drop svg { width: 28px; height: 28px; color: var(--text-muted); }
+  .drop #dica { margin: 8px 0 14px; font-size: 14px; }
+  .lista { border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden;
+           background: var(--surface); box-shadow: var(--shadow-sm); }
+  .item { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; padding: 12px 14px;
+          border-bottom: 1px solid var(--border); transition: background .15s ease; }
+  .item:hover { background: var(--surface-2); }
+  .item:last-child { border-bottom: 0; }
+  .item .nome { flex: 1 1 auto; min-width: 9ch; overflow: hidden;
+                text-overflow: ellipsis; white-space: nowrap; }
+  .item .tag { flex-shrink: 0; }
+  .item.novo { background: var(--accent-soft); box-shadow: inset 3px 0 0 var(--accent); }
+  .item .acao { flex-shrink: 1; max-width: 220px; }
+  .item.item-midia { align-items: flex-start; padding: 16px; gap: 14px; position: relative; }
+  .item-midia .marca { margin-top: 3px; }
+  .poster-grande, .poster-marcador { width: 92px; height: 138px; object-fit: cover;
+                                border-radius: var(--radius-sm); flex-shrink: 0;
+                                background: var(--surface-2); box-shadow: var(--shadow-sm); }
+  .poster-marcador { display: flex; align-items: center; justify-content: center;
+                      background: linear-gradient(160deg, var(--surface-2), var(--surface-hover));
+                      color: var(--text-muted); border: 1px solid var(--border); }
+  .poster-marcador svg { width: 26px; height: 26px; }
+  .item-corpo { flex: 1 1 260px; min-width: 0; display: flex; flex-direction: column;
+                gap: 6px; align-self: stretch; }
+  .item-topo { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+  .item-titulo { margin: 0; font-size: 15px; font-weight: 600; overflow: hidden;
+                 text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 1;
+                 -webkit-box-orient: vertical; }
+  .item-arquivo { margin: -4px 0 0; font-size: 12px; color: var(--text-muted);
+                  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .item-episodio { margin: -4px 0 0; font-size: 13px; color: var(--text-muted); }
+  .item-sinopse { margin: 0; font-size: 13px; line-height: 1.5; color: var(--text-muted);
+                  overflow: hidden; text-overflow: ellipsis; display: -webkit-box;
+                  -webkit-line-clamp: 3; -webkit-box-orient: vertical; }
+  .item-rodape { margin-top: auto; padding-top: 8px; display: flex; flex-wrap: wrap;
+                 align-items: center; gap: 8px; }
+  .item-rodape .acao { max-width: none; flex: 1 1 auto; }
+  .item-metadados { flex-shrink: 0; display: flex; flex-direction: column; gap: 4px;
+                     align-items: flex-start; }
+  .item-midia .apagar { flex-shrink: 0; }
+  .item-ator { align-items: flex-start; }
+  .avatar-ator { flex-shrink: 0; width: 44px; height: 44px; border-radius: 50%;
+                 display: flex; align-items: center; justify-content: center;
+                 background: var(--accent-soft); color: var(--accent); font-weight: 700;
+                 font-size: 14px; }
+  .aviso-mesclado .avatar-ator { background: var(--danger-soft); color: var(--danger); }
+  .botao-previa { display: inline-flex; align-items: center; gap: 6px; }
+  .botao-previa.tocando { background: var(--accent-soft); border-color: var(--accent); }
+  .detalhes-ator { margin-top: 4px; font-size: 13px; color: var(--text-muted); }
+  .detalhes-ator summary { cursor: pointer; }
+  .detalhes-ator ul { margin: 6px 0 0; padding-left: 18px; }
+  #arquivo { display: none; }
+  #escolher { display: inline-block; padding: 9px 18px; background: var(--accent);
+              color: #fff; border-radius: 999px; cursor: pointer; font-weight: 600;
+              border: none; transition: background .15s ease, transform .15s ease; }
+  #escolher:hover { background: var(--accent-hover); transform: translateY(-1px); }
+  .pasta { padding: 8px 14px; background: var(--surface-2); font-size: 13px;
+           color: var(--text-muted); border-bottom: 1px solid var(--border); }
+  .barra-acoes { display: flex; flex-wrap: wrap; align-items: center; gap: 12px;
+                 margin-bottom: 10px; padding: 10px 14px; border-radius: var(--radius-sm);
+                 background: var(--surface-2); }
+  .barra-acoes .conta { flex: 1; color: var(--text-muted); font-size: 14px; }
+  select { font: inherit; background: var(--surface); color: var(--text);
+           border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 6px 8px; }
+  input[type=checkbox] { width: 17px; height: 17px; accent-color: var(--accent);
+                         cursor: pointer; }
+  label.tudo { display: flex; align-items: center; gap: 8px; cursor: pointer;
+               color: var(--text-muted); font-size: 14px; }
+  .tag { font-size: 12px; color: var(--text-muted); background: var(--surface-2);
+         padding: 2px 8px; border-radius: 999px; }
+  .tag.voz-pronta { color: var(--success); }
+  button { font: inherit; border: 0; border-radius: var(--radius-sm); padding: 8px 16px;
+           background: var(--accent); color: #fff; cursor: pointer;
+           transition: background .15s ease, transform .1s ease; }
+  button:hover:enabled { background: var(--accent-hover); transform: translateY(-1px); }
+  button.fantasma { background: var(--surface-2); color: var(--text); }
+  button.fantasma:hover:enabled { background: var(--surface-hover); }
+  button:disabled { opacity: .5; cursor: default; transform: none; }
+  button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible,
+  [tabindex]:focus-visible {
+    outline: 2px solid var(--accent); outline-offset: 2px; }
+  .barra { height: 6px; background: var(--surface-2); border-radius: 999px;
+           overflow: hidden; margin-top: 8px; }
+  .barra > div { height: 100%; background: var(--accent); width: 0;
+                 transition: width .3s; }
+  .barra.indefinida > div { transition: none; background: linear-gradient(
+      90deg, var(--surface-2) 0%, var(--accent) 50%, var(--surface-2) 100%);
+      background-size: 250% 100%; animation: desliza 1.6s linear infinite; }
+  @keyframes desliza { from { background-position: 250% 0; }
+                       to { background-position: 0 0; } }
+  @media (prefers-reduced-motion: reduce) {
+    .barra.indefinida > div { animation: none; background: var(--surface-hover); }
+  }
+  .trabalho { border: 1px solid var(--border); border-radius: var(--radius);
+              padding: 14px; margin-bottom: 10px; background: var(--surface);
+              box-shadow: var(--shadow-sm); }
+  .trabalho .topo { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  .trabalho .topo .nome { flex: 1 1 auto; font-weight: 600; font-size: 14px; }
+  .etapa { color: var(--text-muted); font-size: 14px; margin-top: 6px; }
+  .erro { color: var(--danger); }
+  .ok { color: var(--success); }
+  .trabalho .aviso { color: var(--warning); font-size: 13px; margin-top: 4px; }
+  .vazio { color: var(--text-muted); padding: 20px; text-align: center; }
+  a.baixar { color: var(--accent); text-decoration: none; font-weight: 600; }
+  a.baixar:hover { text-decoration: underline; }
+  .item a.baixar { flex-shrink: 0; }
+  .apagar { flex-shrink: 0; background: none; border: 1px solid var(--danger-soft);
+            color: var(--danger); }
+  .apagar:hover:enabled { background: var(--danger-soft); }
+  h2 #limpar { float: right; text-transform: none; letter-spacing: 0;
+               font-size: 13px; }
+  [role=tabpanel][hidden] { display: none; }
+  #config-voz, #config-qualidade, #config-traducao, #config-transcricao { padding: 16px 0 4px; }
+  #config-voz > p.dica-config, #config-qualidade > p.dica-config,
+  #config-traducao > p.dica-config, #config-transcricao > p.dica-config { margin: 0 0 16px; }
+  #config-voz .painel, #config-qualidade .painel,
+  #config-traducao .painel, #config-transcricao .painel { display: grid; gap: 12px 20px;
+    grid-template-columns: minmax(0, 1fr); }
+  #config-voz label, #config-qualidade label,
+  #config-traducao label, #config-transcricao label {
+    display: grid; grid-template-columns: minmax(0, 1fr); gap: 6px; font-size: 14px; color: var(--text-muted); }
+  #vista-config select { max-width: 100%; }
+  #config-voz label[hidden] { display: none; }
+  #config-voz input, #config-qualidade input, #config-qualidade textarea,
+  #config-traducao input, #config-transcricao input, #config-transcricao textarea {
+    font: inherit; background: var(--surface-2); color: var(--text);
+    border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 8px 10px; }
+  #config-qualidade textarea, #config-transcricao textarea { width: 100%; box-sizing: border-box; resize: vertical; }
+  #config-qualidade label.linha-checkbox, #config-transcricao label.linha-checkbox {
+    display: flex; align-items: center; gap: 8px; }
+  @media (min-width: 760px) {
+    #config-voz .painel, #config-qualidade .painel,
+    #config-traducao .painel, #config-transcricao .painel {
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); align-items: start; }
+    .painel > .campo-largo, .painel > .rodape, .painel > .modo-provedor,
+    .painel > .lista-modelos, .painel > .dica-config,
+    .grupo-provedor > .campo-largo, .grupo-provedor > .lista-modelos,
+    .grupo-provedor > .dica-config { grid-column: 1 / -1; }
+  }
+  .rodape { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  .dica-config { flex: 1; font-size: 13px; color: var(--text-muted); }
+  .painel-ferramenta { border: 1px solid var(--border); border-radius: var(--radius-sm);
+                       padding: 14px; margin-bottom: 14px; }
+  .painel-ferramenta h3 { margin: 0 0 6px; display: flex; align-items: center; gap: 8px; }
+  .acoes-ferramenta { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+  .selo { font-size: 12px; padding: 2px 8px; border-radius: 999px;
+          background: var(--surface-2); }
+  .selo.ok { color: var(--success); }
+  .selo.falta { color: var(--warning); }
+  .modo-provedor { display: flex; gap: 8px; flex-wrap: wrap; }
+  .modo-provedor button { flex: 1; min-width: 140px; background: var(--surface-2);
+                          color: var(--text); border: 1px solid var(--border); }
+  .modo-provedor button.ativo { background: var(--accent-soft); border-color: var(--accent);
+                                color: var(--text); }
+  .modo-provedor .tag { margin-left: 6px; }
+  .modo-provedor .marca-selecionado { display: none; color: var(--success);
+                                      font-size: 12px; }
+  .modo-provedor button.ativo .marca-selecionado { display: inline; }
+  .linha-modelo { display: flex; gap: 8px; flex-wrap: wrap; }
+  .linha-modelo input { flex: 1; min-width: 160px; }
+  .lista-modelos { max-height: 220px; overflow-y: auto; border: 1px solid var(--border);
+                   border-radius: var(--radius-sm); }
+  .lista-modelos button { display: block; width: 100%; text-align: left;
+                          background: none; border: 0; border-radius: 0;
+                          border-bottom: 1px solid var(--border); color: var(--text);
+                          padding: 8px 10px; font-size: 13px; }
+  .lista-modelos button:last-child { border-bottom: 0; }
+  .lista-modelos button:hover { background: var(--surface-2); }
+  .lista-modelos .preco { display: block; color: var(--text-muted); font-size: 12px;
+                          margin-top: 2px; }
+  .rotulo-com-ajuda { display: inline-flex; align-items: center; gap: 6px; }
+  .ajuda { display: inline-flex; align-items: center; justify-content: center;
+           width: 16px; height: 16px; border-radius: 999px; background: var(--surface-2);
+           color: var(--text-muted); font-size: 11px; font-weight: 700; cursor: help;
+           border: 1px solid var(--border); }
+  [data-tip] { position: relative; }
+  [data-tip]::after {
+    content: attr(data-tip); position: absolute; bottom: calc(100% + 8px); left: 50%;
+    transform: translateX(-50%) translateY(4px); background: var(--text); color: var(--surface);
+    padding: 7px 10px; border-radius: 8px; font-size: 12px; line-height: 1.4;
+    width: max-content; max-width: min(260px, 80vw); box-shadow: var(--shadow-md);
+    opacity: 0; pointer-events: none; transition: opacity .15s ease, transform .15s ease;
+    z-index: 30; white-space: normal; text-align: left; font-weight: 400; }
+  [data-tip]:hover::after, [data-tip]:focus-visible::after {
+    opacity: 1; transform: translateX(-50%) translateY(0); }
+  /* Balão fechado não pode ocupar espaço: invisível, ele ainda alargava a página no celular. */
+  [data-tip]:not(:hover):not(:focus-visible)::after { display: none; }
+  @media (max-width: 560px) {
+    [data-tip]::after { position: fixed; left: 16px; right: 16px; bottom: 16px;
+                        width: auto; max-width: none; transform: none; }
+    [data-tip]:hover::after, [data-tip]:focus-visible::after { transform: none; }
+  }
+  .dock { border: 1px solid var(--border); border-radius: var(--radius);
+          background: var(--surface); box-shadow: var(--shadow-sm);
+          padding: 14px; margin: 0 0 16px; }
+  .dock-titulo { font-size: 12px; text-transform: uppercase; letter-spacing: .07em;
+                 color: var(--text-muted); margin: 0 0 10px; }
+  .chave { position: relative; display: flex; align-items: center; gap: 10px;
+           cursor: pointer; font-size: 15px; font-weight: 600; color: var(--text); }
+  .chave input[type=checkbox] { position: absolute; left: 0; top: 50%; z-index: 1;
+                                transform: translateY(-50%); width: 42px; height: 24px;
+                                margin: 0; opacity: 0; cursor: pointer; }
+  .chave .trilho { position: relative; flex-shrink: 0; width: 42px; height: 24px;
+                   border-radius: 999px; background: var(--surface-hover);
+                   border: 1px solid var(--border);
+                   transition: background .15s ease, border-color .15s ease; }
+  .chave .trilho::after { content: ""; position: absolute; top: 2px; left: 2px;
+                          width: 18px; height: 18px; border-radius: 50%;
+                          background: var(--surface); box-shadow: var(--shadow-sm);
+                          transition: transform .15s ease; }
+  .chave input:checked + .trilho { background: var(--accent); border-color: var(--accent); }
+  .chave input:checked + .trilho::after { transform: translateX(18px); background: #fff; }
+  .chave input:focus-visible + .trilho { outline: 2px solid var(--accent);
+                                         outline-offset: 2px; }
+  .chave input:disabled + .trilho { opacity: .5; }
+  .dock-sempre { margin: 0 0 12px; font-size: 13px; line-height: 1.5;
+                 color: var(--text-muted); padding-bottom: 12px;
+                 border-bottom: 1px solid var(--border); }
+  .dock-sempre strong { color: var(--text); }
+  .dock-hd { margin: 0 0 12px; padding-bottom: 12px; border-bottom: 1px solid var(--border); }
+  .dock-ajuda { margin: 10px 0 0; font-size: 13px; line-height: 1.5;
+                color: var(--text-muted); }
+  .dock-ajuda strong { color: var(--text); font-weight: 600; }
+  .dock-ajuda p { margin: 0 0 8px; }
+  .dock-ajuda p:last-child { margin-bottom: 0; }
+  .dock-estado { margin: 10px 0 0; font-size: 13px; color: var(--text-muted);
+                 border-top: 1px solid var(--border); padding-top: 10px; }
+  .dock-estado.ligado { color: var(--success); }
+  .dock-estado.recado { color: var(--accent); font-weight: 600; }
+  .modal-config { display: flex; flex-direction: column; padding: 0;
+                  width: min(860px, 94vw);
+                  min-height: min(520px, 78vh); max-height: min(720px, 88vh);
+                  border: 1px solid var(--border); border-radius: var(--radius);
+                  background: var(--surface); color: var(--text);
+                  box-shadow: var(--shadow-md); overflow: hidden; }
+  dialog.modal-config:not([open]) { display: none; }
+  .modal-config::backdrop { background: rgba(10, 11, 15, .55); }
+  .topo-modal { flex-shrink: 0; border-bottom: 1px solid var(--border); }
+  .titulo-modal { display: flex; align-items: center; gap: 12px; padding: 14px 20px 0; }
+  .titulo-modal h2 { margin: 0; flex: 1; }
+  .fechar-modal { width: 32px; height: 32px; padding: 0; flex-shrink: 0;
+                   font-size: 20px; line-height: 1; background: var(--surface-2);
+                   color: var(--text-muted); border: 1px solid var(--border); }
+  .fechar-modal:hover:enabled { background: var(--surface-hover); color: var(--text); }
+  .abas { display: flex; gap: 20px; padding: 0 20px; }
+  .aba { display: flex; align-items: center; gap: 8px; padding: 12px 2px; margin: 0;
+         background: none; border: 0; border-radius: 0; color: var(--text-muted);
+         border-bottom: 2px solid transparent; font-size: 14px; }
+  .aba:hover:enabled { background: none; color: var(--text); transform: none; }
+  .aba[aria-selected="true"] { color: var(--text); font-weight: 600;
+                               border-bottom-color: var(--accent); }
+  .aba:focus-visible { outline-offset: -2px; }
+  @media (max-width: 560px) {
+    .abas { display: grid; grid-template-columns: 1fr 1fr; gap: 0 8px; }
+    .aba { flex-direction: column; gap: 4px; justify-content: center;
+           text-align: center; min-width: 0; }
+    .aba .selo { white-space: normal; }
+  }
+  .grupo-provedor { display: contents; }
+  .grupo-provedor[hidden] { display: none; }
+  #config-voz label.linha-checkbox { display: flex; align-items: center; gap: 8px; }
+  .corpo-modal { padding: 0 0 20px; }
+  #vista-config .topo-modal { border-bottom: 0; }
+  #vista-config .titulo-modal { padding: 0 0 12px; }
+  #vista-config .abas { padding: 0; }
+  .fundo-lateral:not([hidden]) { display: block; position: fixed; inset: 0;
+                                  background: rgba(10, 11, 15, .55); z-index: 55; }
+  .bio-ator { margin: 2px 0 0; font-size: 13px; line-height: 1.5; color: var(--text-muted); }
+  .ficha-ator { display: flex; flex-wrap: wrap; gap: 6px; margin: 2px 0 0; }
+  .avatar-ator { width: 64px; height: 64px; font-size: 16px; }
+  .avatar-ator svg { width: 58%; height: 58%; }
+  .avatar-ator-foto { color: #fff; background: linear-gradient(135deg, var(--accent), var(--accent-hover));
+                       font-size: 20px; }
+  .avatar-ator-foto.tom-2 { background: linear-gradient(135deg, #8a6fe0, var(--accent)); }
+
+  .tabela-historico { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .tabela-historico th { text-align: left; color: var(--text-muted); font-weight: 600;
+                          padding: 6px 10px; border-bottom: 1px solid var(--border);
+                          position: sticky; top: 0; background: var(--surface); }
+  .tabela-historico td { padding: 6px 10px; border-bottom: 1px solid var(--border);
+                          vertical-align: top; }
+  .tabela-historico tr.estado-erro td.estado { color: var(--danger); }
+  .tabela-historico tr.estado-concluido td.estado { color: var(--success); }
+  @media (max-width: 560px) {
+    .item .acao { max-width: none; flex: 1 1 100%; }
+    .barra-acoes { flex-direction: column; align-items: stretch; }
+    .trabalho .topo .acao { flex: 1 1 100%; display: flex; gap: 8px; }
+    .item.item-midia { flex-wrap: wrap; }
+    .item-midia .poster-grande, .item-midia .poster-marcador { flex: 1 1 100%; width: 100%; height: 180px; }
+    .item-midia .item-corpo { flex: 1 1 100%; }
+    .item-metadados { flex-direction: row; gap: 8px; align-items: center; }
+  }
+  /* --- acrescentado à folha do mockup para a tela real --- */
+  .acoes-item { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .item .acoes-item { margin-left: auto; }
+  .metadados-linha { display: flex; gap: 6px; flex-wrap: wrap; }
+  .item-rodape .acoes-item { margin-left: 0; }
+  .nav-contador.aviso { background: var(--warning); color: #fff; }
+  .aviso-salvo { color: var(--success); font-size: 13px; font-weight: 600; }
+  .item-ator, .item-locutor { align-items: flex-start; gap: 14px; }
+  .item-ator .item-corpo, .item-locutor .item-corpo { flex: 1 1 320px; min-width: 0; }
+  .avatar-ator { flex-shrink: 0; border-radius: 50%; object-fit: cover; }
+  .avatar-vazio { display: inline-flex; align-items: center; justify-content: center;
+                  background: var(--accent-soft); color: var(--accent); font-weight: 700;
+                  width: 64px; height: 64px; font-size: 16px; }
+  .resumo-voz { color: var(--text-muted); }
+  .filmes-ator { color: var(--text-muted); font-size: 13px; }
+  .modal-estreito { width: min(640px, 94vw); }
+  .grade-elenco { display: grid; gap: 8px; max-height: 42vh; overflow-y: auto;
+                  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
+  .cartao-elenco { display: flex; align-items: center; gap: 10px; text-align: left;
+                   background: var(--surface-2); color: var(--text); padding: 8px;
+                   border: 1px solid var(--border); border-radius: var(--radius-sm);
+                   flex-wrap: wrap; }
+  .cartao-elenco:hover:enabled { background: var(--surface-hover); transform: none; }
+  .cartao-elenco img { width: 40px; height: 40px; border-radius: 50%; object-fit: cover; flex-shrink: 0; }
+  .cartao-elenco .avatar-vazio { width: 40px; height: 40px; font-size: 13px; }
+  .cartao-elenco .nome-elenco { font-weight: 600; font-size: 13px; flex: 1 1 60px; min-width: 0; }
+  .cartao-elenco .personagem-elenco { color: var(--text-muted); font-size: 12px; flex: 1 1 100%; }
+  .barra-envio { height: 6px; background: var(--surface-2); border-radius: 999px;
+                 overflow: hidden; margin: -8px 0 16px; }
+  .barra-envio > div { height: 100%; width: 0; background: var(--accent); transition: width .2s; }
+  .selo-gpu { font-size: 12px; color: var(--text-muted); background: var(--surface-2);
+              padding: 4px 10px; border-radius: 999px; }
+  .trabalho .acao { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  #dialogo-ator .rodape { justify-content: space-between; }
+  .trilha { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; margin-bottom: 10px; }
+  .migalha { background: none; color: var(--accent); padding: 4px 6px; font-size: 14px;
+             font-weight: 600; border-radius: var(--radius-sm); }
+  .migalha:hover:enabled { background: var(--surface-2); transform: none; }
+  .separador-trilha { color: var(--text-muted); }
+  .item-pasta { width: 100%; text-align: left; background: var(--surface);
+                color: var(--text); border: 1px solid var(--border); }
+  .item-pasta:hover:enabled { background: var(--surface-hover); transform: none; }
+  .item-pasta svg { width: 22px; height: 22px; flex-shrink: 0; color: var(--accent); }
+  .item-pasta .nome { flex: 1; font-weight: 600; }
+  .paginacao { display: flex; align-items: center; gap: 12px; justify-content: center;
+               margin-top: 14px; flex-wrap: wrap; }
+  .paginacao .dica-config { flex: 0 1 auto; text-align: center; }
+  h2 .fantasma { float: right; text-transform: none; letter-spacing: 0; font-size: 13px;
+                 padding: 4px 10px; }
+  /* Área de envio: mesmo visual do drop da página clássica do autosrt. */
+  .area-envio { display: block; border: 2px dashed var(--border); border-radius: var(--radius);
+                padding: 24px 16px; margin-bottom: 18px; text-align: center;
+                color: var(--text-muted); cursor: pointer; background: var(--surface);
+                transition: border-color .15s, background .15s, transform .15s; }
+  .area-envio:hover, .area-envio.ativo { border-color: var(--accent); background: var(--accent-soft); }
+  .area-envio.ativo { transform: scale(1.008); }
+  .area-envio svg { width: 28px; height: 28px; color: var(--text-muted); display: block;
+                    margin: 0 auto 6px; }
+  .area-envio strong { display: block; color: var(--text); font-size: 15px; }
+  .area-envio #dica { display: block; margin: 6px 0 12px; font-size: 14px; }
+  .acoes-envio { display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
+                 justify-content: center; margin-top: 4px; }
+  .area-envio .dica-config { flex: 0 1 auto; text-align: center; }
+  .resultado-ferramenta { margin-top: 10px; }
+  .resultado-ferramenta .barra { margin-top: 6px; }
+</style>
+</head>
+<body>
+<div class="layout">
+<button type="button" class="botao-hamburguer" id="botao-hamburguer" aria-label="Abrir menu" aria-controls="barra-lateral" aria-expanded="false">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"></path></svg>
+</button>
+<nav class="barra-lateral" id="barra-lateral" aria-label="Navegação principal">
+  <div class="barra-marca">
+    <span class="barra-marca-icone" aria-hidden="true">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"></path><path d="M19 10v1a7 7 0 0 1-14 0v-1"></path><path d="M12 18v4M9 22h6"></path></svg>
+    </span>
+    <span class="barra-marca-nome">AutoSRT</span>
+    <button type="button" class="fechar-barra" id="fechar-barra" aria-label="Fechar menu">&times;</button>
+  </div>
+
+  <label class="barra-busca" for="busca-nav">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"></circle><path d="m20 20-3.5-3.5"></path></svg>
+    <input type="search" id="busca-nav" placeholder="Procurar na lista">
+  </label>
+
+  <div class="nav-grupo">
+    <p class="nav-grupo-titulo">Biblioteca</p>
+    <button type="button" class="nav-item ativo" data-vista="arquivos" aria-current="page">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"></rect><path d="M3 9h18M9 3v18"></path></svg>
+      <span class="rotulo-nav">Arquivos</span>
+    </button>
+    <button type="button" class="nav-item" data-vista="trabalhos">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 1 0 9-9 9 9 0 0 0-7.5 4H3"></path><path d="M3 4v3h3"></path><path d="M12 7v5l3 3"></path></svg>
+      <span class="rotulo-nav">Trabalhos</span>
+      <span class="nav-contador" id="conta-trabalhos" hidden>0</span>
+    </button>
+    <button type="button" class="nav-item" data-vista="filmes">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="4" width="20" height="16" rx="2"></rect><path d="M7 4v16M17 4v16M2 10h5M17 10h5M2 14h5M17 14h5"></path></svg>
+      <span class="rotulo-nav">Filmes no HD</span>
+    </button>
+  </div>
+
+  <div class="nav-grupo">
+    <p class="nav-grupo-titulo">Vozes</p>
+    <button type="button" class="nav-item" data-vista="atores">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="8" r="4"></circle><path d="M4 20c0-4.4 3.6-8 8-8s8 3.6 8 8"></path></svg>
+      <span class="rotulo-nav">Atores</span>
+      <span class="nav-contador aviso" id="conta-locutores" hidden>0</span>
+    </button>
+  </div>
+
+  <div class="nav-grupo">
+    <p class="nav-grupo-titulo">Sistema</p>
+    <button type="button" class="nav-item nav-item-expandivel" id="nav-config-toggle" data-vista="config" aria-expanded="false" aria-controls="nav-sub-config">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1.08-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1.08 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V10a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z"></path></svg>
+      <span class="rotulo-nav">Configurações</span>
+      <span class="ponto-aviso-inline" id="aviso-config" title="Falta configurar" hidden></span>
+      <svg class="chevron-nav" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 6 6 6-6 6"></path></svg>
+    </button>
+    <div class="nav-sub" id="nav-sub-config" hidden>
+      <button type="button" class="nav-subitem" data-aba="traducao"><span class="rotulo-nav">Tradução</span><span class="selo ok" id="selo-nav-traducao">local</span></button>
+      <button type="button" class="nav-subitem" data-aba="transcricao"><span class="rotulo-nav">Transcrição</span><span class="selo ok">ajustada</span></button>
+      <button type="button" class="nav-subitem" data-aba="voz"><span class="rotulo-nav">Voz</span><span class="selo ok">local</span></button>
+      <button type="button" class="nav-subitem" data-aba="qualidade"><span class="rotulo-nav">Qualidade</span><span class="selo ok">ajustada</span></button>
+    </div>
+  </div>
+
+  <div class="barra-lateral-espaco" aria-hidden="true"></div>
+
+  <aside class="dock" aria-labelledby="dock-auto-titulo">
+    <h2 class="dock-titulo" id="dock-auto-titulo">Automação</h2>
+    <div class="dock-hd" id="dock-hd" hidden>
+      <p class="dock-sempre" style="border-bottom:0;padding-bottom:0;margin-bottom:8px;">
+        Atualização do HD: <strong>roda sozinha a cada 2h</strong> — escaneia o acervo,
+        atualiza ficha e gênero de filme novo e avisa o Jellyfin.</p>
+      <p class="dock-estado" id="hd-estado" style="margin-top:0;border-top:0;padding-top:0;">—</p>
+    </div>
+    <p class="dock-sempre">Legenda: <strong>automática na produção</strong> — filme novo no HD
+       já entra na fila de legenda da porta 8000, sem passar por aqui.</p>
+    <label class="chave" for="auto-dublar">
+      <input type="checkbox" id="auto-dublar" role="switch">
+      <span class="trilho" aria-hidden="true"></span>
+      <span>Dublar filme novo sozinho</span>
+    </label>
+    <div class="dock-ajuda">
+      <p><strong>Desligado (padrão):</strong> você escolhe na lista o que dublar.</p>
+      <p><strong>Ligado:</strong> todo filme novo que chegar ao HD entra também na fila de
+         dublagem. Cada filme leva horas e eles rodam um por vez.</p>
+    </div>
+    <input type="checkbox" id="auto-legenda" hidden>
+    <p class="dock-estado" id="auto-estado">—</p>
+  </aside>
+
+  <div class="barra-rodape">
+    <button type="button" id="alternar-tema" class="nav-item alternar-tema" aria-pressed="false" title="Alternar entre tema claro e escuro">
+      <svg class="icone-sol" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4"></circle><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"></path></svg>
+      <svg class="icone-lua" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M20.4 14.7A8.5 8.5 0 1 1 9.3 3.6a7 7 0 0 0 11.1 11.1Z"></path></svg>
+      <span class="rotulo-nav" id="rotulo-tema">Tema escuro</span>
+    </button>
+  </div>
+</nav>
+<div id="fundo-nav" class="fundo-lateral" hidden></div>
+
+<main>
+<!-- ARQUIVOS -->
+<section id="vista-arquivos" class="vista">
+  <div class="cabecalho">
+    <div>
+      <h1>AutoSRT</h1>
+      <p class="subtitulo">Legenda e dublagem dos filmes do acervo. Escolha um filme e mande
+        gerar a legenda, dublar, ou os dois.</p>
+    </div>
+    <span class="selo-gpu" id="selo-gpu" hidden></span>
+  </div>
+
+  <label class="area-envio" id="drop">
+    <input type="file" id="arquivo" multiple accept="{{ACCEPT}}" hidden>
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 16V4M7 9l5-5 5 5"></path><path d="M20 16v3a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-3"></path></svg>
+    <strong>Arraste um filme do computador aqui</strong>
+    <span id="dica">vídeo, áudio ou legenda — mandar a legenda original junto melhora o sincronismo</span>
+    <div class="acoes-envio">
+      <button type="button" id="escolher">Escolher do computador...</button>
+    </div>
+    <span class="dica-config" id="dica-destino">O arquivo fica guardado aqui no servidor,
+      numa área temporária — não vai para o HD. Você escolhe o que fazer com ele na lista
+      abaixo, e apaga quando não precisar mais.</span>
+  </label>
+  <div class="barra-envio" id="barra-envio" hidden><div></div></div>
+
+  <section id="bloco-temporarios" hidden>
+    <h2>Enviados do computador <span class="selo ok" id="conta-temporarios"></span></h2>
+    <div class="barra-acoes" id="barra-acoes-temp" hidden>
+      <label class="tudo"><input type="checkbox" id="tudo-temp"> Selecionar todos</label>
+      <span class="conta" id="conta-temp"></span>
+      <button class="fantasma" id="lote-legenda-temp" disabled>Gerar legendas</button>
+      <button id="lote-dublar-temp" disabled>Dublar selecionados</button>
+      <button class="apagar" id="apagar-lote-temp" disabled>Apagar selecionados</button>
+    </div>
+    <div id="lista-temporarios"></div>
+  </section>
+
+  <h2>Acervo do HD <button class="fantasma" id="reindexar" title="Reler a lista de filmes do HD">Reler o HD</button></h2>
+  <p class="dica-config">Os filmes que já estão no HD. Esta tela só lê daqui — nada é gravado
+    nem apagado no acervo.</p>
+  <p class="dock-estado recado" id="estado-acervo" hidden></p>
+  <div class="barra-acoes" id="barra-acoes" hidden>
+    <label class="tudo"><input type="checkbox" id="tudo"> Selecionar todos</label>
+    <span class="conta" id="conta"></span>
+    <button class="fantasma" id="lote-legenda" disabled>Gerar legendas</button>
+    <button id="lote-dublar" disabled>Dublar selecionados</button>
+  </div>
+  <div id="lista"><div class="vazio">Carregando...</div></div>
+</section>
+
+<!-- TRABALHOS -->
+<section id="vista-trabalhos" class="vista" hidden>
+  <div class="cabecalho"><div><h1>Trabalhos</h1>
+    <p class="subtitulo">Legendas e dublagens na fila ou em andamento.</p></div>
+    <button class="fantasma" id="limpar" hidden>Limpar terminados</button>
+  </div>
+  <h2>Dublagem</h2>
+  <div id="fila-dublagem"><div class="vazio">Nada na fila.</div></div>
+  <h2>Legenda</h2>
+  <div id="fila-legenda"><div class="vazio">Nada na fila.</div></div>
+  <h2>Histórico</h2>
+  <div id="historico"><div class="vazio">—</div></div>
+</section>
+
+<!-- FILMES NO HD -->
+<section id="vista-filmes" class="vista" hidden>
+  <div class="cabecalho"><div><h1>Filmes no HD</h1>
+    <p class="subtitulo">Ferramentas para organizar o acervo guardado no HD: ficha, categoria,
+      resumo e a legenda amarela do Fire Stick. Quem executa é a produção (porta 8000) —
+      esta tela só manda e mostra o resultado.</p></div></div>
+  <p class="dock-estado ligado" id="filmes-ultima-automatica">Carregando...</p>
+  <p class="dica-config">As de baixo têm um botão para <strong>só testar</strong> e mostrar o que
+    mudaria sem alterar nada, e outro para aplicar de verdade.</p>
+
+  <div class="painel-ferramenta">
+    <h3>Avisar o Jellyfin</h3>
+    <p class="dica-config">Jogou um filme novo no HD e ele não apareceu no Jellyfin? Ele nem
+      sempre percebe sozinho. Este botão pede para ele olhar a pasta de novo agora.</p>
+    <div class="acoes-ferramenta"><button type="button" id="jellyfin-rodar">Atualizar agora</button></div>
+    <div class="resultado-ferramenta" id="resultado-jellyfin" hidden></div>
+  </div>
+
+  <div class="painel-ferramenta">
+    <h3>Atualizar filmes</h3>
+    <p class="dica-config">Olha todo filme do HD que ainda está sem ficha (nome certo, resumo e
+      ano) e completa sozinho, procurando numa base de dados de filmes na internet. Filme que já
+      tem ficha completa não é tocado.</p>
+    <div class="acoes-ferramenta">
+      <button type="button" class="fantasma" data-ferramenta="atualizar_filmes" data-execute="0">Só testar</button>
+      <button type="button" data-ferramenta="atualizar_filmes" data-execute="1">Aplicar de verdade</button>
+    </div>
+    <div class="resultado-ferramenta" id="resultado-atualizar_filmes" hidden></div>
+  </div>
+
+  <div class="painel-ferramenta">
+    <h3>Atualizar gêneros</h3>
+    <p class="dica-config">Corrige a categoria de cada filme (Terror, Comédia, Faroeste...) para
+      ficar igual ao nome da pasta onde ele está guardado. Não busca nada na internet. Corrige na
+      ficha do HD e também direto no Jellyfin.</p>
+    <div class="acoes-ferramenta">
+      <button type="button" class="fantasma" data-ferramenta="atualizar_generos" data-execute="0">Só testar</button>
+      <button type="button" data-ferramenta="atualizar_generos" data-execute="1">Aplicar de verdade</button>
+    </div>
+    <div class="resultado-ferramenta" id="resultado-atualizar_generos" hidden></div>
+  </div>
+
+  <div class="painel-ferramenta">
+    <h3>Atualizar sinopses</h3>
+    <p class="dica-config">Completa a ficha de filme que já tem ficha no HD mas ficou incompleta —
+      sem resumo, por exemplo. <strong>Não mexe na categoria.</strong> Pode demorar: chama a
+      internet para cada filme incompleto.</p>
+    <div class="acoes-ferramenta">
+      <button type="button" class="fantasma" data-ferramenta="atualizar_sinopses" data-execute="0">Só testar</button>
+      <button type="button" data-ferramenta="atualizar_sinopses" data-execute="1">Aplicar de verdade</button>
+    </div>
+    <div class="resultado-ferramenta" id="resultado-atualizar_sinopses" hidden></div>
+  </div>
+
+  <div class="painel-ferramenta">
+    <h3>Atualizar legendas</h3>
+    <p class="dica-config">Cria, ao lado de cada legenda do acervo, uma cópia amarela e grande
+      (.pt.ass) para quem assiste no Fire Stick (app Astra), que ignora a configuração de legenda
+      do Jellyfin. A legenda original nunca é apagada.</p>
+    <div class="acoes-ferramenta">
+      <button type="button" class="fantasma" data-ferramenta="atualizar_legendas" data-execute="0">Só testar</button>
+      <button type="button" data-ferramenta="atualizar_legendas" data-execute="1">Aplicar de verdade</button>
+    </div>
+    <div class="resultado-ferramenta" id="resultado-atualizar_legendas" hidden></div>
+  </div>
+</section>
+
+<!-- ATORES -->
+<section id="vista-atores" class="vista" hidden>
+  <div class="cabecalho"><div><h1>Atores</h1>
+    <p class="subtitulo">A voz de cada ator fica salva e é reaproveitada em todo filme dele
+      no acervo — quanto mais filmes dublados, melhor a clonagem.</p></div></div>
+
+  <h2>Esperando você dizer quem é</h2>
+  <p class="dica-config" id="dica-locutores">Cada voz encontrada num filme dublado aparece aqui.
+    Ouça e diga de qual ator do elenco ela é: a partir daí ela é reaproveitada nos outros
+    filmes desse ator, e vozes parecidas são reconhecidas sozinhas.</p>
+  <div id="lista-locutores"><div class="vazio">Nenhuma voz esperando.</div></div>
+
+  <h2>Vozes salvas</h2>
+  <div id="lista-atores"><div class="vazio">Nenhum ator com voz salva ainda.</div></div>
+</section>
+
+<!-- CONFIGURAÇÕES -->
+<section id="vista-config" class="vista" aria-labelledby="titulo-painel-config" hidden>
+  <div class="topo-modal">
+    <div class="titulo-modal"><h2 id="titulo-painel-config">Configurações</h2></div>
+    <div class="abas" role="tablist" aria-label="Seções da configuração">
+      <button type="button" class="aba" id="aba-traducao" role="tab" aria-controls="config-traducao" aria-selected="false" tabindex="-1">Tradução <span class="selo ok" id="selo-traducao">local</span></button>
+      <button type="button" class="aba" id="aba-transcricao" role="tab" aria-controls="config-transcricao" aria-selected="false" tabindex="-1">Transcrição <span class="selo ok">ajustada</span></button>
+      <button type="button" class="aba" id="aba-voz" role="tab" aria-controls="config-voz" aria-selected="true">Voz <span class="selo ok">local</span></button>
+      <button type="button" class="aba" id="aba-qualidade" role="tab" aria-controls="config-qualidade" aria-selected="false" tabindex="-1">Qualidade <span class="selo ok">ajustada</span></button>
+    </div>
+  </div>
+  <div class="corpo-modal">
+
+  <section id="config-traducao" role="tabpanel" aria-labelledby="aba-traducao" tabindex="0" hidden>
+    <p class="dica-config">Endereço, chave e modelo do serviço usado para traduzir as falas para português.</p>
+    <div class="painel">
+      <label><span class="rotulo-com-ajuda"><span>Endereço do servidor</span><span class="ajuda" tabindex="0" data-tip="Para onde mandar o texto a traduzir: o endereço da API compatível com OpenAI, local ou na nuvem.">?</span></span>
+        <input type="text" id="base_url"></label>
+      <label class="campo-largo"><span class="rotulo-com-ajuda">Modelo<span class="ajuda" tabindex="0" data-tip="Qual modelo usar para traduzir. Clique em 'Buscar modelos' para ver os disponíveis nesse endereço.">?</span></span>
+        <div class="linha-modelo"><input type="text" id="modelo"><button type="button" class="fantasma" id="buscar-modelos">Buscar modelos</button></div></label>
+      <label><span class="rotulo-com-ajuda">Legendas por requisição<span class="ajuda" tabindex="0" data-tip="Quantas falas enviar de uma vez para o modelo traduzir. Lotes maiores são mais rápidos, mas alguns modelos erram mais com textos longos.">?</span></span>
+        <input type="text" id="llm_block_size" placeholder="em branco decide sozinho pelo endereço"></label>
+      <label><span class="rotulo-com-ajuda">Chave do OpenRouter<span class="ajuda" tabindex="0" data-tip="Só precisa quando o endereço aponta para a nuvem. Com o Ollama local, deixe em branco.">?</span></span>
+        <input type="password" id="chave" placeholder="deixe em branco para manter a atual"></label>
+      <label><span class="rotulo-com-ajuda">Chave do TMDB <span class="selo ok" id="selo-tmdb" hidden>ativa</span><span class="ajuda" tabindex="0" data-tip="Reconhece o filme pelo nome do arquivo (pôster, sinopse) e traz o elenco para a tela Atores.">?</span></span>
+        <input type="password" id="chave_tmdb" placeholder="deixe em branco para manter a atual"></label>
+      <div class="rodape"><span class="dica-config">As chaves ficam no config.json do servidor e nunca voltam para esta página.</span>
+        <span class="aviso-salvo" id="salvo-traducao" hidden>Salvo</span><button id="salvar-traducao">Salvar</button></div>
+    </div>
+  </section>
+
+  <section id="config-transcricao" role="tabpanel" aria-labelledby="aba-transcricao" tabindex="0" hidden>
+    <p class="dica-config">Ajustes da detecção de fala do Whisper. Vale para todo arquivo da fila.
+      Em branco usa o padrão.</p>
+    <div class="painel">
+      <label><span class="rotulo-com-ajuda">Normalizar o áudio<span class="ajuda" tabindex="0" data-tip="Ajusta o volume antes de transcrever, para falas muito baixas não atrapalharem a detecção.">?</span></span>
+        <select id="normalize_audio"><option value="auto">Automático — só quando o volume está fraco</option><option value="sempre">Sempre</option><option value="nunca">Nunca</option></select></label>
+      <label><span class="rotulo-com-ajuda">Idioma falado<span class="ajuda" tabindex="0" data-tip="Código do idioma falado no áudio. Em branco, o Whisper detecta sozinho.">?</span></span>
+        <input type="text" id="whisper_language" placeholder="ex: en"></label>
+      <label><span class="rotulo-com-ajuda">Modelo do Whisper<span class="ajuda" tabindex="0" data-tip="Modelos maiores são mais precisos, porém mais lentos.">?</span></span>
+        <input type="text" id="whisper_model" placeholder="em branco = turbo"></label>
+      <label><span class="rotulo-com-ajuda">Tipo de cálculo<span class="ajuda" tabindex="0" data-tip="Precisão numérica do modelo. Afeta velocidade e uso de memória da placa.">?</span></span>
+        <input type="text" id="whisper_compute_type" placeholder="em branco = auto. Ex: float16, int8"></label>
+      <label><span class="rotulo-com-ajuda">Trabalhos simultâneos<span class="ajuda" tabindex="0" data-tip="Quantos arquivos a fila de legenda transcreve ao mesmo tempo. 1 é o seguro.">?</span></span>
+        <select id="max_workers"><option value="1">1 — um por vez (padrão, seguro)</option><option value="2">2 — dois ao mesmo tempo</option><option value="3">3</option><option value="4">4</option></select></label>
+      <label><span class="rotulo-com-ajuda">Detector de fala (VAD)<span class="ajuda" tabindex="0" data-tip="Qual algoritmo usar para achar onde há fala, separando-a do silêncio e do ruído.">?</span></span>
+        <input type="text" id="vad_method" placeholder="em branco = silero_v4_fw"></label>
+      <label><span class="rotulo-com-ajuda">Sensibilidade da VAD (0 a 1)<span class="ajuda" tabindex="0" data-tip="Mais baixo detecta fala com mais facilidade, mas pode pegar ruído como fala.">?</span></span>
+        <input type="text" id="vad_threshold" placeholder="ex: 0.2"></label>
+      <label><span class="rotulo-com-ajuda">Silêncio mínimo (ms)<span class="ajuda" tabindex="0" data-tip="Silêncio mínimo para considerar o fim de uma fala. Maior evita cortar a última palavra.">?</span></span>
+        <input type="text" id="vad_min_silence_ms" placeholder="ex: 300"></label>
+      <label class="linha-checkbox"><input type="checkbox" id="condition_on_previous_text"> <span class="rotulo-com-ajuda">Condicionar no trecho anterior<span class="ajuda" tabindex="0" data-tip="Usa o texto já transcrito como contexto. Ajuda na consistência, mas pode propagar um erro.">?</span></span></label>
+      <label class="linha-checkbox"><input type="checkbox" id="subtitle_standard"> <span class="rotulo-com-ajuda">Quebra de legenda estilo Netflix<span class="ajuda" tabindex="0" data-tip="Quebra as linhas seguindo as convenções da Netflix, em vez de só respeitar o limite de caracteres.">?</span></span></label>
+      <label><span class="rotulo-com-ajuda">Tempo mínimo de exibição (s)<span class="ajuda" tabindex="0" data-tip="Tempo mínimo que uma legenda fica na tela. Evita legenda que pisca rápido demais.">?</span></span>
+        <input type="text" id="duracao_minima_exibicao" placeholder="ex: 1,5"></label>
+      <label><span class="rotulo-com-ajuda">Velocidade de leitura (CPS)<span class="ajuda" tabindex="0" data-tip="Caracteres por segundo que a legenda assume que dá para ler.">?</span></span>
+        <input type="text" id="caracteres_por_segundo" placeholder="ex: 15"></label>
+      <label><span class="rotulo-com-ajuda">Limiar de silêncio p/ alucinação (s)<span class="ajuda" tabindex="0" data-tip="Silêncio mais longo que isso é tratado como suspeito: o Whisper tende a inventar fala ali.">?</span></span>
+        <input type="text" id="hallucination_silence_threshold" placeholder="em branco = 2"></label>
+      <label class="linha-checkbox"><input type="checkbox" id="filtrar_alucinacoes"> <span class="rotulo-com-ajuda">Descartar frases inventadas<span class="ajuda" tabindex="0" data-tip="Remove falas que batem com frases conhecidas de alucinação do Whisper.">?</span></span></label>
+      <label class="campo-largo"><span class="rotulo-com-ajuda">Frases inventadas, uma por linha<span class="ajuda" tabindex="0" data-tip="Frases que o Whisper costuma inventar em silêncio. Fala igual ou parecida é descartada.">?</span></span>
+        <textarea id="alucinacoes_extra" rows="3" placeholder="ex: Legendas pela comunidade Amara.org"></textarea></label>
+      <div class="rodape"><span class="dica-config">Mudanças valem a partir do próximo trabalho enviado à fila.</span>
+        <span class="aviso-salvo" id="salvo-transcricao" hidden>Salvo</span><button id="salvar-transcricao">Salvar</button></div>
+    </div>
+  </section>
+
+  <section id="config-voz" role="tabpanel" aria-labelledby="aba-voz" tabindex="0">
+    <p class="dica-config">Qual motor de síntese de voz (TTS) usar para dublar as falas em português.</p>
+    <div class="painel">
+      <div class="modo-provedor" id="modo-voz">
+        <button type="button" class="ativo" data-provedor="local">Local (Coqui XTTS)<span class="tag">grátis</span><span class="marca-selecionado">✓ selecionado</span></button>
+        <button type="button" data-provedor="eleven" disabled title="Ainda não implementado">ElevenLabs<span class="tag">em breve</span></button>
+      </div>
+      <p class="dica-config">Roda na placa de vídeo do próprio servidor: sem chave e sem custo por minuto.</p>
+      <label><span class="rotulo-com-ajuda">Modelo de voz<span class="ajuda" tabindex="0" data-tip="Clonagem pela referência: copia a voz a partir de um trecho limpo da fala do ator. O ajuste fino (treino por ator) ainda não está pronto.">?</span></span>
+        <select id="dublagem_modelo"><option value="referencia">XTTS-v2: clonagem pela referência (padrão)</option></select></label>
+      <label><span class="rotulo-com-ajuda">Temperatura<span class="ajuda" tabindex="0" data-tip="Quanto o modelo pode variar a fala. 0,65 ficou mais estável que o padrão 0,75 nos testes: menos ruído e menos repetição.">?</span></span>
+        <input type="text" id="dublagem_temperatura" placeholder="em branco = 0,65"></label>
+      <label class="linha-checkbox"><input type="checkbox" id="dublagem_limpar_referencia"> <span class="rotulo-com-ajuda">Limpar a voz de referência (Demucs)<span class="ajuda" tabindex="0" data-tip="Separa a voz da música e do ruído antes de clonar. Sem isso, a dublagem sai com chiado.">?</span></span></label>
+      <label class="linha-checkbox"><input type="checkbox" id="dublagem_reaproveitar_voz"> <span class="rotulo-com-ajuda">Reaproveitar a voz salva do ator<span class="ajuda" tabindex="0" data-tip="Usa a voz já salva do ator (tela Atores) em vez de clonar de novo a cada filme.">?</span></span></label>
+      <label class="linha-checkbox"><input type="checkbox" id="dublagem_clonar_por_locutor"> <span class="rotulo-com-ajuda">Clonar voz por locutor<span class="ajuda" tabindex="0" data-tip="Uma voz por personagem. Desligado, usa a voz de quem mais fala para o filme inteiro.">?</span></span></label>
+      <div class="rodape"><span class="dica-config">Vale a partir da próxima dublagem enviada à fila.</span>
+        <span class="aviso-salvo" id="salvo-voz" hidden>Salvo</span><button id="salvar-voz">Salvar</button></div>
+    </div>
+  </section>
+
+  <section id="config-qualidade" role="tabpanel" aria-labelledby="aba-qualidade" tabindex="0" hidden>
+    <p class="dica-config">Ajustes da dublagem. Valem para todo arquivo da fila, não por filme.</p>
+    <div class="painel">
+      <label><span class="rotulo-com-ajuda">Preservar trilha e efeitos<span class="ajuda" tabindex="0" data-tip="Separa a fala do resto do áudio e remixa a trilha e os efeitos originais por baixo da nova fala.">?</span></span>
+        <select id="dublagem_preservar_trilha"><option value="sim">Sim — remixar com a trilha original (recomendado)</option><option value="nao">Não — só a fala dublada</option></select></label>
+      <label><span class="rotulo-com-ajuda">Idioma de origem<span class="ajuda" tabindex="0" data-tip="Idioma do áudio original. Em branco, usa o da aba Transcrição ou detecta sozinho.">?</span></span>
+        <input type="text" id="dublagem_idioma_origem" placeholder="em branco = detectar. Ex: en, es"></label>
+      <label class="linha-checkbox"><input type="checkbox" id="dublagem_ajustar_ritmo"> <span class="rotulo-com-ajuda">Ajustar ritmo à fala original<span class="ajuda" tabindex="0" data-tip="Acelera a fala sintetizada para caber na mesma janela de tempo da fala original.">?</span></span></label>
+      <label><span class="rotulo-com-ajuda">Aceleração máxima da fala<span class="ajuda" tabindex="0" data-tip="Até quanto a fala dublada pode ser acelerada. Acima disso a voz soa artificial.">?</span></span>
+        <input type="text" id="dublagem_max_acelerar" placeholder="em branco = 1,6x"></label>
+      <label><span class="rotulo-com-ajuda">Desaceleração máxima do vídeo<span class="ajuda" tabindex="0" data-tip="Quando a fala não cabe nem acelerada, o vídeo daquele trecho fica mais lento até ela caber, em vez de cortar a fala. O filme final sai um pouco mais longo.">?</span></span>
+        <input type="text" id="dublagem_max_desacelerar_video" placeholder="em branco = 4,0x"></label>
+      <label><span class="rotulo-com-ajuda">Qualidade do vídeo (CRF)<span class="ajuda" tabindex="0" data-tip="Menor = melhor imagem e arquivo maior. 18 é quase indistinguível do original.">?</span></span>
+        <input type="text" id="dublagem_crf" placeholder="em branco = 18"></label>
+      <label><span class="rotulo-com-ajuda">Velocidade de compressão<span class="ajuda" tabindex="0" data-tip="Mais lento comprime melhor no mesmo CRF, e o filme demora mais para ficar pronto.">?</span></span>
+        <select id="dublagem_preset"><option value="veryfast">muito rápida</option><option value="fast">rápida</option><option value="medium">média (padrão)</option><option value="slow">lenta (melhor compressão)</option></select></label>
+      <label class="campo-largo"><span class="rotulo-com-ajuda">Pasta dos filmes dublados<span class="ajuda" tabindex="0" data-tip="Onde o filme dublado é gravado. Uma pasta por filme, porque o Jellyfin usa o nome da pasta como título.">?</span></span>
+        <input type="text" id="dublagem_pasta_saida"></label>
+      <label class="campo-largo"><span class="rotulo-com-ajuda">Frases a não dublar, uma por linha<span class="ajuda" tabindex="0" data-tip="Trechos que ficam no idioma original mesmo dentro da faixa dublada, como letras de música.">?</span></span>
+        <textarea id="dublagem_frases_nao_dublar" rows="3" placeholder="ex: trechos cantados"></textarea></label>
+      <div class="rodape"><span class="dica-config">Vale a partir da próxima dublagem enviada à fila.</span>
+        <span class="aviso-salvo" id="salvo-qualidade" hidden>Salvo</span><button id="salvar-qualidade">Salvar</button></div>
+    </div>
+  </section>
+  </div>
+</section>
+</main>
+</div>
+
+<dialog id="dialogo-ator" class="modal-config modal-estreito">
+  <div class="topo-modal"><div class="titulo-modal">
+    <h2 id="titulo-dialogo-ator">Quem é esta voz?</h2>
+    <button type="button" class="fechar-modal" id="fechar-dialogo-ator" aria-label="Fechar">&times;</button>
+  </div></div>
+  <div class="corpo-modal" style="padding:16px 20px 20px;">
+    <p class="dica-config" id="dialogo-ator-contexto"></p>
+    <audio id="dialogo-ator-audio" controls preload="none" style="width:100%;margin-bottom:14px;"></audio>
+    <div id="dialogo-ator-elenco" class="grade-elenco"></div>
+    <label style="display:grid;gap:6px;margin-top:14px;font-size:14px;">
+      <span class="rotulo-com-ajuda">Não está na lista? Digite o nome<span class="ajuda" tabindex="0" data-tip="Busca a pessoa no TMDB para trazer foto e biografia. Sem chave do TMDB, salva só o nome.">?</span></span>
+      <div class="linha-modelo"><input type="text" id="dialogo-ator-nome" placeholder="ex: Henry Fonda">
+        <button type="button" id="dialogo-ator-usar-nome">Usar este nome</button></div>
+    </label>
+    <div class="rodape" style="margin-top:16px;">
+      <span class="dica-config" id="dialogo-ator-erro"></span>
+      <button type="button" class="fantasma" id="dialogo-ator-ignorar">Não é ninguém do elenco</button>
+    </div>
+  </div>
+</dialog>
+</body>
+<script>
+const $ = (id) => document.getElementById(id);
+const CHAVE_TEMA = 'autosrt-dublagem-tema';
+const caminhoUrl = (nome) => nome.split('/').map(encodeURIComponent).join('/');
+const FINAIS = ['concluido', 'erro', 'cancelado'];
+
+async function pegar(url, opcoes) {
+  const r = await fetch(url, opcoes);
+  let dados = null;
+  try { dados = await r.json(); } catch (e) { dados = null; }
+  if (!r.ok) throw new Error((dados && dados.erro) || `erro ${r.status}`);
+  return dados;
+}
+const comoJson = (corpo) => ({
+  method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(corpo)
+});
+
+// ---------------- tema ----------------
+function temaPreferido() {
+  const salvo = localStorage.getItem(CHAVE_TEMA);
+  if (salvo === 'claro' || salvo === 'escuro') return salvo;
+  return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'escuro' : 'claro';
+}
+function aplicarTema(tema) {
+  document.documentElement.setAttribute('data-tema', tema);
+  $('alternar-tema').setAttribute('aria-pressed', String(tema === 'escuro'));
+  $('rotulo-tema').textContent = tema === 'escuro' ? 'Tema claro' : 'Tema escuro';
+}
+try { aplicarTema(temaPreferido()); } catch (e) { aplicarTema('claro'); }
+$('alternar-tema').onclick = () => {
+  const novo = document.documentElement.getAttribute('data-tema') === 'escuro' ? 'claro' : 'escuro';
+  try { localStorage.setItem(CHAVE_TEMA, novo); } catch (e) {}
+  aplicarTema(novo);
+};
+
+// ---------------- navegação ----------------
+const barraLateral = $('barra-lateral');
+const fundoNav = $('fundo-nav');
+const navEstreita = () => !window.matchMedia('(min-width: 901px)').matches;
+function abrirNav() { barraLateral.classList.add('aberta'); fundoNav.hidden = false; }
+function fecharNav() { barraLateral.classList.remove('aberta'); fundoNav.hidden = true; }
+$('botao-hamburguer').onclick = abrirNav;
+$('fechar-barra').onclick = fecharNav;
+fundoNav.addEventListener('click', fecharNav);
+
+const VISTAS = ['arquivos', 'trabalhos', 'filmes', 'atores', 'config'];
+const itensVista = document.querySelectorAll('.nav-item[data-vista]');
+let vistaAtual = 'arquivos';
+
+function mostrarVista(nome) {
+  if (!VISTAS.includes(nome)) nome = 'arquivos';
+  vistaAtual = nome;
+  VISTAS.forEach((v) => { $('vista-' + v).hidden = v !== nome; });
+  itensVista.forEach((botao) => {
+    const ativo = botao.dataset.vista === nome;
+    botao.classList.toggle('ativo', ativo);
+    if (ativo) botao.setAttribute('aria-current', 'page');
+    else botao.removeAttribute('aria-current');
+  });
+  if (location.hash.slice(1) !== nome) location.hash = nome;
+  if (navEstreita()) fecharNav();
+  if (nome === 'atores') carregarAtores();
+  if (nome === 'trabalhos') carregarHistorico();
+  if (nome === 'filmes') carregarFilmes();
+}
+itensVista.forEach((b) => b.addEventListener('click', () => mostrarVista(b.dataset.vista)));
+window.addEventListener('hashchange', () => mostrarVista(location.hash.slice(1)));
+
+const navConfigToggle = $('nav-config-toggle');
+const navSubConfig = $('nav-sub-config');
+navConfigToggle.addEventListener('click', () => {
+  const expandido = navConfigToggle.getAttribute('aria-expanded') === 'true';
+  navConfigToggle.setAttribute('aria-expanded', String(!expandido));
+  navSubConfig.hidden = expandido;
+});
+const abasConfig = {
+  traducao: {aba: $('aba-traducao'), painel: $('config-traducao')},
+  transcricao: {aba: $('aba-transcricao'), painel: $('config-transcricao')},
+  voz: {aba: $('aba-voz'), painel: $('config-voz')},
+  qualidade: {aba: $('aba-qualidade'), painel: $('config-qualidade')},
+};
+function selecionarAba(nome) {
+  Object.entries(abasConfig).forEach(([chave, {aba, painel}]) => {
+    const ativa = chave === nome;
+    aba.setAttribute('aria-selected', String(ativa));
+    aba.tabIndex = ativa ? 0 : -1;
+    painel.hidden = !ativa;
+  });
+  document.querySelectorAll('.nav-subitem[data-aba]').forEach(
+    (i) => i.classList.toggle('ativo', i.dataset.aba === nome));
+}
+Object.entries(abasConfig).forEach(([chave, {aba}]) => { aba.onclick = () => selecionarAba(chave); });
+document.querySelectorAll('.nav-subitem[data-aba]').forEach((item) => {
+  item.onclick = () => {
+    selecionarAba(item.dataset.aba);
+    mostrarVista('config');
+    navConfigToggle.setAttribute('aria-expanded', 'true');
+    navSubConfig.hidden = false;
+  };
+});
+selecionarAba('voz');
+
+// ---------------- acervo ----------------
+let pastaAtual = '';
+let paginaAtual = 0;
+let busca = '';
+let ultimaResposta = {itens: [], pastas: [], total: 0};
+let buscaAgendada = null;
+
+async function carregarArquivos() {
+  const params = new URLSearchParams({pasta: pastaAtual, pagina: String(paginaAtual)});
+  if (busca) params.set('q', busca);
+  let r;
+  try {
+    r = await pegar('/api/acervo?' + params.toString());
+  } catch (e) {
+    $('lista').innerHTML = `<div class="vazio">Não consegui ler o acervo: ${e.message}</div>`;
+    return;
+  }
+  ultimaResposta = r;
+  desenharArquivos();
+}
+
+function caminhoNavegavel() {
+  const trilha = document.createElement('div');
+  trilha.className = 'trilha';
+  const raiz = document.createElement('button');
+  raiz.type = 'button';
+  raiz.className = 'migalha';
+  raiz.textContent = 'Acervo';
+  raiz.onclick = () => irPara('');
+  trilha.appendChild(raiz);
+  let acumulado = '';
+  (pastaAtual ? pastaAtual.split('/') : []).forEach((parte) => {
+    acumulado = acumulado ? acumulado + '/' + parte : parte;
+    const alvo = acumulado;
+    const separador = document.createElement('span');
+    separador.className = 'separador-trilha';
+    separador.textContent = '/';
+    trilha.appendChild(separador);
+    const botao = document.createElement('button');
+    botao.type = 'button';
+    botao.className = 'migalha';
+    botao.textContent = parte;
+    botao.onclick = () => irPara(alvo);
+    trilha.appendChild(botao);
+  });
+  return trilha;
+}
+
+function irPara(pasta) {
+  pastaAtual = pasta;
+  paginaAtual = 0;
+  carregarArquivos();
+}
+
+function desenharArquivos() {
+  const lista = $('lista');
+  const r = ultimaResposta;
+  lista.innerHTML = '';
+
+  const estado = $('estado-acervo');
+  if (!r.indice_pronto) {
+    estado.hidden = false;
+    estado.textContent = 'Montando a lista do acervo pela primeira vez — leva alguns minutos no HD de 14 TB.';
+  } else if (r.indexando) {
+    estado.hidden = false;
+    estado.textContent = 'Relendo o acervo em segundo plano...';
+  } else {
+    estado.hidden = true;
+  }
+
+  if (!busca) lista.appendChild(caminhoNavegavel());
+
+  for (const pasta of (r.pastas || [])) {
+    const div = document.createElement('button');
+    div.type = 'button';
+    div.className = 'item item-pasta';
+    div.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+        stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"></path></svg>
+      <span class="nome"></span><span class="tag"></span>`;
+    div.querySelector('.nome').textContent = pasta.nome;
+    div.querySelector('.tag').textContent = `${pasta.itens} vídeo(s)`;
+    div.onclick = () => irPara(pastaAtual ? pastaAtual + '/' + pasta.nome : pasta.nome);
+    lista.appendChild(div);
+  }
+
+  const itens = r.itens || [];
+  $('barra-acoes').hidden = !itens.length;
+  if (!itens.length && !(r.pastas || []).length) {
+    const vazio = document.createElement('div');
+    vazio.className = 'vazio';
+    vazio.textContent = busca ? 'Nada com esse nome no acervo.' : 'Nenhum vídeo aqui.';
+    lista.appendChild(vazio);
+  }
+  itens.forEach((item) => lista.appendChild(linhaArquivo(item)));
+
+  const paginas = Math.ceil((r.total || 0) / (r.por_pagina || 60));
+  if (paginas > 1) {
+    const nav = document.createElement('div');
+    nav.className = 'paginacao';
+    const anterior = document.createElement('button');
+    anterior.className = 'fantasma';
+    anterior.textContent = 'Anterior';
+    anterior.disabled = paginaAtual === 0;
+    anterior.onclick = () => { paginaAtual -= 1; carregarArquivos(); };
+    const proxima = document.createElement('button');
+    proxima.className = 'fantasma';
+    proxima.textContent = 'Próxima';
+    proxima.disabled = paginaAtual >= paginas - 1;
+    proxima.onclick = () => { paginaAtual += 1; carregarArquivos(); };
+    const conta = document.createElement('span');
+    conta.className = 'dica-config';
+    conta.textContent = `${r.total} vídeo(s) — página ${paginaAtual + 1} de ${paginas}`;
+    nav.append(anterior, conta, proxima);
+    lista.appendChild(nav);
+  }
+  contar();
+}
+
+$('busca-nav').addEventListener('input', (e) => {
+  busca = e.target.value.trim();
+  paginaAtual = 0;
+  if (vistaAtual !== 'arquivos') mostrarVista('arquivos');
+  clearTimeout(buscaAgendada);
+  buscaAgendada = setTimeout(carregarArquivos, 300);
+});
+
+$('reindexar').onclick = async () => {
+  $('reindexar').disabled = true;
+  await fetch('/api/acervo/reindexar', {method: 'POST'});
+  setTimeout(() => { $('reindexar').disabled = false; carregarArquivos(); }, 3000);
+};
+
+function selos(item) {
+  const partes = [`<span class="tag">${item.tamanho}</span>`];
+  if (item.tem_legenda) partes.push('<span class="tag legenda-pronta">tem legenda</span>');
+  if (item.dublado) partes.push('<span class="tag voz-pronta">dublado</span>');
+  if (item.na_fila) partes.push('<span class="tag">na fila</span>');
+  return partes.join('');
+}
+
+function botoesDoItem(item) {
+  const div = document.createElement('div');
+  div.className = 'acoes-item';
+  const legenda = document.createElement('button');
+  legenda.className = 'fantasma';
+  legenda.textContent = item.tem_legenda ? 'Refazer legenda' : 'Gerar legenda';
+  legenda.onclick = () => legendarDoAcervo([item.nome], legenda);
+  div.appendChild(legenda);
+  const dublar = document.createElement('button');
+  dublar.textContent = item.dublado ? 'Dublar de novo' : 'Dublar';
+  dublar.onclick = () => enviarDublagem([item.nome], dublar, 'acervo');
+  div.appendChild(dublar);
+  return div;
+}
+
+function linhaArquivo(item) {
+  const temPoster = item.filme && item.filme.poster;
+  const div = document.createElement('div');
+  div.className = temPoster ? 'item item-midia' : 'item';
+  div.dataset.arquivo = item.nome;
+  const curto = item.nome.split('/').pop();
+
+  if (temPoster) {
+    const f = item.filme;
+    div.innerHTML = `<input type="checkbox" class="marca">
+      <div class="item-metadados">${selos(item)}</div>
+      <img class="poster-grande" alt="" loading="lazy" src="${f.poster}">
+      <div class="item-corpo">
+        <div class="item-topo"><h3 class="item-titulo"></h3></div>
+        <p class="item-arquivo"></p>
+        <p class="item-episodio" hidden></p>
+        <p class="item-sinopse"></p>
+        <div class="item-rodape"></div>
+      </div>`;
+    const titulo = div.querySelector('.item-titulo');
+    titulo.textContent = f.ano ? `${f.titulo} (${f.ano})` : f.titulo;
+    titulo.title = 'Reconhecido pelo nome do arquivo, via TMDB';
+    div.querySelector('.item-arquivo').textContent = curto;
+    div.querySelector('.item-arquivo').title = item.nome;
+    if (f.tipo === 'serie') {
+      const linha = div.querySelector('.item-episodio');
+      linha.hidden = false;
+      const partes = [];
+      if (f.temporada) partes.push(`Temporada ${f.temporada}, Episódio ${f.episodio}`);
+      if (f.temporadas_total) partes.push(`${f.temporadas_total} temporada(s) · ${f.episodios_total} episódio(s)`);
+      linha.textContent = partes.join(' — ');
+    }
+    const sinopse = div.querySelector('.item-sinopse');
+    sinopse.textContent = f.sinopse || '';
+    sinopse.hidden = !f.sinopse;
+    div.querySelector('.item-rodape').appendChild(botoesDoItem(item));
+  } else {
+    div.innerHTML = `<input type="checkbox" class="marca">
+      <span class="nome"></span><span class="metadados-linha">${selos(item)}</span>`;
+    const nome = div.querySelector('.nome');
+    nome.textContent = curto;
+    nome.title = item.nome;
+    div.appendChild(botoesDoItem(item));
+  }
+  div.querySelector('.marca').onchange = contar;
+  return div;
+}
+
+function selecionados() {
+  return Array.from(document.querySelectorAll('.item'))
+    .filter((d) => d.querySelector('.marca') && d.querySelector('.marca').checked);
+}
+
+function contar() {
+  const marcados = selecionados();
+  $('conta').textContent = marcados.length ? `${marcados.length} selecionado(s)` : '';
+  $('lote-legenda').disabled = !marcados.length;
+  $('lote-dublar').disabled = !marcados.length;
+  const todos = document.querySelectorAll('.item .marca').length;
+  $('tudo').checked = todos > 0 && marcados.length === todos;
+}
+
+$('tudo').onchange = (e) => {
+  document.querySelectorAll('.marca').forEach((c) => { c.checked = e.target.checked; });
+  contar();
+};
+
+async function enviarLegenda(nome, acao, botao) {
+  const rotulo = botao ? botao.textContent : '';
+  if (botao) { botao.disabled = true; botao.textContent = 'Enviado'; }
+  try {
+    await pegar('/api/processar', comoJson({arquivo: nome, acao: acao || 'completo'}));
+  } catch (e) {
+    alert(e.message);
+    if (botao) { botao.disabled = false; botao.textContent = rotulo; }
+    return;
+  }
+  atualizarFilas();
+}
+
+async function enviarDublagem(nomes, botao, fonte) {
+  const rotulo = botao ? botao.textContent : '';
+  if (botao) { botao.disabled = true; botao.textContent = 'Enviado'; }
+  try {
+    const r = await pegar('/api/dublar', comoJson({arquivos: nomes, fonte: fonte || 'acervo'}));
+    if (r.recusados && r.recusados.length) {
+      alert(r.recusados.map((x) => `${x.arquivo}: ${x.erro}`).join('\n'));
+    }
+  } catch (e) {
+    alert(e.message);
+    if (botao) { botao.disabled = false; botao.textContent = rotulo; }
+    return;
+  }
+  atualizarFilas();
+}
+
+$('lote-legenda').onclick = async () => {
+  const itens = selecionados().map((d) => ({arquivo: d.dataset.arquivo, acao: 'completo'}));
+  if (!itens.length) return;
+  $('lote-legenda').disabled = true;
+  try {
+    const r = await pegar('/api/processar-lote', comoJson({itens}));
+    if (r.recusados && r.recusados.length) {
+      alert(r.recusados.map((x) => `${x.arquivo}: ${x.erro}`).join('\n'));
+    }
+  } catch (e) { alert(e.message); }
+  document.querySelectorAll('.marca').forEach((c) => { c.checked = false; });
+  contar();
+  atualizarFilas();
+};
+
+$('lote-dublar').onclick = async () => {
+  const nomes = selecionados().map((d) => d.dataset.arquivo);
+  if (!nomes.length) return;
+  if (nomes.length > 3 && !confirm(`Mandar ${nomes.length} filmes para a fila de dublagem?\n\n`
+      + 'Cada filme leva horas e eles rodam um por vez.')) return;
+  $('lote-dublar').disabled = true;
+  await enviarDublagem(nomes, null, 'acervo');
+  document.querySelectorAll('.marca').forEach((c) => { c.checked = false; });
+  contar();
+  carregarArquivos();
+};
+
+// ---------------- envio do computador (área temporária) ----------------
+// Mesma regra da produção: o que vem do computador fica guardado numa pasta
+// dentro do próprio servidor, esperando você escolher o que fazer. Nada é
+// gravado no HD do acervo por aqui.
+
+$('drop').onclick = (e) => {
+  if (e.target.closest('#escolher, #arquivo')) return;
+  $('arquivo').click();
+};
+$('escolher').onclick = () => $('arquivo').click();
+$('arquivo').onchange = (e) => { if (e.target.files.length) enviar(e.target.files); };
+$('drop').ondragover = (e) => { e.preventDefault(); $('drop').classList.add('ativo'); };
+$('drop').ondragleave = () => $('drop').classList.remove('ativo');
+$('drop').ondrop = (e) => {
+  e.preventDefault();
+  $('drop').classList.remove('ativo');
+  if (e.dataTransfer.files.length) enviar(e.dataTransfer.files);
+};
+
+const DICA_PADRAO = 'vídeo, áudio ou legenda — mandar a legenda original junto melhora o sincronismo';
+
+function enviar(listaDeArquivos) {
+  const dados = new FormData();
+  for (const arquivo of listaDeArquivos) dados.append('arquivo', arquivo);
+  const barra = $('barra-envio');
+  const interna = barra.firstElementChild;
+  barra.hidden = false;
+  interna.style.width = '0%';
+  $('dica').textContent = 'Enviando...';
+
+  const pedido = new XMLHttpRequest();
+  pedido.open('POST', '/api/enviar');
+  pedido.upload.onprogress = (e) => {
+    if (e.lengthComputable) interna.style.width = `${(e.loaded / e.total) * 100}%`;
+  };
+  pedido.onload = () => {
+    barra.hidden = true;
+    let r = {};
+    try { r = JSON.parse(pedido.responseText); } catch (e) {}
+    if (pedido.status >= 400) {
+      $('dica').textContent = DICA_PADRAO;
+      alert(r.erro || 'Não consegui enviar.');
+      return;
+    }
+    if (r.recusados && r.recusados.length) alert(r.recusados.map((x) => x.erro).join('\n'));
+    const naFila = (r.enfileirados || []).length + (r.dublagens || []).length;
+    $('dica').textContent = naFila
+      ? `${(r.guardados || []).length} arquivo(s) guardados — ${naFila} já entraram na fila.`
+      : `${(r.guardados || []).length} arquivo(s) guardados. Escolha abaixo o que fazer.`;
+    setTimeout(() => { $('dica').textContent = DICA_PADRAO; }, 10000);
+    $('arquivo').value = '';
+    carregarTemporarios();
+    atualizarFilas();
+  };
+  pedido.onerror = () => {
+    barra.hidden = true;
+    $('dica').textContent = DICA_PADRAO;
+    alert('Não consegui enviar.');
+  };
+  pedido.send(dados);
+}
+
+// ---------------- lista da área temporária ----------------
+let temporarios = [];
+
+async function carregarTemporarios() {
+  try { temporarios = await pegar('/api/arquivos'); } catch (e) { return; }
+  const bloco = $('bloco-temporarios');
+  const lista = $('lista-temporarios');
+  bloco.hidden = !temporarios.length;
+  $('conta-temporarios').textContent = temporarios.length
+    ? `${temporarios.length} arquivo(s) aqui no servidor` : '';
+  $('barra-acoes-temp').hidden = !temporarios.length;
+  lista.innerHTML = '';
+  temporarios.forEach((item) => lista.appendChild(linhaTemporaria(item)));
+  contarTemp();
+}
+
+function linhaTemporaria(item) {
+  const div = document.createElement('div');
+  div.className = 'item';
+  div.dataset.arquivo = item.nome;
+  div.innerHTML = `<input type="checkbox" class="marca-temp">
+    <span class="nome"></span><span class="metadados-linha"></span>`;
+  div.querySelector('.nome').textContent = item.nome;
+  div.querySelector('.nome').title = item.nome;
+
+  const selos = [`<span class="tag">${item.tipo}</span>`,
+                 `<span class="tag">${item.tamanho}</span>`];
+  if (item.tem_legenda) selos.push('<span class="tag legenda-pronta">tem legenda</span>');
+  div.querySelector('.metadados-linha').innerHTML = selos.join('');
+
+  const acoes = document.createElement('div');
+  acoes.className = 'acoes-item';
+
+  if (item.tipo === 'legenda') {
+    const baixar = document.createElement('a');
+    baixar.className = 'baixar';
+    baixar.href = '/api/legenda/' + caminhoUrl(item.nome);
+    baixar.textContent = 'Baixar';
+    acoes.appendChild(baixar);
+  }
+
+  let seletor = null;
+  if (item.acoes && item.acoes.length) {
+    seletor = document.createElement('select');
+    seletor.className = 'acao';
+    for (const acao of item.acoes) {
+      const opcao = document.createElement('option');
+      opcao.value = acao.id;
+      opcao.textContent = acao.rotulo;
+      seletor.appendChild(opcao);
+    }
+    acoes.appendChild(seletor);
+    const legenda = document.createElement('button');
+    legenda.className = 'fantasma';
+    legenda.textContent = 'Gerar legenda';
+    legenda.onclick = () => enviarLegenda(item.nome, seletor.value, legenda);
+    acoes.appendChild(legenda);
+  }
+
+  if (item.tipo === 'video') {
+    const dublar = document.createElement('button');
+    dublar.textContent = 'Dublar';
+    dublar.onclick = () => enviarDublagem([item.nome], dublar, 'envio');
+    acoes.appendChild(dublar);
+  }
+
+  const apagar = document.createElement('button');
+  apagar.className = 'apagar';
+  apagar.textContent = 'Apagar';
+  apagar.onclick = async () => {
+    if (!confirm(`Apagar ${item.nome} do servidor?\n\nNão dá para desfazer.`)) return;
+    apagar.disabled = true;
+    try { await pegar('/api/arquivo/' + caminhoUrl(item.nome), {method: 'DELETE'}); }
+    catch (e) { apagar.disabled = false; alert(e.message); return; }
+    carregarTemporarios();
+  };
+  acoes.appendChild(apagar);
+
+  div.appendChild(acoes);
+  div.querySelector('.marca-temp').onchange = contarTemp;
+  return div;
+}
+
+const selecionadosTemp = () => Array.from(document.querySelectorAll('#lista-temporarios .item'))
+  .filter((d) => d.querySelector('.marca-temp').checked);
+
+function contarTemp() {
+  const marcados = selecionadosTemp();
+  $('conta-temp').textContent = marcados.length ? `${marcados.length} selecionado(s)` : '';
+  $('lote-legenda-temp').disabled = !marcados.length;
+  $('lote-dublar-temp').disabled = !marcados.length;
+  $('apagar-lote-temp').disabled = !marcados.length;
+  const todos = document.querySelectorAll('#lista-temporarios .marca-temp').length;
+  $('tudo-temp').checked = todos > 0 && marcados.length === todos;
+}
+
+$('tudo-temp').onchange = (e) => {
+  document.querySelectorAll('.marca-temp').forEach((c) => { c.checked = e.target.checked; });
+  contarTemp();
+};
+
+$('lote-legenda-temp').onclick = async () => {
+  const itens = selecionadosTemp().map((d) => ({
+    arquivo: d.dataset.arquivo,
+    acao: (d.querySelector('.acao') || {}).value || 'completo',
+  }));
+  if (!itens.length) return;
+  $('lote-legenda-temp').disabled = true;
+  try {
+    const r = await pegar('/api/processar-lote', comoJson({itens}));
+    if (r.recusados && r.recusados.length) {
+      alert(r.recusados.map((x) => `${x.arquivo}: ${x.erro}`).join('\n'));
+    }
+  } catch (e) { alert(e.message); }
+  document.querySelectorAll('.marca-temp').forEach((c) => { c.checked = false; });
+  contarTemp();
+  atualizarFilas();
+};
+
+$('lote-dublar-temp').onclick = async () => {
+  const nomes = selecionadosTemp().map((d) => d.dataset.arquivo);
+  if (!nomes.length) return;
+  $('lote-dublar-temp').disabled = true;
+  await enviarDublagem(nomes, null, 'envio');
+  document.querySelectorAll('.marca-temp').forEach((c) => { c.checked = false; });
+  contarTemp();
+};
+
+$('apagar-lote-temp').onclick = async () => {
+  const alvos = selecionadosTemp().map((d) => d.dataset.arquivo);
+  if (!alvos.length) return;
+  if (!confirm(`Apagar ${alvos.length} arquivo(s) do servidor?\n\n${alvos.slice(0, 10).join('\n')}`
+      + `${alvos.length > 10 ? `\n...e mais ${alvos.length - 10}` : ''}\n\nNão dá para desfazer.`)) return;
+  $('apagar-lote-temp').disabled = true;
+  const falhas = [];
+  for (const nome of alvos) {
+    try { await pegar('/api/arquivo/' + caminhoUrl(nome), {method: 'DELETE'}); }
+    catch (e) { falhas.push(`${nome}: ${e.message}`); }
+  }
+  if (falhas.length) alert(falhas.join('\n'));
+  carregarTemporarios();
+};
+
+// ---------------- ferramentas do HD ----------------
+const jobsFilmesAtivos = {};
+const botoesFilmes = () => document.querySelectorAll('#vista-filmes button[data-ferramenta]');
+
+function relatorioFilmesTexto(ferramenta, r) {
+  if (!r) return '';
+  const prefixo = r.simulado ? 'Isso foi só um teste — ' : '';
+  if (ferramenta === 'atualizar_filmes') {
+    return prefixo + `${r.unidades_total} filme(s) no HD, ${r.ja_tinha_nfo} já estavam com a `
+      + `ficha completa. ${r.simulado ? 'Completaria' : 'Completados agora'}: ${r.escritos}. `
+      + `Não deu pra descobrir o nome de ${r.sem_extracao}. `
+      + `Não achei com certeza na base de dados: ${r.sem_match}.`;
+  }
+  if (ferramenta === 'atualizar_generos') {
+    let jellyfin = '';
+    if (r.jellyfin_erro) jellyfin = ` Jellyfin não conferido: ${r.jellyfin_erro}`;
+    else if (r.jellyfin_filmes !== undefined) {
+      jellyfin = ` No Jellyfin: ${r.jellyfin_filmes} filme(s) conferidos, `
+        + `${r.simulado ? 'corrigiria' : 'corrigidos agora'}: ${r.jellyfin_corrigidos}.`
+        + (r.jellyfin_falhas ? ` Não consegui corrigir: ${r.jellyfin_falhas}.` : '');
+    }
+    return prefixo + `${r.nfo_total} filme(s) com ficha no HD. `
+      + `${r.simulado ? 'Corrigiria a categoria de' : 'Categoria corrigida em'}: ${r.corrigidos}. `
+      + `Já estavam certos: ${r.ja_corretos}. Não consegui ler: ${r.ignorados}.` + jellyfin;
+  }
+  if (ferramenta === 'atualizar_legendas') {
+    let jellyfin = '';
+    if (r.jellyfin_erro) jellyfin = ' Jellyfin não avisado: ' + r.jellyfin_erro;
+    else if (r.jellyfin && r.jellyfin.ok) jellyfin = ' Jellyfin avisado para reler o acervo.';
+    return prefixo + `${r.srt_total} legenda(s) no HD. `
+      + `${r.simulado ? 'Criaria a versão amarela de' : 'Criada a versão amarela de'}: ${r.gerados}. `
+      + `Já tinham: ${r.ja_existia}. Não consegui converter: ${r.ignorados}.` + jellyfin;
+  }
+  return prefixo + `${r.fichas_incompletas} filme(s) com ficha incompleta. `
+    + `${r.simulado ? 'Completaria' : 'Completados agora'}: ${r.atualizados}. `
+    + `Não deu pra descobrir o nome de ${r.sem_extracao}. `
+    + `Não achei com certeza na base de dados: ${r.sem_match}.`;
+}
+
+async function atualizarCartaoFilme(ferramenta) {
+  const jobId = jobsFilmesAtivos[ferramenta];
+  if (!jobId) return;
+  const alvo = $('resultado-' + ferramenta);
+  let job;
+  try { job = await pegar('/api/filmes/trabalho/' + jobId); }
+  catch (e) { delete jobsFilmesAtivos[ferramenta]; return; }
+
+  alvo.hidden = false;
+  if (job.estado === 'erro') {
+    alvo.innerHTML = '<div class="etapa erro"></div>';
+    alvo.firstChild.textContent = job.erro || 'Falhou.';
+  } else if (job.pronto) {
+    const cancelado = job.estado === 'cancelado';
+    alvo.innerHTML = `<div class="etapa ${cancelado ? '' : 'ok'}"></div>`;
+    alvo.firstChild.textContent = cancelado ? 'Cancelado.'
+      : relatorioFilmesTexto(ferramenta, (job.detalhes || {}).relatorio || job.relatorio);
+  } else {
+    const semNumero = job.estado === 'rodando' && !job.progresso;
+    alvo.innerHTML = `<div class="etapa"></div>
+      <div class="barra${semNumero ? ' indefinida' : ''}"><div style="width:${semNumero ? 100 : job.progresso}%"></div></div>
+      <div class="acoes-ferramenta"><button type="button" class="fantasma" id="cancelar-${ferramenta}">Cancelar</button></div>`;
+    alvo.firstChild.textContent = job.etapa || '';
+    $('cancelar-' + ferramenta).onclick =
+      () => fetch('/api/filmes/trabalho/' + jobId + '/cancelar', {method: 'POST'});
+  }
+
+  if (job.pronto) {
+    delete jobsFilmesAtivos[ferramenta];
+    if (!Object.keys(jobsFilmesAtivos).length) {
+      botoesFilmes().forEach((b) => { b.disabled = false; });
+    }
+  }
+}
+
+function pollFilmes() {
+  Object.keys(jobsFilmesAtivos).forEach(atualizarCartaoFilme);
+}
+setInterval(() => { if (vistaAtual === 'filmes') pollFilmes(); }, 1500);
+
+async function carregarFilmes() {
+  const alvo = $('filmes-ultima-automatica');
+  try {
+    const d = await pegar('/api/filmes/ultima_atualizacao');
+    alvo.textContent = d && d.quando
+      ? `Ficha e categoria rodam sozinhas a cada 2 horas na produção. Última vez: `
+        + formatarQuando(d.quando) + '.'
+      : 'Ainda não rodou sozinha nenhuma vez (o servidor deve ter acabado de subir).';
+  } catch (e) {
+    alvo.textContent = 'Não consegui falar com a produção (porta 8000) para checar.';
+  }
+  // Reflete trabalho que já estava rodando antes de abrir esta tela.
+  try {
+    for (const job of await pegar('/api/filmes/trabalhos')) {
+      const ferramenta = (job.detalhes || {}).ferramenta;
+      if (ferramenta && !job.pronto) jobsFilmesAtivos[ferramenta] = job.id;
+    }
+  } catch (e) {}
+  if (Object.keys(jobsFilmesAtivos).length) botoesFilmes().forEach((b) => { b.disabled = true; });
+  pollFilmes();
+}
+
+$('jellyfin-rodar').onclick = async () => {
+  const botao = $('jellyfin-rodar');
+  const alvo = $('resultado-jellyfin');
+  botao.disabled = true;
+  alvo.hidden = false;
+  alvo.innerHTML = '<div class="etapa">Avisando o Jellyfin...</div>';
+  try {
+    await pegar('/api/filmes/jellyfin', {method: 'POST'});
+    alvo.innerHTML = '<div class="etapa ok">Pedido enviado! O Jellyfin já está relendo a pasta.</div>';
+  } catch (e) {
+    alvo.innerHTML = '<div class="etapa erro"></div>';
+    alvo.firstChild.textContent = e.message;
+  }
+  botao.disabled = false;
+};
+
+botoesFilmes().forEach((botao) => {
+  botao.onclick = async () => {
+    const ferramenta = botao.dataset.ferramenta;
+    const execute = botao.dataset.execute === '1';
+    if (execute && !confirm('Isso vai alterar de verdade os arquivos no HD de filmes.\n\n'
+        + 'Você já clicou em "Só testar" antes e viu que o resultado está certo?')) return;
+    botoesFilmes().forEach((b) => { b.disabled = true; });
+    let dados;
+    try {
+      dados = await pegar('/api/filmes/' + ferramenta, comoJson({execute}));
+    } catch (e) {
+      alert(e.message);
+      botoesFilmes().forEach((b) => { b.disabled = false; });
+      return;
+    }
+    jobsFilmesAtivos[ferramenta] = dados.id;
+    atualizarCartaoFilme(ferramenta);
+  };
+});
+
+// ---------------- filas ----------------
+function faltam(segundos) {
+  if (segundos === null || segundos === undefined) return '';
+  if (segundos < 60) return `${Math.round(segundos)}s`;
+  const m = Math.round(segundos / 60);
+  if (m < 60) return `${m} min`;
+  return `${Math.floor(m / 60)}h${String(m % 60).padStart(2, '0')}`;
+}
+
+function cartao(job, tipo) {
+  const div = document.createElement('div');
+  div.className = 'trabalho';
+  const rel = (job.detalhes || {}).relatorio;
+  const restante = faltam(job.restante_seg);
+  div.innerHTML = `<div class="topo">
+      <span class="nome"></span>
+      <span class="tag estado"></span>
+      <span class="acao"></span>
+    </div>
+    <div class="barra"><div></div></div>
+    <p class="etapa"></p>`;
+  div.querySelector('.nome').textContent = job.nome;
+  div.querySelector('.nome').title = job.entrada || job.nome;
+  const estado = div.querySelector('.estado');
+  estado.textContent = job.estado;
+  if (job.estado === 'erro') estado.classList.add('erro');
+  if (job.estado === 'concluido') estado.classList.add('ok');
+
+  const barra = div.querySelector('.barra');
+  const interna = barra.firstElementChild;
+  if (job.estado === 'rodando') {
+    interna.style.width = `${job.progresso || 0}%`;
+    if (!job.progresso) barra.classList.add('indefinida');
+  } else {
+    barra.hidden = true;
+  }
+
+  const etapa = div.querySelector('.etapa');
+  etapa.textContent = job.erro ? job.erro
+    : (job.etapa || '') + (restante ? ` — faltam ${restante}` : '');
+  if (job.erro) etapa.classList.add('erro');
+
+  const acoes = div.querySelector('.acao');
+  if (!FINAIS.includes(job.estado)) {
+    const cancelar = document.createElement('button');
+    cancelar.className = 'fantasma';
+    cancelar.textContent = 'Cancelar';
+    cancelar.onclick = async () => {
+      cancelar.disabled = true;
+      const url = tipo === 'dublagem' ? `/api/dublagem/${job.id}/cancelar` : `/api/trabalho/${job.id}/cancelar`;
+      await fetch(url, {method: 'POST'});
+      atualizarFilas();
+    };
+    acoes.appendChild(cancelar);
+  } else {
+    const dispensar = document.createElement('button');
+    dispensar.className = 'fantasma';
+    dispensar.textContent = 'Dispensar';
+    dispensar.onclick = async () => {
+      const url = tipo === 'dublagem' ? `/api/dublagem/${job.id}` : `/api/trabalho/${job.id}`;
+      await fetch(url, {method: 'DELETE'});
+      atualizarFilas();
+    };
+    acoes.appendChild(dispensar);
+  }
+  if (tipo === 'legenda' && job.baixavel) {
+    const baixar = document.createElement('a');
+    baixar.className = 'baixar';
+    baixar.href = `/api/baixar/${job.id}`;
+    baixar.textContent = 'Baixar legenda';
+    acoes.prepend(baixar);
+  }
+  if (tipo === 'dublagem') {
+    const registro = document.createElement('a');
+    registro.className = 'baixar';
+    registro.href = `/api/dublagem/${job.id}/log`;
+    registro.target = '_blank';
+    registro.textContent = 'Ver detalhes';
+    acoes.appendChild(registro);
+  }
+  if (rel) {
+    const resumo = document.createElement('p');
+    resumo.className = 'etapa';
+    const partes = [`${rel.dubladas} de ${rel.falas} falas`, `${rel.locutores} locutor(es)`];
+    if (rel.aceleradas) partes.push(`${rel.aceleradas} aceleradas`);
+    if (rel.video_mais_lento) partes.push(`${rel.video_mais_lento} com vídeo mais lento`);
+    if (rel.cortadas) partes.push(`${rel.cortadas} cortadas`);
+    partes.push(`${Math.round(rel.duracao_final_s / 60)} min`);
+    resumo.textContent = partes.join(' · ');
+    div.appendChild(resumo);
+    const onde = document.createElement('p');
+    onde.className = 'etapa ok';
+    onde.textContent = rel.saida;
+    div.appendChild(onde);
+  }
+  return div;
+}
+
+function desenharFila(elemento, jobs, tipo) {
+  if (!jobs.length) {
+    elemento.innerHTML = '<div class="vazio">Nada na fila.</div>';
+    return;
+  }
+  elemento.innerHTML = '';
+  jobs.forEach((j) => elemento.appendChild(cartao(j, tipo)));
+}
+
+async function atualizarFilas() {
+  let legendas = [];
+  let dublagens = [];
+  try { legendas = await pegar('/api/trabalhos'); } catch (e) {}
+  try { dublagens = await pegar('/api/dublagens'); } catch (e) {}
+  desenharFila($('fila-legenda'), legendas, 'legenda');
+  desenharFila($('fila-dublagem'), dublagens, 'dublagem');
+
+  const ativos = [...legendas, ...dublagens].filter((j) => !FINAIS.includes(j.estado));
+  const contador = $('conta-trabalhos');
+  contador.hidden = !ativos.length;
+  contador.textContent = String(ativos.length);
+  $('limpar').hidden = ![...legendas, ...dublagens].some((j) => FINAIS.includes(j.estado));
+
+  const rodando = ativos.find((j) => j.estado === 'rodando');
+  const estado = $('auto-estado');
+  estado.className = 'dock-estado' + (rodando ? ' ligado' : '');
+  estado.textContent = rodando ? `${rodando.nome} — ${rodando.etapa || ''}`
+    : (ativos.length ? `${ativos.length} esperando na fila.` : 'Nada rodando agora.');
+  if (document.title.startsWith('AutoSRT')) {
+    document.title = ativos.length ? `(${ativos.length}) AutoSRT — Dublagem` : 'AutoSRT — Dublagem';
+  }
+}
+
+$('limpar').onclick = async () => {
+  await fetch('/api/trabalhos/limpar', {method: 'POST'});
+  atualizarFilas();
+};
+
+function formatarQuando(texto) {
+  if (!texto) return '';
+  const d = new Date(texto.includes('T') ? texto : texto.replace(' ', 'T') + 'Z');
+  return isNaN(d) ? texto : d.toLocaleString('pt-BR');
+}
+
+async function carregarHistorico() {
+  let linhas = [];
+  try { linhas = await pegar('/api/historico'); } catch (e) { return; }
+  const alvo = $('historico');
+  if (!linhas.length) { alvo.innerHTML = '<div class="vazio">Nada ainda.</div>'; return; }
+  const corpo = linhas.slice(0, 40).map((l) => `<tr class="estado-${l.estado}">
+      <td>${formatarQuando(l.terminado_em || l.criado_em)}</td>
+      <td>${(l.nome || '').replace(/</g, '&lt;')}</td>
+      <td class="estado">${l.estado}</td>
+      <td>${(l.erro || '').replace(/</g, '&lt;')}</td></tr>`).join('');
+  alvo.innerHTML = `<table class="tabela-historico"><thead><tr>
+    <th>Quando</th><th>Arquivo</th><th>Estado</th><th>Observação</th></tr></thead>
+    <tbody>${corpo}</tbody></table>`;
+}
+
+// ---------------- atores ----------------
+let locutorAberto = null;
+
+async function carregarAtores() {
+  let atores = [];
+  let locutores = [];
+  try { atores = await pegar('/api/atores'); } catch (e) {}
+  try { locutores = await pegar('/api/locutores'); } catch (e) {}
+
+  const contador = $('conta-locutores');
+  contador.hidden = !locutores.length;
+  contador.textContent = String(locutores.length);
+
+  const alvoLoc = $('lista-locutores');
+  if (!locutores.length) {
+    alvoLoc.innerHTML = '<div class="vazio">Nenhuma voz esperando. Dubla um filme e as vozes dele aparecem aqui.</div>';
+  } else {
+    alvoLoc.innerHTML = '';
+    locutores.forEach((l) => alvoLoc.appendChild(cartaoLocutor(l)));
+  }
+
+  const alvoAt = $('lista-atores');
+  if (!atores.length) {
+    alvoAt.innerHTML = '<div class="vazio">Nenhum ator com voz salva ainda.</div>';
+    return;
+  }
+  alvoAt.innerHTML = '';
+  atores.forEach((a) => alvoAt.appendChild(cartaoAtor(a)));
+}
+
+function iniciais(nome) {
+  return (nome || '?').split(/\s+/).slice(0, 2).map((p) => p[0] || '').join('').toUpperCase();
+}
+
+function cartaoLocutor(loc) {
+  const div = document.createElement('div');
+  div.className = 'item item-locutor';
+  div.innerHTML = `<div class="avatar-ator avatar-vazio">${loc.locutor.replace('SPEAKER_', '')}</div>
+    <div class="item-corpo">
+      <h3 class="item-titulo"></h3>
+      <p class="bio-ator"></p>
+      <audio controls preload="none" style="width:100%;max-width:320px;margin-top:8px;"></audio>
+    </div>
+    <div class="acoes-item"><button class="identificar">Dizer quem é</button>
+      <button class="fantasma ignorar">Ignorar</button></div>`;
+  div.querySelector('.item-titulo').textContent = `${loc.locutor} — ${loc.filme}`;
+  div.querySelector('.bio-ator').textContent =
+    `${Math.round(loc.segundos_fala || 0)}s de fala em ${loc.falas || 0} fala(s)`
+    + (loc.elenco && loc.elenco.length ? ` · ${loc.elenco.length} atores no elenco` : '');
+  div.querySelector('audio').src = `/api/locutor/${loc.id}/audio`;
+  div.querySelector('.identificar').onclick = () => abrirDialogoAtor(loc);
+  div.querySelector('.ignorar').onclick = async () => {
+    await pegar(`/api/locutor/${loc.id}/atribuir`, comoJson({ignorar: true}));
+    carregarAtores();
+  };
+  return div;
+}
+
+function cartaoAtor(ator) {
+  const div = document.createElement('div');
+  div.className = 'item item-ator';
+  const foto = ator.foto
+    ? `<img class="avatar-ator" alt="" loading="lazy" src="${ator.foto}">`
+    : `<div class="avatar-ator avatar-vazio">${iniciais(ator.nome)}</div>`;
+  div.innerHTML = `${foto}
+    <div class="item-corpo">
+      <h3 class="item-titulo"></h3>
+      <p class="bio-ator"></p>
+      <p class="ficha-ator"></p>
+      <p class="etapa resumo-voz"></p>
+      <p class="etapa filmes-ator"></p>
+    </div>
+    <div class="acoes-item"><audio controls preload="none" style="max-width:240px;"></audio></div>`;
+  div.querySelector('.item-titulo').textContent = ator.nome;
+  const bio = div.querySelector('.bio-ator');
+  bio.textContent = ator.bio ? ator.bio.slice(0, 280) + (ator.bio.length > 280 ? '…' : '') : '';
+  bio.hidden = !ator.bio;
+  const ficha = div.querySelector('.ficha-ator');
+  const fichas = [];
+  if (ator.nascimento) fichas.push(`<span class="tag">Nasc. ${ator.nascimento}</span>`);
+  if (ator.local_nascimento) fichas.push(`<span class="tag">${ator.local_nascimento}</span>`);
+  ficha.innerHTML = fichas.join('');
+  ficha.hidden = !fichas.length;
+  div.querySelector('.resumo-voz').textContent =
+    `${Math.round(ator.duracao_total_segundos)}s de referência limpa · ${ator.filmes.length} filme(s)`;
+  div.querySelector('.filmes-ator').textContent = ator.filmes.map((f) => f.filme).join(' · ');
+  div.querySelector('audio').src = `/api/atores/${encodeURIComponent(ator.id)}/previa`;
+  return div;
+}
+
+const dialogoAtor = $('dialogo-ator');
+function abrirDialogoAtor(loc) {
+  locutorAberto = loc;
+  $('dialogo-ator-contexto').textContent =
+    `${loc.locutor} em "${loc.filme}" — ${Math.round(loc.segundos_fala || 0)}s de fala.`;
+  $('dialogo-ator-audio').src = `/api/locutor/${loc.id}/audio`;
+  $('dialogo-ator-nome').value = '';
+  $('dialogo-ator-erro').textContent = '';
+  const grade = $('dialogo-ator-elenco');
+  if (!loc.elenco || !loc.elenco.length) {
+    grade.innerHTML = '<p class="dica-config">Não consegui buscar o elenco deste filme no TMDB. Digite o nome abaixo.</p>';
+  } else {
+    grade.innerHTML = '';
+    loc.elenco.forEach((p) => {
+      const botao = document.createElement('button');
+      botao.type = 'button';
+      botao.className = 'cartao-elenco';
+      botao.innerHTML = (p.foto ? `<img src="${p.foto}" alt="" loading="lazy">`
+        : `<span class="avatar-ator avatar-vazio">${iniciais(p.nome)}</span>`)
+        + `<span class="nome-elenco"></span><span class="personagem-elenco"></span>`;
+      botao.querySelector('.nome-elenco').textContent = p.nome;
+      botao.querySelector('.personagem-elenco').textContent = p.personagem || '';
+      botao.onclick = () => atribuir({tmdb_id: p.tmdb_id, nome: p.nome});
+      grade.appendChild(botao);
+    });
+  }
+  dialogoAtor.showModal();
+}
+
+async function atribuir(corpo) {
+  try {
+    await pegar(`/api/locutor/${locutorAberto.id}/atribuir`, comoJson(corpo));
+  } catch (e) {
+    $('dialogo-ator-erro').textContent = e.message;
+    return;
+  }
+  dialogoAtor.close();
+  carregarAtores();
+}
+$('dialogo-ator-usar-nome').onclick = () => {
+  const nome = $('dialogo-ator-nome').value.trim();
+  if (!nome) { $('dialogo-ator-erro').textContent = 'Digite o nome do ator.'; return; }
+  atribuir({nome});
+};
+$('dialogo-ator-ignorar').onclick = () => atribuir({ignorar: true});
+$('fechar-dialogo-ator').onclick = () => dialogoAtor.close();
+dialogoAtor.addEventListener('click', (e) => { if (e.target === dialogoAtor) dialogoAtor.close(); });
+dialogoAtor.addEventListener('close', () => { $('dialogo-ator-audio').pause(); });
+
+// ---------------- configuração ----------------
+const SIM_NAO = (v) => (v ? 'sim' : 'nao');
+const ehSim = (v) => ['sim', 'true', '1', 'on'].includes(String(v).toLowerCase());
+const texto = (v) => (v === null || v === undefined ? '' : String(v));
+
+async function carregarConfig() {
+  let c = {};
+  try { c = await pegar('/api/config'); } catch (e) { return; }
+  $('base_url').value = texto(c.base_url);
+  $('modelo').value = texto(c.modelo);
+  $('llm_block_size').value = texto(c.llm_block_size);
+  $('selo-tmdb').hidden = !c.tem_chave_tmdb;
+  $('chave').placeholder = c.tem_chave ? 'chave configurada — em branco mantém' : 'sk-...';
+  $('chave_tmdb').placeholder = c.tem_chave_tmdb ? 'chave configurada — em branco mantém' : 'chave do TMDB';
+  const local = /127\.0\.0\.1|localhost|192\.168\.|10\.|\.local/.test(c.base_url || '');
+  $('selo-traducao').textContent = local ? 'local' : (c.tem_chave ? 'na nuvem' : 'sem chave');
+  $('selo-traducao').className = 'selo ' + (local || c.tem_chave ? 'ok' : 'falta');
+  $('selo-nav-traducao').textContent = $('selo-traducao').textContent;
+  $('selo-nav-traducao').className = $('selo-traducao').className;
+  $('aviso-config').hidden = local || !!c.tem_chave;
+
+  $('normalize_audio').value = texto(c.normalize_audio) || 'auto';
+  $('whisper_language').value = texto(c.whisper_language);
+  $('whisper_model').value = texto(c.whisper_model);
+  $('whisper_compute_type').value = texto(c.whisper_compute_type);
+  $('max_workers').value = String(c.max_workers || 1);
+  $('vad_method').value = texto(c.vad_method);
+  $('vad_method').placeholder = `em branco = ${c.vad_method_padrao || 'silero_v4_fw'}`;
+  $('vad_threshold').value = texto(c.vad_threshold);
+  $('vad_min_silence_ms').value = texto(c.vad_min_silence_ms);
+  $('condition_on_previous_text').checked = c.condition_on_previous_text === true;
+  $('subtitle_standard').checked = c.subtitle_standard !== false;
+  $('duracao_minima_exibicao').value = texto(c.duracao_minima_exibicao).replace('.', ',');
+  $('duracao_minima_exibicao').placeholder = `em branco = ${c.duracao_minima_exibicao_padrao}`;
+  $('caracteres_por_segundo').value = texto(c.caracteres_por_segundo);
+  $('caracteres_por_segundo').placeholder = `em branco = ${c.caracteres_por_segundo_padrao}`;
+  $('hallucination_silence_threshold').value = texto(c.hallucination_silence_threshold);
+  $('filtrar_alucinacoes').checked = c.filtrar_alucinacoes !== false;
+  $('alucinacoes_extra').value = (c.alucinacoes_extra || []).join('\n');
+}
+
+async function carregarConfigDublagem() {
+  let c = {};
+  try { c = await pegar('/api/config/dublagem'); } catch (e) { return; }
+  $('dublagem_modelo').value = c.dublagem_modelo || 'referencia';
+  $('dublagem_temperatura').value = texto(c.dublagem_temperatura).replace('.', ',');
+  $('dublagem_limpar_referencia').checked = ehSim(c.dublagem_limpar_referencia);
+  $('dublagem_reaproveitar_voz').checked = ehSim(c.dublagem_reaproveitar_voz);
+  $('dublagem_clonar_por_locutor').checked = ehSim(c.dublagem_clonar_por_locutor);
+  $('dublagem_preservar_trilha').value = ehSim(c.dublagem_preservar_trilha) ? 'sim' : 'nao';
+  $('dublagem_idioma_origem').value = texto(c.dublagem_idioma_origem);
+  $('dublagem_ajustar_ritmo').checked = ehSim(c.dublagem_ajustar_ritmo);
+  $('dublagem_max_acelerar').value = texto(c.dublagem_max_acelerar).replace('.', ',');
+  $('dublagem_max_desacelerar_video').value = texto(c.dublagem_max_desacelerar_video).replace('.', ',');
+  $('dublagem_crf').value = texto(c.dublagem_crf);
+  $('dublagem_preset').value = texto(c.dublagem_preset) || 'medium';
+  $('dublagem_pasta_saida').value = texto(c.dublagem_pasta_saida);
+  $('dublagem_frases_nao_dublar').value = texto(c.dublagem_frases_nao_dublar);
+}
+
+function avisarSalvo(id) {
+  const alvo = $(id);
+  alvo.hidden = false;
+  setTimeout(() => { alvo.hidden = true; }, 2500);
+}
+
+async function salvar(url, corpo, aviso, botao) {
+  botao.disabled = true;
+  try {
+    await pegar(url, comoJson(corpo));
+    avisarSalvo(aviso);
+  } catch (e) { alert(e.message); }
+  botao.disabled = false;
+}
+
+$('salvar-traducao').onclick = (e) => {
+  const corpo = {base_url: $('base_url').value.trim(), modelo: $('modelo').value.trim(),
+                 llm_block_size: $('llm_block_size').value.trim()};
+  if ($('chave').value.trim()) corpo.chave = $('chave').value.trim();
+  if ($('chave_tmdb').value.trim()) corpo.chave_tmdb = $('chave_tmdb').value.trim();
+  salvar('/api/config', corpo, 'salvo-traducao', e.target).then(() => {
+    $('chave').value = ''; $('chave_tmdb').value = ''; carregarConfig();
+  });
+};
+
+$('salvar-transcricao').onclick = (e) => salvar('/api/config', {
+  normalize_audio: $('normalize_audio').value,
+  whisper_language: $('whisper_language').value.trim(),
+  whisper_model: $('whisper_model').value.trim(),
+  whisper_compute_type: $('whisper_compute_type').value.trim(),
+  max_workers: $('max_workers').value,
+  vad_method: $('vad_method').value.trim(),
+  vad_threshold: $('vad_threshold').value.trim(),
+  vad_min_silence_ms: $('vad_min_silence_ms').value.trim(),
+  condition_on_previous_text: $('condition_on_previous_text').checked ? 'true' : 'false',
+  subtitle_standard: $('subtitle_standard').checked ? 'true' : 'false',
+  duracao_minima_exibicao: $('duracao_minima_exibicao').value.trim(),
+  caracteres_por_segundo: $('caracteres_por_segundo').value.trim(),
+  hallucination_silence_threshold: $('hallucination_silence_threshold').value.trim(),
+  filtrar_alucinacoes: $('filtrar_alucinacoes').checked ? 'true' : 'false',
+  alucinacoes_extra: $('alucinacoes_extra').value,
+}, 'salvo-transcricao', e.target);
+
+$('salvar-voz').onclick = (e) => salvar('/api/config/dublagem', {
+  dublagem_modelo: $('dublagem_modelo').value,
+  dublagem_temperatura: $('dublagem_temperatura').value.trim(),
+  dublagem_limpar_referencia: SIM_NAO($('dublagem_limpar_referencia').checked),
+  dublagem_reaproveitar_voz: SIM_NAO($('dublagem_reaproveitar_voz').checked),
+  dublagem_clonar_por_locutor: SIM_NAO($('dublagem_clonar_por_locutor').checked),
+}, 'salvo-voz', e.target);
+
+$('salvar-qualidade').onclick = (e) => salvar('/api/config/dublagem', {
+  dublagem_preservar_trilha: $('dublagem_preservar_trilha').value,
+  dublagem_idioma_origem: $('dublagem_idioma_origem').value.trim(),
+  dublagem_ajustar_ritmo: SIM_NAO($('dublagem_ajustar_ritmo').checked),
+  dublagem_max_acelerar: $('dublagem_max_acelerar').value.trim(),
+  dublagem_max_desacelerar_video: $('dublagem_max_desacelerar_video').value.trim(),
+  dublagem_crf: $('dublagem_crf').value.trim(),
+  dublagem_preset: $('dublagem_preset').value,
+  dublagem_pasta_saida: $('dublagem_pasta_saida').value.trim(),
+  dublagem_frases_nao_dublar: $('dublagem_frases_nao_dublar').value,
+}, 'salvo-qualidade', e.target);
+
+$('buscar-modelos').onclick = async () => {
+  const botao = $('buscar-modelos');
+  botao.disabled = true;
+  botao.textContent = 'Buscando...';
+  try {
+    const r = await pegar('/api/modelos?base_url=' + encodeURIComponent($('base_url').value));
+    const lista = r.modelos || [];
+    if (!lista.length) alert('Nenhum modelo nesse endereço.');
+    else {
+      const escolha = prompt('Modelos disponíveis:\n\n' + lista.join('\n')
+        + '\n\nDigite o nome do que você quer usar:', $('modelo').value);
+      if (escolha) $('modelo').value = escolha.trim();
+    }
+  } catch (e) { alert(e.message); }
+  botao.disabled = false;
+  botao.textContent = 'Buscar modelos';
+};
+
+// ---------------- automação ----------------
+async function carregarAutomacao() {
+  let a = {};
+  try { a = await pegar('/api/automacao'); } catch (e) { return; }
+  $('auto-legenda').checked = !!a.legenda_automatica;
+  $('auto-dublar').checked = !!a.dublagem_automatica;
+}
+const mudarAutomacao = async (corpo) => {
+  try { await pegar('/api/automacao', comoJson(corpo)); }
+  catch (e) { alert(e.message); }
+  carregarAutomacao();
+};
+$('auto-legenda').onchange = (e) => mudarAutomacao({legenda_automatica: e.target.checked});
+$('auto-dublar').onchange = (e) => mudarAutomacao({dublagem_automatica: e.target.checked});
+
+async function carregarStatusHd() {
+  try {
+    const r = await pegar('/api/filmes/ultima_atualizacao');
+    if (!r || !r.quando) return;
+    $('dock-hd').hidden = false;
+    $('hd-estado').textContent = 'Última rodada automática: ' + formatarQuando(r.quando);
+    $('hd-estado').classList.add('ligado');
+  } catch (e) {}
+}
+
+async function atualizarGpu() {
+  try {
+    const g = await pegar('/api/gpu');
+    const selo = $('selo-gpu');
+    selo.hidden = !g || !g.disponivel;
+    if (g && g.disponivel) selo.textContent = g.resumo || 'placa de vídeo pronta';
+  } catch (e) {}
+}
+
+// ---------------- início ----------------
+mostrarVista(location.hash.slice(1) || 'arquivos');
+carregarArquivos();
+carregarTemporarios();
+carregarConfig();
+carregarConfigDublagem();
+carregarAutomacao();
+carregarStatusHd();
+atualizarFilas();
+atualizarGpu();
+setInterval(atualizarFilas, 3000);
+setInterval(() => { if (vistaAtual === 'arquivos') carregarTemporarios(); }, 15000);
+setInterval(() => { if (vistaAtual === 'atores') carregarAtores(); }, 20000);
+
+</script>
+</html>

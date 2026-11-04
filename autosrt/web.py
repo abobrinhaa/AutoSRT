@@ -113,7 +113,18 @@ def create_app(media_dir=None, engine=pipeline.ENGINE_LLM, max_upload_gb=None,
         ).start()
 
     _register_routes(app, fila, media_dir, engine)
-    _register_rotas_filmes(app, fila_filmes)
+    if os.environ.get("AUTOSRT_DUBLAGEM") == "1":
+        # Instância da dublagem (porta 8002): tela nova, fila de dublagem e
+        # ferramentas do HD repassadas para a produção. Ver web_dublagem.
+        from . import web_dublagem
+        caminho_pagina = os.path.join(os.path.dirname(__file__), "pagina_v2.html")
+        with open(caminho_pagina, encoding="utf-8") as f:
+            app.config["PAGINA_V2"] = f.read()
+        web_dublagem.registrar(app, fila, media_dir, None)
+        if not os.environ.get("AUTOSRT_FILMES_PROXY"):
+            _register_rotas_filmes(app, fila_filmes)
+    else:
+        _register_rotas_filmes(app, fila_filmes)
     return app
 
 
@@ -500,6 +511,11 @@ def _register_routes(app, fila, media_dir, engine):
     def index():
         # O filtro do seletor é montado a partir do que o servidor aceita,
         # em vez de escrito à mão na página, para não sair de sincronia.
+        pagina = app.config.get("PAGINA_V2") or PAGINA
+        return pagina.replace("{{ACCEPT}}", ",".join(EXTENSOES_ACEITAS))
+
+    @app.get("/classico")
+    def index_classico():
         return PAGINA.replace("{{ACCEPT}}", ",".join(EXTENSOES_ACEITAS))
 
     @app.get("/api/arquivos")
@@ -646,6 +662,9 @@ def _register_routes(app, fila, media_dir, engine):
             # ligou o automático em outra aba veria a explicação errada.
             "automatico": automatico,
             "enfileirados": _auto_enfileirar(guardados) if automatico else [],
+            # Só existe na instância da dublagem (ver web_dublagem).
+            "dublagens": (app.config["AUTO_DUBLAR"](guardados)
+                          if app.config.get("AUTO_DUBLAR") else []),
         }), 201
 
     @app.get("/api/config")
